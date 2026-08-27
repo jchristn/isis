@@ -1,0 +1,49 @@
+{
+  "Product": "Isis",
+  "Version": "0.1.0",
+  "Rest": {
+    "Hostname": "127.0.0.1",
+    "Port": 8700,
+    "Ssl": false
+  },
+  "Mcp": {
+    "Hostname": "127.0.0.1",
+    "Port": 8720,
+    "RpcPath": "/rpc",
+    "EventsPath": "/events",
+    "McpPath": "/mcp"
+  },
+  "Database": {
+    "Type": "Sqlite",
+    "Filename": "data/isis.db",
+    "Server": null,
+    "Port": 0,
+    "DatabaseName": null,
+    "Username": null,
+    "Password": null
+  },
+  "RecallDb": {
+    "Endpoint": "http://127.0.0.1:8600",
+    "AdminApiKey": "override-via-env"
+  },
+  "Verbex": {
+    "Endpoint": null
+  },
+  "Logging": {
+    "ConsoleLogging": true,
+    "FileLogging": true,
+    "LogDirectory": "logs",
+    "LogFilename": "isis.log"
+  },
+  "Telemetry": {
+    "Enable": true,
+    "OtlpEndpoint": "http://127.0.0.1:4317"
+  },
+  "Auth": {
+    "Issuer": "isis",
+    "SeedAdminEmail": "admin@isis.local",
+    "SeedAdminPassword": "override-via-env",
+    "DefaultAccessKey": "isisdefaultkey",
+    "DefaultSecretKey": "override-via-env"
+  }
+}

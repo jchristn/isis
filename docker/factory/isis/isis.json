@@ -1,0 +1,34 @@
+{
+  "NodeId": "isis-demo",
+  "Rest": {
+    "Hostname": "*",
+    "Port": 8700,
+    "Ssl": false
+  },
+  "Database": {
+    "Type": "Postgresql",
+    "Hostname": "postgres",
+    "Port": 5432,
+    "DatabaseName": "isis",
+    "Username": "isis",
+    "Password": "isis",
+    "Schema": "public"
+  },
+  "RecallDb": {
+    "Endpoint": "http://recalldb-server:8600",
+    "AdminApiKey": "recalldbadmin"
+  },
+  "Auth": {
+    "Issuer": "isis",
+    "SeedAdminEmail": "admin@isis.local",
+    "SeedAdminPassword": "isisadmin",
+    "DefaultAccessKey": "isisdefaultkey",
+    "DefaultSecretKey": "isisdefaultsecret"
+  },
+  "Logging": {
+    "ConsoleLogging": true,
+    "FileLogging": true,
+    "LogDirectory": "logs",
+    "LogFilename": "isis.log"
+  }
+}

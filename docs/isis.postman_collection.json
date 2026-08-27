@@ -1,0 +1,232 @@
+{
+  "info": {
+    "name": "Isis API",
+    "description": "Isis agent memory platform REST API. Auth is email/password → session token (Bearer) or credential access-key/secret-key. Run 'Auth › Tenants for email' then 'Auth › Login' first: the Login test script captures the token into the {{token}} collection variable, which the collection-level Bearer auth then uses for every other request.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://127.0.0.1:8700" },
+    { "key": "email", "value": "admin@isis.local" },
+    { "key": "password", "value": "isisadmin" },
+    { "key": "tenantId", "value": "ten_default" },
+    { "key": "token", "value": "" },
+    { "key": "accessKey", "value": "isisdefaultkey" },
+    { "key": "secretKey", "value": "isisdefaultsecret" },
+    { "key": "userId", "value": "usr_admin" }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Tenants for email",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{email}}\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/v1.0/api/tenants-for-email",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1.0", "api", "tenants-for-email"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.tenants && body.tenants.length === 1) {",
+                  "  pm.collectionVariables.set('tenantId', body.tenants[0].id);",
+                  "  console.log('Auto-selected tenant', body.tenants[0].name, body.tenants[0].id);",
+                  "}",
+                  "pm.test('has tenants', () => pm.expect(body.tenants.length).to.be.above(0));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login (issue token)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"tenantId\": \"{{tenantId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1.0/api/token",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1.0", "api", "token"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('got a token', () => pm.expect(pm.response.code).to.eql(200));",
+                  "const body = pm.response.json();",
+                  "if (body.token) {",
+                  "  pm.collectionVariables.set('token', body.token);",
+                  "  pm.collectionVariables.set('tenantId', body.tenantId);",
+                  "  pm.collectionVariables.set('userId', body.userId);",
+                  "  console.log('Token captured; expires', body.expiresUtc);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Whoami",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1.0/api/whoami",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1.0", "api", "whoami"]
+            }
+          }
+        },
+        {
+          "name": "Whoami (credential access/secret key)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [
+              { "key": "x-access-key", "value": "{{accessKey}}" },
+              { "key": "x-secret-key", "value": "{{secretKey}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1.0/api/whoami",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1.0", "api", "whoami"]
+            }
+          }
+        },
+        {
+          "name": "Logout (revoke token)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1.0/api/token",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1.0", "api", "token"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Users",
+      "item": [
+        {
+          "name": "List users",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1.0/api/tenants/{{tenantId}}/users",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1.0", "api", "tenants", "{{tenantId}}", "users"]
+            }
+          }
+        },
+        {
+          "name": "Create user",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firstName\": \"Ada\",\n  \"lastName\": \"Lovelace\",\n  \"email\": \"ada@example.com\",\n  \"password\": \"s3cret-pass\",\n  \"isTenantAdmin\": false,\n  \"active\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1.0/api/tenants/{{tenantId}}/users",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1.0", "api", "tenants", "{{tenantId}}", "users"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Credentials",
+      "item": [
+        {
+          "name": "List credentials",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1.0/api/tenants/{{tenantId}}/credentials",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1.0", "api", "tenants", "{{tenantId}}", "credentials"]
+            }
+          }
+        },
+        {
+          "name": "Create credential (secret shown once)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"CI pipeline\",\n  \"userId\": \"{{userId}}\",\n  \"active\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1.0/api/tenants/{{tenantId}}/credentials",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1.0", "api", "tenants", "{{tenantId}}", "credentials"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.accessKey && body.secretKey) {",
+                  "  pm.collectionVariables.set('accessKey', body.accessKey);",
+                  "  pm.collectionVariables.set('secretKey', body.secretKey);",
+                  "  console.log('Captured new credential access/secret key (secret is only shown now).');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Tenants",
+      "item": [
+        {
+          "name": "List tenants",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1.0/api/tenants",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1.0", "api", "tenants"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

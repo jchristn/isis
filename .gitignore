@@ -1,0 +1,46 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+artifacts/
+*.nupkg
+*.snupkg
+
+# Build output
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+
+# Test results
+TestResults/
+*.trx
+coverage/
+*.coverage
+
+# Local data / logs
+data/
+logs/
+*.db
+*.db-shm
+*.db-wal
+*.log
+
+# Node / dashboard
+node_modules/
+dashboard/dist/
+dashboard/.vite/
+*.local
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+!**/.env.example
+*.local.json
+
+# OS
+.DS_Store
+Thumbs.db

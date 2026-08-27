@@ -1,0 +1,404 @@
+// Translation resources. English is the source catalog; the pseudo-locale is
+// generated from it at load time to exercise string expansion / layout.
+
+export const en = {
+  translation: {
+    app: {
+      name: 'Isis',
+      tagline: 'Agent Memory Platform',
+      loading: 'Loading…',
+      restoring: 'Restoring session…'
+    },
+    common: {
+      refresh: 'Refresh',
+      add: 'Add',
+      create: 'Create',
+      edit: 'Edit',
+      save: 'Save',
+      cancel: 'Cancel',
+      close: 'Close',
+      delete: 'Delete',
+      view: 'View',
+      total: 'Total',
+      viewJson: 'View JSON',
+      viewDetails: 'View details',
+      actions: 'Actions',
+      search: 'Search',
+      apply: 'Apply',
+      clear: 'Clear',
+      copy: 'Copy',
+      copied: 'Copied',
+      loading: 'Loading…',
+      retry: 'Retry',
+      none: 'None',
+      yes: 'Yes',
+      no: 'No',
+      name: 'Name',
+      description: 'Description',
+      id: 'ID',
+      type: 'Type',
+      status: 'Status',
+      created: 'Created',
+      updated: 'Updated',
+      confirm: 'Confirm',
+      required: 'required',
+      optional: 'optional',
+      selectScope: 'Select a scope',
+      unsavedError: 'Something went wrong. Please try again.'
+    },
+    login: {
+      title: 'Sign in to Isis',
+      subtitle: 'Sign in with your email and password to manage agent memory.',
+      serverUrl: 'Server URL',
+      email: 'Email',
+      password: 'Password',
+      passwordPlaceholder: 'Your password',
+      selectTenant: 'Select tenant',
+      tenant: 'Tenant',
+      continue: 'Continue',
+      finding: 'Finding tenants…',
+      back: 'Back',
+      signIn: 'Sign in',
+      connecting: 'Signing in…',
+      noTenants: 'No tenants found for that email address.',
+      failed: 'Could not sign in. Check the server URL, email, and password.',
+      devHint: 'Local dev default: admin@isis.local / “isisadmin”.'
+    },
+    nav: {
+      groups: {
+        memory: 'Memory',
+        recall: 'Recall',
+        inference: 'Inference',
+        collections: 'Collections',
+        observability: 'Observability',
+        system: 'System',
+        administration: 'Administration'
+      },
+      home: 'Home',
+      scopes: 'Scopes',
+      categories: 'Categories',
+      memories: 'Memories',
+      search: 'Search Explorer',
+      chat: 'Chat with Memory',
+      embedding: 'Embedding Endpoints',
+      inference: 'Inference Endpoints',
+      collectionsRecall: 'RecallDB Collections',
+      requestHistory: 'Request History',
+      apiExplorer: 'API Explorer',
+      settings: 'Settings',
+      tenants: 'Tenants',
+      users: 'Users',
+      credentials: 'Credentials'
+    },
+    topbar: {
+      health: 'Health',
+      role: 'Role',
+      principal: 'Principal',
+      version: 'Version',
+      admin: 'Admin',
+      tenantAdmin: 'Tenant Admin',
+      user: 'User',
+      tenant: 'Tenant',
+      github: 'View on GitHub',
+      toggleTheme: 'Toggle theme',
+      logout: 'Logout',
+      language: 'Language'
+    },
+    states: {
+      loading: 'Loading…',
+      errorTitle: 'Something went wrong',
+      emptyTitle: 'Nothing here yet'
+    },
+    home: {
+      title: 'Overview',
+      subtitle: 'Current state of your agent memory platform.',
+      kpiScopes: 'Scopes',
+      kpiMemories: 'Memories',
+      kpiCategories: 'Categories',
+      kpiEndpointHealth: 'Endpoint health',
+      healthy: 'healthy',
+      unhealthy: 'unhealthy',
+      quickActions: 'Quick actions',
+      createScope: 'Create a scope',
+      addEndpoint: 'Add an endpoint',
+      openExplorer: 'Open API Explorer',
+      openChat: 'Chat with memory',
+      externalServices: 'External services',
+      externalServicesHint: 'Bundled observability + storage consoles (local development defaults).',
+      openService: 'Open',
+      memoriesPerScope: 'Memories per scope',
+      noScopes: 'No scopes yet. Create one to start storing memories.'
+    },
+    scopes: {
+      title: 'Scopes',
+      subtitle: 'Named memory spaces. Each maps to one store and a fixed embedding dimension.',
+      addScope: 'Add scope',
+      storeProvider: 'Store',
+      dimensionality: 'Dimensions',
+      recallCollection: 'Collection',
+      layout: 'Layout',
+      targetPath: 'Target path',
+      embeddingEndpoint: 'Embedding endpoint',
+      empty: 'No scopes yet. Create your first memory space to begin.',
+      openCategories: 'Categories',
+      openMemories: 'Memories',
+      openChat: 'Chat',
+      detailTitle: 'Scope detail',
+      dimensionLocked: 'The embedding model / dimension is fixed once a scope is created. Changing it requires a new collection and re-embedding.'
+    },
+    categories: {
+      title: 'Categories',
+      subtitle: 'Buckets with usage instructions the model reads before writing.',
+      addCategory: 'Add category',
+      instructions: 'Instructions',
+      empty: 'No categories in this scope yet.'
+    },
+    memories: {
+      title: 'Memories',
+      subtitle: 'Atomic notes stored in this scope.',
+      addMemory: 'Add memory',
+      slug: 'Slug',
+      titleField: 'Title',
+      summary: 'Summary',
+      body: 'Body',
+      tags: 'Tags',
+      category: 'Category',
+      filterCategory: 'Filter by category',
+      maxResults: 'Max results',
+      empty: 'No memories yet. Upsert one by (category, slug).',
+      upsertHint: 'Upsert is idempotent on (scope, category, slug).'
+    },
+    search: {
+      title: 'Search Explorer',
+      subtitle: 'Run keyword, semantic, or hybrid recall against a scope.',
+      query: 'Query',
+      queryPlaceholder: 'What are you looking for?',
+      mode: 'Mode',
+      topK: 'Top K',
+      weight: 'Text weight',
+      categoryFilter: 'Category filter',
+      run: 'Search',
+      running: 'Searching…',
+      results: 'Results',
+      score: 'Score',
+      effectiveMode: 'Effective mode',
+      empty: 'Run a search to see ranked memories.',
+      noHits: 'No memories matched this query.'
+    },
+    chat: {
+      title: 'Chat with Memory',
+      subtitle: 'Ask a scope’s memory questions in natural language.',
+      placeholder: 'Ask a question about this scope’s memory…',
+      send: 'Send',
+      thinking: 'Retrieving and composing…',
+      citations: 'Citations',
+      noInference: 'No inference endpoint is configured for this tenant. Add one under Inference Endpoints to enable synthesized answers.',
+      keywordOnly: 'This scope’s store supports keyword-only retrieval; answers may be less precise than semantic scopes.',
+      empty: 'Pick a scope and ask a question to begin.',
+      you: 'You',
+      isis: 'Isis'
+    },
+    endpoints: {
+      embeddingTitle: 'Embedding Endpoints',
+      embeddingSubtitle: 'Endpoints Isis uses to vectorize memory bodies and queries.',
+      inferenceTitle: 'Inference Endpoints',
+      inferenceSubtitle: 'Endpoints Isis uses for summaries, compaction, and chat.',
+      addEmbedding: 'Add embedding endpoint',
+      addInference: 'Add inference endpoint',
+      apiFormat: 'API format',
+      hostname: 'Hostname',
+      port: 'Port',
+      useSsl: 'Use SSL',
+      apiKey: 'API key',
+      model: 'Model',
+      dimensionality: 'Dimensions',
+      active: 'Active',
+      health: 'Health',
+      healthy: 'Healthy',
+      unhealthy: 'Unhealthy',
+      awaiting: 'Awaiting check',
+      inactive: 'Inactive',
+      uptime: 'Uptime',
+      test: 'Test',
+      testing: 'Testing…',
+      lastCheck: 'Last check',
+      lastError: 'Last error',
+      healthCheckUrl: 'Health check URL',
+      healthCheckMethod: 'Method',
+      healthCheckInterval: 'Interval (ms)',
+      healthCheckStatus: 'Expected status',
+      healthCheckAuth: 'Use auth for health check',
+      healthConfig: 'Health check configuration',
+      empty: 'No endpoints configured yet.',
+      pollNote: 'Health refreshes automatically every 15 seconds.'
+    },
+    collections: {
+      title: 'RecallDB Collections',
+      subtitle: 'Pass-through view of the RecallDB collections backing your scopes.',
+      passThroughNote: 'Collection administration is a thin pass-through to RecallDB’s own REST API. Isis owns the scope → collection binding and keeps each scope’s embedding dimension fixed.',
+      empty: 'The RecallDB collections pass-through is not yet wired into this build. Manage collections from the RecallDB console for now.',
+      dimension: 'Dimension'
+    },
+    requestHistory: {
+      title: 'Request History',
+      subtitle: 'Investigate captured requests and failures.',
+      unavailableTitle: 'Request history is not yet available',
+      unavailable: 'The Isis server does not yet expose the request-history API this page consumes. Once the /v1.0/api/requests capture endpoint ships, this page will show KPIs, an activity chart, filters, and a request inspector.',
+      checkAgain: 'Check again'
+    },
+    explorer: {
+      title: 'API Explorer',
+      subtitle: 'Execute live Isis API calls, driven by the server’s OpenAPI document.',
+      operations: 'Operations',
+      searchOps: 'Filter operations…',
+      pathParams: 'Path parameters',
+      queryParams: 'Query parameters',
+      headers: 'Headers',
+      body: 'Request body',
+      execute: 'Execute',
+      executing: 'Executing…',
+      response: 'Response',
+      responseStatus: 'Status',
+      responseTime: 'Time',
+      responseHeaders: 'Response headers',
+      responseBody: 'Response body',
+      resolvedUrl: 'Resolved URL',
+      codeSnippets: 'Code snippets',
+      history: 'History',
+      loadHistory: 'Load',
+      deleteHistory: 'Delete',
+      noSpec: 'Could not load /openapi.json',
+      noSpecHint: 'The API Explorer needs the server’s OpenAPI document. Confirm the server is reachable and exposes /openapi.json.',
+      pickOperation: 'Pick an operation from the left to build a request.',
+      confirmDestructive: 'This is a destructive operation',
+      confirmDestructiveBody: 'You are about to run {{method}} {{path}}. This may permanently modify data. Continue?',
+      invalidJson: 'Request body is not valid JSON.',
+      authInherited: 'Requests use your dashboard credentials automatically.'
+    },
+    settings: {
+      title: 'Settings',
+      subtitle: 'Server, connection, and authentication context.',
+      serverInfo: 'Server info',
+      product: 'Product',
+      version: 'Version',
+      node: 'Node',
+      utc: 'Server time (UTC)',
+      connection: 'Connection',
+      endpoint: 'Endpoint',
+      authContext: 'Authentication context',
+      authScheme: 'Auth scheme',
+      sessionToken: 'Session token (email/password)',
+      principal: 'Principal',
+      principalType: 'Principal type',
+      role: 'Role',
+      tenant: 'Tenant',
+      credentialId: 'Credential ID',
+      copyableUrls: 'Copyable URLs',
+      health: 'Health endpoint',
+      openapi: 'OpenAPI document',
+      whoami: 'Identity (whoami)',
+      changeTenant: 'Active tenant ID',
+      updateTenant: 'Update tenant'
+    },
+    tenants: {
+      title: 'Tenants',
+      subtitle: 'Top-level isolation boundaries.',
+      addTenant: 'Add tenant',
+      empty: 'No tenants found.',
+      adminOnly: 'Tenant administration requires a system administrator. Sign in as an admin to manage tenants.'
+    },
+    users: {
+      title: 'Users',
+      subtitle: 'People who can sign in to this tenant.',
+      addUser: 'Add user',
+      editUser: 'Edit user',
+      firstName: 'First name',
+      lastName: 'Last name',
+      email: 'Email',
+      password: 'Password',
+      passwordEdit: 'Password (leave blank to keep)',
+      passwordUnchanged: 'Unchanged',
+      isAdmin: 'System administrator (all tenants)',
+      isTenantAdmin: 'Tenant administrator',
+      active: 'Active',
+      empty: 'No users yet. Add one to grant sign-in access.',
+      adminOnly: 'User administration requires an administrator. Sign in as an admin to manage users.',
+      created: 'User created',
+      updated: 'User updated',
+      deleted: 'User deleted'
+    },
+    credentials: {
+      title: 'Credentials',
+      subtitle: 'Access-key / secret-key pairs for automation and MCP.',
+      addCredential: 'Add credential',
+      editCredential: 'Edit credential',
+      namePlaceholder: 'e.g. CI pipeline',
+      owner: 'Owner',
+      accessKey: 'Access key',
+      secret: 'Secret',
+      secretKeyFull: 'Secret key',
+      active: 'Active',
+      empty: 'No credentials yet. Add one to let automation authenticate.',
+      adminOnly: 'Credential administration requires an administrator. Sign in as an admin to manage credentials.',
+      created: 'Credential created',
+      updated: 'Credential updated',
+      deleted: 'Credential deleted',
+      secretRevealedTitle: 'Copy the secret key now',
+      secretRevealedWarning: 'This is the only time the secret key is shown. Copy it now — you will not be able to see it again.'
+    },
+    table: {
+      selectColumns: 'Columns',
+      noData: 'No data',
+      showing: 'Showing {{from}}–{{to}} of {{total}}',
+      page: 'Page {{page}} of {{pages}}',
+      first: 'First',
+      previous: 'Previous',
+      next: 'Next',
+      last: 'Last',
+      pageSize: 'Per page',
+      jumpTo: 'Go to page'
+    },
+    confirm: {
+      deleteTitle: 'Confirm delete',
+      deleteBody: 'Delete “{{name}}”? This cannot be undone.',
+      deleting: 'Deleting…'
+    }
+  }
+};
+
+// Build the pseudo-locale by wrapping/expanding source strings. Accent map keeps
+// text recognizable while expanding length ~35% to surface truncation bugs.
+const ACCENTS = {
+  a: 'á', e: 'é', i: 'í', o: 'ó', u: 'ú', A: 'Á', E: 'É', I: 'Í', O: 'Ó', U: 'Ú',
+  c: 'ç', n: 'ñ', s: 'š', y: 'ý'
+};
+
+function pseudoString(str) {
+  let out = '';
+  for (const ch of str) out += ACCENTS[ch] || ch;
+  const padCount = Math.max(1, Math.round(str.replace(/\s/g, '').length * 0.3));
+  return `⟦${out}${'·'.repeat(padCount)}⟧`;
+}
+
+function pseudoize(node) {
+  if (typeof node === 'string') {
+    // Preserve interpolation tokens like {{name}}.
+    return node
+      .split(/(\{\{[^}]+\}\})/g)
+      .map((part) => (part.startsWith('{{') ? part : pseudoString(part)))
+      .join('');
+  }
+  if (typeof node === 'object' && node !== null) {
+    const result = {};
+    for (const [k, v] of Object.entries(node)) result[k] = pseudoize(v);
+    return result;
+  }
+  return node;
+}
+
+export const enXA = pseudoize(en);
+
+export const resources = {
+  en,
+  'en-XA': enXA
+};

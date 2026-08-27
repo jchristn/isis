@@ -1,0 +1,40 @@
+{
+  "nodeId": "isis-1",
+  "rest": {
+    "hostname": "*",
+    "port": 8700,
+    "ssl": false
+  },
+  "database": {
+    "type": "Postgresql",
+    "filename": "data/isis.db",
+    "hostname": "postgres",
+    "port": 5432,
+    "databaseName": "isis",
+    "username": "isis",
+    "password": "isis",
+    "schema": "public",
+    "logQueries": false,
+    "requireEncryption": false
+  },
+  "recallDb": {
+    "endpoint": "http://recalldb-server:8600",
+    "adminApiKey": "recalldbadmin"
+  },
+  "verbex": {},
+  "auth": {
+    "issuer": "isis",
+    "sessionLifetimeMinutes": 1440,
+    "seedAdminEmail": "admin@isis.local",
+    "seedAdminPassword": "isisadmin",
+    "defaultAccessKey": "isisdefaultkey",
+    "defaultSecretKey": "isisdefaultsecret"
+  },
+  "logging": {
+    "consoleLogging": true,
+    "logQueries": false
+  },
+  "requestHistory": {
+    "enabled": true
+  }
+}

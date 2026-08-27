@@ -1,0 +1,39 @@
+{
+  "name": "Demo Seed Pack",
+  "description": "Illustrative categories and policies for the Isis factory/demo environment. Initializes a demo scope so a new operator can see how categories, usage instructions, and cross-cutting policies fit together.",
+  "scope": {
+    "name": "demo",
+    "description": "Demo scope showcasing code + writing memory.",
+    "storeProvider": "RecallDb"
+  },
+  "categories": [
+    {
+      "slug": "filesystem-layout",
+      "name": "Filesystem Layout",
+      "description": "Where things live in the repository.",
+      "instructions": "Write one memory per project describing the top-level directory layout and what each area owns. Update in place when structure changes."
+    },
+    {
+      "slug": "build-commands",
+      "name": "Build & Test Commands",
+      "description": "How to build, run, and test the project.",
+      "instructions": "Record the exact commands (build, test, lint, run). Prefer copy-pasteable one-liners. Note prerequisites and expected outputs."
+    },
+    {
+      "slug": "decisions",
+      "name": "Decisions & Rationale",
+      "description": "Design decisions and why they were made.",
+      "instructions": "Capture a decision, the alternatives considered, and the reasoning. Link related decisions with [[slug]] references."
+    }
+  ],
+  "policies": [
+    {
+      "name": "Commit Message Style",
+      "body": "Use imperative present tense (\"add\", not \"added\"). Keep the subject under 72 characters. Explain the why in the body when non-obvious."
+    },
+    {
+      "name": "Writing Style",
+      "body": "Prefer plain, direct prose. Avoid filler and hedging. Define acronyms on first use."
+    }
+  ]
+}

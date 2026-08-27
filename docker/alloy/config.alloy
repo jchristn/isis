@@ -1,0 +1,36 @@
+// Grafana Alloy ships container stdout/stderr logs to Loki. This gives log coverage for every service in
+// the stack without touching any application logging code: each Isis service continues to log to stdout,
+// and Alloy discovers the container, tails its Docker log stream, and forwards it to Loki with a
+// container label so an operator can correlate a log line to a trace inside one Grafana window.
+
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "service"
+  }
+}
+
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.containers.output
+  forward_to = [loki.write.default.receiver]
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

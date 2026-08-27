@@ -1,0 +1,334 @@
+# Isis — Agent Memory Platform — development stack.
+#
+#   cd docker
+#   cp .env.example .env      # then edit the secrets
+#   docker compose up -d --build
+#
+# Every service uses a NAMED image (jchristn77/isis-*:v0.1.0) AND a build: stanza, so `docker compose up`
+# pulls published images while `docker compose up --build` rebuilds locally from source. Third-party images
+# are pinned to explicit versions (never :latest). All host-published ports bind 127.0.0.1 (loopback only)
+# so nothing is exposed on the network by default.
+
+services:
+
+  # ------------------------------------------------------------------
+  # Shared Postgres (pgvector). Hosts both the `isis` and `recalldb` databases.
+  # ------------------------------------------------------------------
+  postgres:
+    container_name: 'isis-postgres'
+    image: 'ankane/pgvector:v0.5.1'
+    ports:
+      - '127.0.0.1:5432:5432'
+    environment:
+      POSTGRES_DB: 'isis'
+      POSTGRES_USER: 'isis'
+      POSTGRES_PASSWORD: 'isis'
+    volumes:
+      - isis-postgres-data:/var/lib/postgresql/data
+      # Creates the recalldb database and enables the vector/pg_trgm extensions on first init.
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      # Force a TCP check (-h 127.0.0.1) so the container is only reported healthy once the real server is
+      # listening on the network — the local socket is up during first-init (initdb + create db + extensions)
+      # before postgres accepts TCP, and dependents would otherwise start too early.
+      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -p 5432 -U isis -d isis']
+      interval: 5s
+      timeout: 2s
+      retries: 3
+      start_period: 30s
+
+  # ------------------------------------------------------------------
+  # RecallDB — memory content + hybrid (vector + full-text) search.
+  # ------------------------------------------------------------------
+  recalldb-server:
+    container_name: 'recalldb-server'
+    image: 'jchristn77/recalldb-server:v0.2.1'
+    ports:
+      - '127.0.0.1:8600:8600'   # REST
+      - '127.0.0.1:8620:8620'   # MCP (infra/admin surface — not exposed to agents by Isis)
+      - '127.0.0.1:9464:9464'   # Prometheus scrape
+    environment:
+      RECALLDB_DB_HOST: 'postgres'
+      RECALLDB_DB_PORT: '5432'
+      RECALLDB_DB_NAME: 'recalldb'
+      RECALLDB_DB_USER: 'isis'
+      RECALLDB_DB_PASS: 'isis'
+      RECALLDB_MCP_ENABLED: 'true'
+      RECALLDB_MCP_HOSTNAME: '*'
+      RECALLDB_MCP_PORT: '8620'
+      RECALLDB_OBS_ENABLED: 'true'
+      RECALLDB_OBS_PROM_HOSTNAME: '*'
+      RECALLDB_OBS_PROM_PORT: '9464'
+      RECALLDB_OTLP_ENDPOINT: 'http://tempo:4317'
+      RECALLDB_OTLP_PROTOCOL: 'grpc'
+      RECALLDB_OBS_SERVICE_NAME: 'recalldb-server'
+    volumes:
+      - ./recalldb/recalldb.json:/app/recalldb.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      # The recalldb-server image ships wget (not curl); its root path returns 200 when ready.
+      test: ['CMD-SHELL', 'wget -q -O /dev/null http://localhost:8600/ || exit 1']
+      interval: 5s
+      timeout: 2s
+      retries: 3
+      start_period: 40s
+
+  recalldb-dashboard:
+    container_name: 'recalldb-dashboard'
+    image: 'jchristn77/recalldb-dashboard:v0.2.1'
+    ports:
+      - '127.0.0.1:8601:8601'
+    environment:
+      # Rendered into the browser as the API base URL — must be the host-published port.
+      RECALLDB_SERVER_URL: 'http://localhost:8600'
+      RECALLDB_API_KEY: 'recalldbadmin'
+    depends_on:
+      recalldb-server:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -fsS http://localhost:8601/ || exit 1']
+      interval: 5s
+      timeout: 2s
+      retries: 3
+      start_period: 20s
+
+  # ------------------------------------------------------------------
+  # Isis REST server (Isis.Server, Watson 7.1).
+  # ------------------------------------------------------------------
+  isis-server:
+    container_name: 'isis-server'
+    image: 'jchristn77/isis-server:v0.1.0'
+    build:
+      context: ..
+      dockerfile: docker/server/Dockerfile
+    ports:
+      - '127.0.0.1:8700:8700'
+    environment:
+      # The mounted settings file binds Rest.Hostname '*' and points RecallDb at recalldb-server. These
+      # env vars override the DB and auth sections after the file loads (secrets come from .env).
+      ISIS_SETTINGS_FILE: '/app/config/isis.json'
+      ISIS_DB_TYPE: 'Postgresql'
+      ISIS_DB_SERVER: 'postgres'
+      ISIS_DB_DATABASE: 'isis'
+      ISIS_DB_USERNAME: 'isis'
+      ISIS_DB_PASSWORD: 'isis'
+      ISIS_AUTH_SEED_ADMIN_EMAIL: '${ISIS_AUTH_SEED_ADMIN_EMAIL:-admin@isis.local}'
+      ISIS_AUTH_SEED_ADMIN_PASSWORD: '${ISIS_AUTH_SEED_ADMIN_PASSWORD:-isisadmin}'
+      ISIS_AUTH_DEFAULT_ACCESS_KEY: '${ISIS_AUTH_DEFAULT_ACCESS_KEY:-isisdefaultkey}'
+      ISIS_AUTH_DEFAULT_SECRET_KEY: '${ISIS_AUTH_DEFAULT_SECRET_KEY:-isisdefaultsecret}'
+    volumes:
+      # NOT :ro — Isis writes the settings file back on load.
+      - ./isis/isis.json:/app/config/isis.json
+      - ./logs/isis:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      recalldb-server:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -fsS http://localhost:8700/v1.0/api/health || exit 1']
+      interval: 5s
+      timeout: 2s
+      retries: 3
+      start_period: 40s
+
+  # ------------------------------------------------------------------
+  # Isis MCP server (Isis.McpServer, Voltaic 0.6.1) — proxies the REST server.
+  # ------------------------------------------------------------------
+  isis-mcp:
+    container_name: 'isis-mcp'
+    image: 'jchristn77/isis-mcp:v0.1.0'
+    build:
+      context: ..
+      dockerfile: docker/mcp/Dockerfile
+    ports:
+      - '127.0.0.1:8720:8720'
+    environment:
+      ISIS_MCP_HOSTNAME: '*'
+      ISIS_MCP_PORT: '8720'
+      ISIS_MCP_REST_HOSTNAME: 'isis-server'
+      ISIS_MCP_REST_PORT: '8700'
+    depends_on:
+      isis-server:
+        condition: service_healthy
+    healthcheck:
+      # The MCP server serves a liveness page at '/'.
+      test: ['CMD-SHELL', 'curl -fsS http://localhost:8720/ || exit 1']
+      interval: 5s
+      timeout: 2s
+      retries: 3
+      start_period: 30s
+
+  # ------------------------------------------------------------------
+  # Isis dashboard (React 19 / Vite 6, served by nginx).
+  # ------------------------------------------------------------------
+  isis-dashboard:
+    container_name: 'isis-dashboard'
+    image: 'jchristn77/isis-dashboard:v0.1.0'
+    build:
+      context: ../dashboard
+      dockerfile: Dockerfile
+    ports:
+      - '127.0.0.1:8701:80'
+    depends_on:
+      isis-server:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q -O /dev/null http://localhost:80/ || exit 1']
+      interval: 5s
+      timeout: 2s
+      retries: 3
+      start_period: 15s
+
+  # ------------------------------------------------------------------
+  # nginx fronts — independent for REST and MCP.
+  # ------------------------------------------------------------------
+  nginx-rest:
+    container_name: 'isis-nginx-rest'
+    image: 'nginx:1.27-alpine'
+    ports:
+      - '127.0.0.1:8080:80'
+    volumes:
+      - ./nginx/rest.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      isis-server:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q -O /dev/null http://localhost:80/v1.0/api/health || exit 1']
+      interval: 5s
+      timeout: 2s
+      retries: 3
+      start_period: 15s
+
+  nginx-mcp:
+    container_name: 'isis-nginx-mcp'
+    image: 'nginx:1.27-alpine'
+    ports:
+      - '127.0.0.1:8090:80'
+    volumes:
+      - ./nginx/mcp.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      isis-mcp:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q -O /dev/null http://localhost:80/ || exit 1']
+      interval: 5s
+      timeout: 2s
+      retries: 3
+      start_period: 15s
+
+  # ------------------------------------------------------------------
+  # Observability: Prometheus + Tempo + Loki + Alloy + Grafana.
+  # ------------------------------------------------------------------
+  prometheus:
+    container_name: 'isis-prometheus'
+    image: 'prom/prometheus:v3.5.4'
+    ports:
+      - '127.0.0.1:9090:9090'
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yaml'
+      - '--storage.tsdb.path=/prometheus'
+    volumes:
+      - ./prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+      - isis-prometheus-data:/prometheus
+    depends_on:
+      isis-server:
+        condition: service_healthy
+    healthcheck:
+      # The prometheus image ships wget (not curl); /-/healthy returns 200 when ready.
+      test: ['CMD-SHELL', 'wget -q -O /dev/null http://localhost:9090/-/healthy || exit 1']
+      interval: 5s
+      timeout: 2s
+      retries: 3
+      start_period: 20s
+
+  tempo:
+    container_name: 'isis-tempo'
+    # Pinned: 'latest' currently resolves to a v3.x dev build whose config parser rejects the standard
+    # ingester/compactor sections. 2.6.1 is the last known-good stable release for this config.
+    image: 'grafana/tempo:2.6.1'
+    command: ['-config.file=/etc/tempo.yaml']
+    ports:
+      - '127.0.0.1:3200:3200'   # query API (Grafana data source)
+      - '127.0.0.1:4317:4317'   # OTLP gRPC
+      - '127.0.0.1:4318:4318'   # OTLP HTTP
+    volumes:
+      - ./tempo.yaml:/etc/tempo.yaml:ro
+      - isis-tempo-data:/var/tempo
+    healthcheck:
+      # The tempo image ships wget (not curl); /ready returns 503 until fully ready, then 200.
+      test: ['CMD-SHELL', 'wget -q -O /dev/null http://localhost:3200/ready || exit 1']
+      interval: 5s
+      timeout: 2s
+      retries: 3
+      start_period: 40s
+
+  loki:
+    container_name: 'isis-loki'
+    image: 'grafana/loki:3.3.2'
+    command: ['-config.file=/etc/loki/loki-config.yaml']
+    ports:
+      - '127.0.0.1:3100:3100'
+    volumes:
+      - ./loki-config.yaml:/etc/loki/loki-config.yaml:ro
+      - isis-loki-data:/loki
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q -O /dev/null http://localhost:3100/ready || exit 1']
+      interval: 5s
+      timeout: 2s
+      retries: 3
+      start_period: 30s
+
+  alloy:
+    container_name: 'isis-alloy'
+    image: 'grafana/alloy:v1.5.1'
+    command:
+      - 'run'
+      - '--server.http.listen-addr=0.0.0.0:12345'
+      - '--storage.path=/var/lib/alloy/data'
+      - '/etc/alloy/config.alloy'
+    ports:
+      - '127.0.0.1:12345:12345'
+    volumes:
+      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - isis-alloy-data:/var/lib/alloy/data
+    depends_on:
+      - loki
+
+  grafana:
+    container_name: 'isis-grafana'
+    image: 'grafana/grafana-oss:13.0.2'
+    ports:
+      - '127.0.0.1:3000:3000'
+    environment:
+      GF_SECURITY_ADMIN_USER: 'admin'
+      GF_SECURITY_ADMIN_PASSWORD: '${GF_SECURITY_ADMIN_PASSWORD:-admin}'
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+      GF_USERS_DEFAULT_THEME: 'dark'
+    volumes:
+      - isis-grafana-data:/var/lib/grafana
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ../assets/grafana:/var/lib/grafana/dashboards/isis:ro
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      tempo:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -fsS http://localhost:3000/api/health || exit 1']
+      interval: 5s
+      timeout: 2s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  isis-postgres-data:
+  isis-prometheus-data:
+  isis-tempo-data:
+  isis-loki-data:
+  isis-alloy-data:
+  isis-grafana-data:

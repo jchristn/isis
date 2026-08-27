@@ -1,0 +1,52 @@
+# Isis — factory / demo overlay.
+#
+# Layers on top of the base stack to produce a deterministic, seeded demo environment:
+#
+#   cd docker
+#   docker compose -f compose.yaml -f compose.factory.yaml up -d --build
+#
+# What the overlay changes:
+#   - Pins demo credentials (isisadmin / isisdefaultkey / admin) so the seeded default administrator and
+#     tenant credential are predictable, regardless of any .env you have set.
+#   - Mounts the factory Isis settings file (docker/factory/isis/isis.json).
+#   - Runs a one-shot `isis-factory-seed` container that waits for the REST server, then applies the demo
+#     seed pack (docker/factory/seed/demo-seedpack.json) — a demo scope, categories, and policies — over
+#     the REST API. It is best-effort (a route that is not yet implemented is skipped, never fatal).
+#
+# The base stack already seeds the default administrator on first boot via Isis's DefaultSeeder; this
+# overlay adds the illustrative memory content on top. Use docker/factory/reset.bat (or reset.sh) to wipe
+# volumes and start clean.
+
+services:
+
+  isis-server:
+    environment:
+      ISIS_AUTH_SEED_ADMIN_EMAIL: 'admin@isis.local'
+      ISIS_AUTH_SEED_ADMIN_PASSWORD: 'isisadmin'
+      ISIS_AUTH_DEFAULT_ACCESS_KEY: 'isisdefaultkey'
+      ISIS_AUTH_DEFAULT_SECRET_KEY: 'isisdefaultsecret'
+    volumes:
+      - ./factory/isis/isis.json:/app/config/isis.json
+      - ./logs/isis:/app/logs
+
+  grafana:
+    environment:
+      GF_SECURITY_ADMIN_USER: 'admin'
+      GF_SECURITY_ADMIN_PASSWORD: 'admin'
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+      GF_USERS_DEFAULT_THEME: 'dark'
+
+  # One-shot seeder. Waits for the REST server to report healthy, then POSTs the demo seed pack.
+  isis-factory-seed:
+    container_name: 'isis-factory-seed'
+    image: 'curlimages/curl:8.11.1'
+    depends_on:
+      isis-server:
+        condition: service_healthy
+    volumes:
+      - ./factory/seed:/seed:ro
+    entrypoint: ['sh', '/seed/seed.sh']
+    environment:
+      ISIS_REST_BASE: 'http://isis-server:8700'
+      ISIS_ADMIN_KEY: 'isisadmin'
+    restart: 'no'

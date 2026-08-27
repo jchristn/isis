@@ -1,0 +1,59 @@
+{
+  "Webserver": {
+    "Hostname": "*",
+    "Port": 8600,
+    "Ssl": false
+  },
+  "Database": {
+    "Hostname": "postgres",
+    "Port": 5432,
+    "DatabaseName": "recalldb",
+    "Username": "isis",
+    "Password": "isis",
+    "Schema": "public",
+    "RequireEncryption": false,
+    "LogQueries": false
+  },
+  "Logging": {
+    "ConsoleLogging": true,
+    "EnableColors": false,
+    "MinimumSeverity": 0,
+    "LogDirectory": "./logs/",
+    "LogFilename": "recalldb.log",
+    "FileLogging": true,
+    "IncludeDateInFilename": true,
+    "Servers": []
+  },
+  "Debug": {
+    "Authentication": false,
+    "Exceptions": true,
+    "Requests": false,
+    "DatabaseQueries": false
+  },
+  "Mcp": {
+    "Enabled": true,
+    "Hostname": "*",
+    "Port": 8620,
+    "ServerName": "RecallDB.McpServer",
+    "ServerVersion": "0.2.1",
+    "LogOperations": false
+  },
+  "Observability": {
+    "Enabled": true,
+    "ServiceName": "recalldb-server",
+    "ServiceInstanceId": null,
+    "PrometheusEnabled": true,
+    "PrometheusHostname": "*",
+    "PrometheusPort": 9464,
+    "PrometheusPath": "/metrics",
+    "TracingEnabled": true,
+    "OtlpEndpoint": "http://tempo:4317",
+    "OtlpProtocol": "grpc",
+    "SamplingRatio": 1.0,
+    "IncludeRuntimeMetrics": true,
+    "IncludeProcessMetrics": true
+  },
+  "AdminApiKeys": [
+    "recalldbadmin"
+  ]
+}
