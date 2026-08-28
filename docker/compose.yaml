@@ -365,6 +365,7 @@ services:
       - isis-grafana-data:/var/lib/grafana
       - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
       - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ../assets/grafana:/var/lib/grafana/dashboards/isis:ro
     depends_on:
       prometheus:
         condition: service_healthy
@@ -376,29 +377,6 @@ services:
       timeout: 2s
       retries: 3
       start_period: 30s
-
-  # ------------------------------------------------------------------
-  # One-shot: build the nested Grafana folder tree (single "Isis" folder with Overview/API/Runtime/
-  # Services/Storage subfolders) and upload each dashboard into its subfolder via the Grafana HTTP API.
-  # Grafana's file provisioner can only create flat folders, so this runs after Grafana is healthy and
-  # then exits. Idempotent — re-runs update dashboards in place.
-  # ------------------------------------------------------------------
-  grafana-init:
-    container_name: 'isis-grafana-init'
-    image: 'curlimages/curl:8.11.1'
-    depends_on:
-      grafana:
-        condition: service_healthy
-    environment:
-      GRAFANA_URL: 'http://grafana:3000'
-      GRAFANA_USER: 'admin'
-      GRAFANA_PASS: '${GF_SECURITY_ADMIN_PASSWORD:-admin}'
-      DASHBOARD_DIR: '/dashboards'
-    entrypoint: ['/bin/sh', '/provision-folders.sh']
-    volumes:
-      - ./grafana/provision-folders.sh:/provision-folders.sh:ro
-      - ../assets/grafana:/dashboards:ro
-    restart: 'no'
 
 volumes:
   isis-postgres-data:
