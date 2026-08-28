@@ -33,6 +33,21 @@ namespace Isis.Core.Recall
         /// </summary>
         public int? CompletionTokens { get; set; } = null;
 
+        /// <summary>
+        /// Time to first token in milliseconds, reported on the terminal chunk when available.
+        /// </summary>
+        public double? TimeToFirstTokenMs { get; set; } = null;
+
+        /// <summary>
+        /// Generation time in milliseconds (first token to last), reported on the terminal chunk when available.
+        /// </summary>
+        public double? GenerationMs { get; set; } = null;
+
+        /// <summary>
+        /// Output tokens per second over the generation window, reported on the terminal chunk when available.
+        /// </summary>
+        public double? TokensPerSecond { get; set; } = null;
+
         #endregion
 
         #region Constructors-and-Factories

@@ -449,14 +449,23 @@ function ChatView() {
                 );
               }
               // assistant
-              const empty = !msg.answer && !msg.thinking && !msg.retrieval;
               return (
                 <div key={i} className="chat-msg assistant">
                   <Thinking text={msg.thinking} />
                   <RetrievalTrace retrieval={msg.retrieval} />
-                  <div className="chat-answer">
-                    {msg.answer || (!msg.done && empty ? '…' : '')}
-                  </div>
+                  {msg.answer && <div className="chat-answer">{msg.answer}</div>}
+                  {!msg.done && !msg.answer && (
+                    <div className="chat-working" aria-live="polite">
+                      <span className="chat-working-dots" aria-hidden="true"><span /><span /><span /></span>
+                      <span className="chat-working-label">
+                        {msg.thinking
+                          ? t('chat.working.thinking')
+                          : msg.retrieval
+                          ? t('chat.working.generating')
+                          : t('chat.working.retrieving')}
+                      </span>
+                    </div>
+                  )}
                   {msg.notice && (
                     <div className="notice-banner" style={{ marginTop: 8, marginBottom: 0 }}>
                       {msg.notice}

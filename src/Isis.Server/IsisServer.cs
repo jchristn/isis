@@ -43,6 +43,7 @@ namespace Isis.Server
         private readonly AuthorizationService _AuthorizationService;
         private readonly MemoryService _MemoryService;
         private readonly HttpClient _ProbeClient;
+        private readonly HttpClient _InferenceClient;
         private readonly HealthCheckService _HealthCheck;
         private readonly InferenceService _InferenceService;
         private readonly MemoryChatService _ChatService;
@@ -89,7 +90,10 @@ namespace Isis.Server
 
             _ProbeClient = new HttpClient();
             _HealthCheck = new HealthCheckService(_ProbeClient);
-            _InferenceService = new InferenceService(_ProbeClient);
+            // Inference streams can run far longer than the default 100s HttpClient timeout; rely on the
+            // per-request cancellation token rather than a hard client timeout.
+            _InferenceClient = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+            _InferenceService = new InferenceService(_InferenceClient);
             _ChatService = new MemoryChatService(_MemoryService, _InferenceService);
 
             WebserverSettings webserverSettings = new WebserverSettings();
@@ -304,6 +308,7 @@ namespace Isis.Server
             {
                 if (_Server is IDisposable disposableServer) disposableServer.Dispose();
                 _ProbeClient.Dispose();
+                _InferenceClient.Dispose();
             }
 
             _Disposed = true;

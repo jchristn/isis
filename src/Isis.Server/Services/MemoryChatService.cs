@@ -140,6 +140,9 @@ namespace Isis.Server.Services
             bool firstAnswer = true;
             int promptTokens = 0;
             int completionTokens = 0;
+            double? providerTtft = null;
+            double? providerGeneration = null;
+            double? providerTps = null;
             bool inThink = false;
             string tail = string.Empty;
 
@@ -193,14 +196,23 @@ namespace Isis.Server.Services
                 if (!string.IsNullOrEmpty(chunk.Content)) await ProcessContentAsync(chunk.Content!).ConfigureAwait(false);
                 if (chunk.PromptTokens.HasValue) promptTokens = chunk.PromptTokens.Value;
                 if (chunk.CompletionTokens.HasValue) completionTokens = chunk.CompletionTokens.Value;
+                if (chunk.TimeToFirstTokenMs.HasValue) providerTtft = chunk.TimeToFirstTokenMs.Value;
+                if (chunk.GenerationMs.HasValue) providerGeneration = chunk.GenerationMs.Value;
+                if (chunk.TokensPerSecond.HasValue) providerTps = chunk.TokensPerSecond.Value;
             }
 
             if (!string.IsNullOrEmpty(tail)) await EmitSegmentAsync(inThink, tail).ConfigureAwait(false);
 
             stopwatch.Stop();
             double totalMs = stopwatch.Elapsed.TotalMilliseconds;
-            double generationMs = Math.Max(0.0, totalMs - ttftMs);
-            double tokensPerSecond = completionTokens > 0 && generationMs > 0.0 ? completionTokens / (generationMs / 1000.0) : 0.0;
+            double measuredGeneration = Math.Max(0.0, totalMs - ttftMs);
+            double measuredTps = completionTokens > 0 && measuredGeneration > 0.0 ? completionTokens / (measuredGeneration / 1000.0) : 0.0;
+
+            // Prefer the endpoint's own timing/throughput (reported by PolyPrompt) and fall back to the
+            // wall-clock measurements when the endpoint does not report them.
+            double timeToFirstTokenMs = providerTtft.HasValue && providerTtft.Value > 0.0 ? providerTtft.Value : ttftMs;
+            double generationMs = providerGeneration.HasValue && providerGeneration.Value > 0.0 ? providerGeneration.Value : measuredGeneration;
+            double tokensPerSecond = providerTps.HasValue && providerTps.Value > 0.0 ? providerTps.Value : measuredTps;
 
             await emit(new
             {
@@ -213,7 +225,7 @@ namespace Isis.Server.Services
                 promptTokens = promptTokens,
                 completionTokens = completionTokens,
                 totalTokens = promptTokens + completionTokens,
-                timeToFirstTokenMs = ttftMs,
+                timeToFirstTokenMs = timeToFirstTokenMs,
                 generationMs = generationMs,
                 tokensPerSecond = tokensPerSecond
             }, token).ConfigureAwait(false);

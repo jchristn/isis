@@ -235,6 +235,11 @@ export const en = {
       retrievalScore: 'Score',
       retrievalSnippet: 'Snippet',
       streamError: 'The assistant failed to respond.',
+      working: {
+        retrieving: 'Retrieving memories…',
+        thinking: 'Thinking…',
+        generating: 'Generating response…'
+      },
       stats: {
         title: 'Response details',
         trigger: 'Details',

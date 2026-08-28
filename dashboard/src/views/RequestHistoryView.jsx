@@ -45,33 +45,13 @@ function EmptyLine({ children }) {
  */
 function HeadersSection({ raw, emptyLabel }) {
   if (raw == null || raw === '') return <EmptyLine>{emptyLabel}</EmptyLine>;
-  let parsed = null;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    parsed = null;
-  }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return <CodeViewer value={raw} language="text" />;
-  }
-  const entries = Object.entries(parsed);
-  if (entries.length === 0) return <EmptyLine>{emptyLabel}</EmptyLine>;
-  return (
-    <dl className="kv-grid">
-      {entries.map(([k, v]) => (
-        <div key={k} style={{ display: 'contents' }}>
-          <dt className="cell-mono">{k}</dt>
-          <dd className="cell-mono">{typeof v === 'string' ? v : JSON.stringify(v)}</dd>
-        </div>
-      ))}
-    </dl>
-  );
+  return <CodeViewer value={raw} maxHeight={280} />;
 }
 
 /** Render a captured request/response body via CodeViewer, or an empty-state line when absent. */
 function BodySection({ raw, emptyLabel }) {
   if (raw == null || raw === '') return <EmptyLine>{emptyLabel}</EmptyLine>;
-  return <CodeViewer value={raw} />;
+  return <CodeViewer value={raw} maxHeight={420} />;
 }
 
 function RequestHistoryView() {
@@ -270,7 +250,7 @@ function RequestHistoryView() {
       )}
 
       {inspect && (
-        <Modal isOpen onClose={() => setInspect(null)} title={`${inspect.method} ${(inspect.path || '').split('?')[0]}`} size="wide">
+        <Modal isOpen onClose={() => setInspect(null)} title={`${inspect.method} ${(inspect.path || '').split('?')[0]}`} size="full">
           <div className="detail-section">
             <div className="section-title">{t('requestHistory.sectionMetadata')}</div>
             <dl className="kv-grid">

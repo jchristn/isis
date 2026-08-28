@@ -27,7 +27,7 @@ function Modal({ isOpen, onClose, title, subtitle, children, footer, size = 'med
 
   if (!isOpen) return null;
 
-  const sizeClass = size === 'wide' ? 'wide' : size === 'small' ? 'small' : '';
+  const sizeClass = size === 'full' ? 'full' : size === 'wide' ? 'wide' : size === 'small' ? 'small' : '';
 
   return createPortal(
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose?.()}>
