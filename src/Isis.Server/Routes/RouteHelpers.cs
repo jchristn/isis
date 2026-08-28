@@ -1,6 +1,7 @@
 namespace Isis.Server.Routes
 {
     using System;
+    using System.Runtime.CompilerServices;
     using System.Threading.Tasks;
     using Isis.Core.Models;
     using Isis.Core.Responses;
@@ -14,7 +15,33 @@ namespace Isis.Server.Routes
     /// </summary>
     public static class RouteHelpers
     {
+        #region Private-Members
+
+        /// <summary>
+        /// The most recent JSON response body written for a context, kept so the request-history capture (which
+        /// runs after the response is sent) can record it. Keyed on the context instance and GC-collectable.
+        /// </summary>
+        private static readonly ConditionalWeakTable<HttpContextBase, string> _ResponseBodies = new ConditionalWeakTable<HttpContextBase, string>();
+
+        #endregion
+
         #region Public-Methods
+
+        /// <summary>
+        /// Take (and clear) the captured JSON response body for a context, if one was recorded.
+        /// </summary>
+        /// <param name="context">HTTP context.</param>
+        /// <returns>The response body, or null when none was captured.</returns>
+        public static string? TakeCapturedResponseBody(HttpContextBase context)
+        {
+            if (_ResponseBodies.TryGetValue(context, out string? body))
+            {
+                _ResponseBodies.Remove(context);
+                return body;
+            }
+
+            return null;
+        }
 
         /// <summary>
         /// Read the authenticated request context from the Watson context metadata.
@@ -38,7 +65,9 @@ namespace Isis.Server.Routes
         {
             context.Response.StatusCode = statusCode;
             context.Response.ContentType = "application/json";
-            await context.Response.Send(Json.Serialize(body)).ConfigureAwait(false);
+            string serialized = Json.Serialize(body);
+            _ResponseBodies.AddOrUpdate(context, serialized);
+            await context.Response.Send(serialized).ConfigureAwait(false);
         }
 
         /// <summary>

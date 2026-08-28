@@ -95,11 +95,50 @@ services:
       start_period: 20s
 
   # ------------------------------------------------------------------
+  # Ollama — bundled embedding + inference models (all-minilm, gemma3:4b), used by RecallDb scopes
+  # (embeddings) and Chat-with-Memory (inference). Reachable in-network as http://ollama:11434; NOT
+  # published to the host so it never clashes with a host-installed Ollama on 11434. Isis's default
+  # endpoints point at hostname 'ollama' (isis-server ISIS_DEFAULT_ENDPOINT_HOST). The `ollama-init`
+  # sidecar pulls the default models once, then exits.
+  #
+  # Version: pinned via OLLAMA_VERSION (default requires gemma3 support, i.e. >= 0.6.0). Set
+  # OLLAMA_VERSION in .env to pin a different tag.
+  # ------------------------------------------------------------------
+  ollama:
+    container_name: 'isis-ollama'
+    image: 'ollama/ollama:${OLLAMA_VERSION:-0.6.8}'
+    volumes:
+      - isis-ollama-data:/root/.ollama
+    healthcheck:
+      # The ollama image ships the 'ollama' CLI; 'ollama list' succeeds once the server is serving.
+      test: ['CMD-SHELL', 'ollama list >/dev/null 2>&1 || exit 1']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  ollama-init:
+    container_name: 'isis-ollama-init'
+    image: 'ollama/ollama:${OLLAMA_VERSION:-0.6.8}'
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      # Point the ollama CLI at the server container rather than this one-shot's own (unstarted) server.
+      OLLAMA_HOST: 'http://ollama:11434'
+    entrypoint: ['/bin/sh', '-c']
+    # Pull the platform default models. Idempotent — a pull is a no-op when the model is already present.
+    command: ['ollama pull all-minilm && ollama pull gemma3:4b']
+    restart: 'no'
+
+  # ------------------------------------------------------------------
   # Isis REST server (Isis.Server, Watson 7.1).
   # ------------------------------------------------------------------
   isis-server:
     container_name: 'isis-server'
     image: 'jchristn77/isis-server:v0.1.0'
+    # Relaunch the node when it exits (e.g. after a dashboard-triggered restart to apply settings changes).
+    restart: unless-stopped
     build:
       context: ..
       dockerfile: docker/server/Dockerfile
@@ -118,6 +157,9 @@ services:
       ISIS_AUTH_SEED_ADMIN_PASSWORD: '${ISIS_AUTH_SEED_ADMIN_PASSWORD:-isisadmin}'
       ISIS_AUTH_DEFAULT_ACCESS_KEY: '${ISIS_AUTH_DEFAULT_ACCESS_KEY:-isisdefaultkey}'
       ISIS_AUTH_DEFAULT_SECRET_KEY: '${ISIS_AUTH_DEFAULT_SECRET_KEY:-isisdefaultsecret}'
+      # Hostname the seeded default Ollama endpoints point at (the bundled 'ollama' service). Inside the
+      # container 'localhost' would be the container itself, so this must be a resolvable service name.
+      ISIS_DEFAULT_ENDPOINT_HOST: 'ollama'
     volumes:
       # NOT :ro — Isis writes the settings file back on load.
       - ./isis/isis.json:/app/config/isis.json
@@ -126,6 +168,8 @@ services:
       postgres:
         condition: service_healthy
       recalldb-server:
+        condition: service_healthy
+      ollama:
         condition: service_healthy
     healthcheck:
       test: ['CMD-SHELL', 'curl -fsS http://localhost:8700/v1.0/api/health || exit 1']
@@ -327,6 +371,7 @@ services:
 
 volumes:
   isis-postgres-data:
+  isis-ollama-data:
   isis-prometheus-data:
   isis-tempo-data:
   isis-loki-data:

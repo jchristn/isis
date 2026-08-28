@@ -103,35 +103,32 @@ function ApiExplorerView() {
       />
       <div className="notice-banner">{t('explorer.authInherited')}</div>
 
-      <div className="explorer-layout">
-        <div className="explorer-ops">
-          <div style={{ padding: '0.5rem' }}>
-            <input
-              placeholder={t('explorer.searchOps')}
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-            />
-          </div>
-          <div className="explorer-ops-list">
-            {groups.map((group) => (
-              <div key={group.tag}>
-                <div className="explorer-op-group-label">{group.tag}</div>
-                {group.operations.map((o) => (
-                  <button
-                    key={o.id}
-                    className={`explorer-op${ex.operationId === o.id ? ' active' : ''}`}
-                    onClick={() => ex.selectOperation(o.id)}
-                  >
-                    <span className={`method-badge method-${o.method}`}>{o.method}</span>
-                    <span className="op-path">{o.path}</span>
-                  </button>
-                ))}
-              </div>
-            ))}
-          </div>
-        </div>
+      <div className="explorer-picker section">
+        <input
+          className="explorer-search"
+          placeholder={t('explorer.searchOps')}
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+        />
+        <select
+          className="explorer-select"
+          value={ex.operationId || ''}
+          onChange={(e) => e.target.value && ex.selectOperation(e.target.value)}
+        >
+          <option value="">{t('explorer.pickOperation')}</option>
+          {groups.map((group) => (
+            <optgroup key={group.tag} label={group.tag}>
+              {group.operations.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.method}  {o.path}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+      </div>
 
-        <div className="explorer-panel">
+      <div className="explorer-panel card">
           {!op ? (
             <EmptyState title={t('explorer.title')} message={t('explorer.pickOperation')} />
           ) : (
@@ -278,7 +275,6 @@ function ApiExplorerView() {
             </div>
           )}
         </div>
-      </div>
 
       <ConfirmModal
         isOpen={confirmOpen}

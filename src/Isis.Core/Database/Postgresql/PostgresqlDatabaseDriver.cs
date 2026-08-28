@@ -46,6 +46,8 @@ namespace Isis.Core.Database.Postgresql
             Memories = new MemoryIndexMethods(this);
             ModelEndpoints = new ModelEndpointMethods(this);
             RequestHistory = new RequestHistoryMethods(this);
+            Instructions = new InstructionMethods(this);
+            Permissions = new PermissionMethods(this);
         }
 
         #endregion

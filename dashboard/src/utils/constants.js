@@ -34,5 +34,5 @@ export const EXTERNAL_SERVICES = [
   { key: 'grafana', name: 'Grafana', url: 'http://127.0.0.1:3000', creds: 'admin / admin' },
   { key: 'prometheus', name: 'Prometheus', url: 'http://127.0.0.1:9090', creds: '—' },
   { key: 'tempo', name: 'Tempo', url: 'http://127.0.0.1:3200', creds: '—' },
-  { key: 'recalldb', name: 'RecallDB Console', url: 'http://127.0.0.1:8601', creds: '—' }
+  { key: 'recalldb', name: 'RecallDB', url: 'http://127.0.0.1:8601', creds: '—' }
 ];

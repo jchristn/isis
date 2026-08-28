@@ -54,5 +54,31 @@ namespace Isis.Core.Database.Interfaces
         /// <param name="token">Cancellation token.</param>
         /// <returns>True if a record was deleted.</returns>
         Task<bool> DeleteAsync(string tenantId, string id, CancellationToken token = default);
+
+        /// <summary>
+        /// Read multiple permissions by identifier.
+        /// </summary>
+        /// <param name="tenantId">The owning tenant identifier.</param>
+        /// <param name="ids">The permission identifiers.</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>The matching permissions; empty when none match.</returns>
+        Task<List<Permission>> ReadManyAsync(string tenantId, IReadOnlyCollection<string> ids, CancellationToken token = default);
+
+        /// <summary>
+        /// Create multiple permissions.
+        /// </summary>
+        /// <param name="items">The permissions to create.</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>The created permissions.</returns>
+        Task<List<Permission>> CreateManyAsync(IReadOnlyCollection<Permission> items, CancellationToken token = default);
+
+        /// <summary>
+        /// Delete multiple permissions by identifier.
+        /// </summary>
+        /// <param name="tenantId">The owning tenant identifier.</param>
+        /// <param name="ids">The permission identifiers.</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>The number of identifiers requested for deletion.</returns>
+        Task<int> DeleteManyAsync(string tenantId, IReadOnlyCollection<string> ids, CancellationToken token = default);
     }
 }

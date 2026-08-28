@@ -41,6 +41,7 @@ namespace Test.Shared
                     TestCase.Async("mcp2", "category-create", "isis_category_create creates a category", CategoryCreateAsync),
                     TestCase.Async("mcp2", "memory-upsert", "isis_memory_upsert writes a memory", MemoryUpsertAsync),
                     TestCase.Async("mcp2", "memory-upsert-idempotent", "isis_memory_upsert is idempotent by slug", MemoryUpsertIdempotentAsync),
+                    TestCase.Async("mcp2", "memory-upsert-tolerant-type", "isis_memory_upsert defaults an unknown 'type' instead of failing", MemoryUpsertTolerantTypeAsync),
                     TestCase.Async("mcp2", "memory-search", "isis_memory_search returns hits", MemorySearchAsync),
                     TestCase.Async("mcp2", "memory-read", "isis_memory_read reads a memory by id", MemoryReadAsync),
                     TestCase.Async("mcp2", "memory-enumerate", "isis_memory_enumerate lists memories", MemoryEnumerateAsync),
@@ -50,6 +51,9 @@ namespace Test.Shared
                     TestCase.Async("mcp2", "memory-delete", "isis_memory_delete removes a memory", MemoryDeleteAsync),
                     TestCase.Async("mcp2", "guide-not-found", "isis_guide reports 404 for a missing scope", GuideNotFoundAsync),
                     TestCase.Async("mcp2", "anonymous-unauthorized", "anonymous credentials are rejected with 401", AnonymousUnauthorizedAsync),
+                    TestCase.Async("mcp2", "access-key-only", "the access key alone (no secret) authorizes", AccessKeyOnlyAuthorizesAsync),
+                    TestCase.Async("mcp2", "wrong-secret-rejected", "a present but wrong secret is rejected with 401", WrongSecretRejectedAsync),
+                    TestCase.Async("mcp2", "bearer-access-key", "raw MCP initialize authenticates with a bearer access key", BearerAccessKeyHandshakeAsync),
                     TestCase.Async("mcp2", "mcp-handshake", "raw MCP initialize returns serverInfo", HandshakeAsync)
                 });
         }
@@ -108,6 +112,22 @@ namespace Test.Shared
             string path = "/v1.0/api/tenants/ten_default/scopes/" + scopeId + "/memories";
             JsonElement list = Data(await ctx.Mcp.ProxyAsync(HttpMethod.Get, path, null, "isis_memory_enumerate", ctx.Admin).ConfigureAwait(false), "enumerate");
             if (list.GetProperty("totalRecords").GetInt64() != 1) throw new InvalidOperationException("Expected exactly one memory after two upserts of the same slug.");
+        }
+
+        private static async Task MemoryUpsertTolerantTypeAsync()
+        {
+            using McpContext ctx = await McpContext.StartAsync().ConfigureAwait(false);
+
+            string scopeId = await CreateScopeAsync(ctx).ConfigureAwait(false);
+            string categoryId = await CreateCategoryAsync(ctx, scopeId).ConfigureAwait(false);
+
+            // A less-capable agent may pass a 'type' that is not one of User/Feedback/Project/Reference (here
+            // "General"). The write must still succeed — the unknown type defaults to Project — rather than
+            // failing the whole body and reporting the misleading "requires a slug and a categoryId".
+            string memoryBody = JsonSerializer.Serialize(new { categoryId, slug = "arch", title = "Arch", body = "overview", type = "General" });
+            JsonElement saved = Data(await ctx.Mcp.ProxyAsync(HttpMethod.Post, "/v1.0/api/tenants/ten_default/scopes/" + scopeId + "/memories", memoryBody, "isis_memory_upsert", ctx.Access).ConfigureAwait(false), "upsert unknown type");
+            if (saved.GetProperty("slug").GetString() != "arch") throw new InvalidOperationException("Expected the memory to be created despite an unknown 'type'.");
+            if (saved.GetProperty("type").GetString() != "Project") throw new InvalidOperationException("Expected an unknown 'type' to default to 'Project', got '" + saved.GetProperty("type").GetString() + "'.");
         }
 
         private static async Task MemorySearchAsync()
@@ -215,6 +235,45 @@ namespace Test.Shared
             Envelope envelope = Unpack(await ctx.Mcp.ProxyAsync(HttpMethod.Get, "/v1.0/api/tenants", null, "isis_scope_enumerate", anonymous).ConfigureAwait(false));
             if (envelope.Success) throw new InvalidOperationException("Expected an anonymous call to fail.");
             if (envelope.StatusCode != 401) throw new InvalidOperationException("Expected status 401 for anonymous credentials, got " + envelope.StatusCode + ".");
+        }
+
+        private static async Task AccessKeyOnlyAuthorizesAsync()
+        {
+            using McpContext ctx = await McpContext.StartAsync().ConfigureAwait(false);
+
+            McpCallerCredentials accessOnly = new McpCallerCredentials { AccessKey = ctx.Harness.AccessKey };
+            JsonElement who = Data(await ctx.Mcp.ProxyAsync(HttpMethod.Get, "/v1.0/api/whoami", null, "isis_whoami", accessOnly).ConfigureAwait(false), "whoami");
+            if (who.GetProperty("tenantId").GetString() != "ten_default") throw new InvalidOperationException("Expected access-key-only auth to resolve tenant 'ten_default'.");
+        }
+
+        private static async Task WrongSecretRejectedAsync()
+        {
+            using McpContext ctx = await McpContext.StartAsync().ConfigureAwait(false);
+
+            McpCallerCredentials badSecret = new McpCallerCredentials { AccessKey = ctx.Harness.AccessKey, SecretKey = "not-the-secret" };
+            Envelope envelope = Unpack(await ctx.Mcp.ProxyAsync(HttpMethod.Get, "/v1.0/api/whoami", null, "isis_whoami", badSecret).ConfigureAwait(false));
+            if (envelope.Success) throw new InvalidOperationException("Expected a present-but-wrong secret to be rejected.");
+            if (envelope.StatusCode != 401) throw new InvalidOperationException("Expected status 401 for a wrong secret, got " + envelope.StatusCode + ".");
+        }
+
+        private static async Task BearerAccessKeyHandshakeAsync()
+        {
+            using McpContext ctx = await McpContext.StartAsync().ConfigureAwait(false);
+
+            using HttpClient client = new HttpClient { BaseAddress = new Uri("http://127.0.0.1:" + ctx.McpPort) };
+            string body = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"clientInfo\":{\"name\":\"t\",\"version\":\"1\"}}}";
+
+            using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, "/mcp");
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", ctx.Harness.AccessKey);
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
+            request.Content = new StringContent(body, Encoding.UTF8, "application/json");
+
+            HttpResponseMessage response = await client.SendAsync(request).ConfigureAwait(false);
+            string text = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+
+            if (response.StatusCode != HttpStatusCode.OK) throw new InvalidOperationException("Expected HTTP 200 from a bearer-access-key initialize, got " + (int)response.StatusCode + " (" + text + ").");
+            if (!text.Contains("serverInfo", StringComparison.Ordinal)) throw new InvalidOperationException("Expected the bearer initialize response to contain serverInfo: " + text);
         }
 
         private static async Task HandshakeAsync()

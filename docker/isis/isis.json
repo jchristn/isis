@@ -35,6 +35,9 @@
     "logQueries": false
   },
   "requestHistory": {
-    "enabled": true
+    "enabled": true,
+    "captureHeaders": true,
+    "captureBodies": true,
+    "maxBodyBytes": 16384
   }
 }

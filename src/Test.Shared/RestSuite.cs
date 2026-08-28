@@ -51,11 +51,21 @@ namespace Test.Shared
                     TestCase.Async("rest", "tenants-update", "PUT /tenants/{id} updates a tenant", TenantsUpdateAsync),
                     TestCase.Async("rest", "tenants-delete", "DELETE /tenants/{id} deletes a tenant", TenantsDeleteAsync),
                     TestCase.Async("rest", "tenants-delete-unknown", "DELETE /tenants/{unknown} is not found", TenantsDeleteUnknownAsync),
+                    TestCase.Async("rest", "tenant-provision-related", "POST /tenants provisions a user, credential, and instructions", TenantProvisionRelatedAsync),
+                    TestCase.Async("rest", "tenant-nuke-cascade", "DELETE /tenants/{id} cascades to all children and isolates other tenants", TenantNukeCascadeAsync),
+                    TestCase.Async("rest", "tenant-nuke-protected", "DELETE the protected default tenant is a conflict", TenantNukeProtectedAsync),
+                    TestCase.Async("rest", "tenant-nuke-nonadmin", "DELETE /tenants/{id} as a credential is forbidden", TenantNukeNonAdminAsync),
+                    TestCase.Async("rest", "scope-delete-cascade", "DELETE /scopes/{id} cascades to categories and memories", ScopeDeleteCascadeAsync),
+                    TestCase.Async("rest", "category-delete-cascade", "DELETE /categories/{id} cascades to its memories", CategoryDeleteCascadeAsync),
+                    TestCase.Async("rest", "user-delete-cascade", "DELETE /users/{id} cascades to its credentials", UserDeleteCascadeAsync),
+                    TestCase.Async("rest", "instructions-batch", "Batch create/get/delete instructions over REST", InstructionsBatchAsync),
+                    TestCase.Async("rest", "scope-batch-delete-cascade", "POST /scopes/batch-delete cascades to children", ScopeBatchDeleteCascadeAsync),
 
                     // Scopes.
                     TestCase.Async("rest", "scope-create", "POST /scopes as a credential creates a scope", ScopeCreateAsync),
                     TestCase.Async("rest", "scope-create-dup", "POST /scopes with a duplicate name conflicts", ScopeCreateDuplicateAsync),
                     TestCase.Async("rest", "scope-create-noname", "POST /scopes without a name is a bad request", ScopeCreateNoNameAsync),
+                    TestCase.Async("rest", "scope-create-recalldb-auto", "POST /scopes RecallDb auto-wires the embedding endpoint", ScopeCreateRecallDbAutoWiresEndpointAsync),
                     TestCase.Async("rest", "scope-list", "GET /scopes lists scopes", ScopeListAsync),
                     TestCase.Async("rest", "scope-read", "GET /scopes/{id} reads a scope", ScopeReadAsync),
                     TestCase.Async("rest", "scope-read-unknown", "GET /scopes/{unknown} is not found", ScopeReadUnknownAsync),
@@ -198,7 +208,10 @@ namespace Test.Shared
             HttpResponseMessage r = await PostAsync(admin, Tenants, new { name = "Acme" }).ConfigureAwait(false);
             ExpectStatus(r, HttpStatusCode.Created, "create tenant");
             using JsonDocument doc = await ReadJsonAsync(r).ConfigureAwait(false);
-            TestCase.Require(!string.IsNullOrEmpty(doc.RootElement.GetProperty("id").GetString()), "created tenant should have an id.");
+            TestCase.Require(!string.IsNullOrEmpty(doc.RootElement.GetProperty("tenant").GetProperty("id").GetString()), "created tenant should have an id.");
+            TestCase.Require(!string.IsNullOrEmpty(doc.RootElement.GetProperty("admin").GetProperty("email").GetString()), "provisioning should return an admin email.");
+            TestCase.Require(!string.IsNullOrEmpty(doc.RootElement.GetProperty("admin").GetProperty("password").GetString()), "provisioning should return a one-time admin password.");
+            TestCase.Require(!string.IsNullOrEmpty(doc.RootElement.GetProperty("credential").GetProperty("secretKey").GetString()), "provisioning should return a one-time credential secret.");
         }
 
         private static async Task TenantsCreateNoNameAsync()
@@ -271,6 +284,207 @@ namespace Test.Shared
             ExpectStatus(r, HttpStatusCode.NotFound, "delete unknown tenant");
         }
 
+        private static async Task<int> CountAsync(HttpClient client, string path)
+        {
+            HttpResponseMessage r = await client.GetAsync(path).ConfigureAwait(false);
+            ExpectStatus(r, HttpStatusCode.OK, "count " + path);
+            using JsonDocument doc = await ReadJsonAsync(r).ConfigureAwait(false);
+            return doc.RootElement.GetProperty("totalRecords").GetInt32();
+        }
+
+        private static async Task TenantProvisionRelatedAsync()
+        {
+            using ServerHarness h = await ServerHarness.StartAsync().ConfigureAwait(false);
+            using HttpClient admin = h.AdminClient();
+            string id = await CreateTenantAsync(admin, "Provisioned").ConfigureAwait(false);
+
+            TestCase.Require(await CountAsync(admin, TenantPath(id) + "/users").ConfigureAwait(false) >= 1, "a provisioned tenant should have an admin user.");
+            TestCase.Require(await CountAsync(admin, TenantPath(id) + "/credentials").ConfigureAwait(false) >= 1, "a provisioned tenant should have a credential.");
+            TestCase.Require(await CountAsync(admin, TenantPath(id) + "/instructions").ConfigureAwait(false) >= 1, "a provisioned tenant should have default instructions.");
+        }
+
+        private static async Task TenantNukeCascadeAsync()
+        {
+            using ServerHarness h = await ServerHarness.StartAsync().ConfigureAwait(false);
+            using HttpClient admin = h.AdminClient();
+            string id = await CreateTenantAsync(admin, "Doomed").ConfigureAwait(false);
+
+            // Build a full object graph under the new tenant.
+            HttpResponseMessage scopeResp = await PostAsync(admin, ScopesPath(id), new { name = "s1", storeProvider = "Filesystem", filesystemLayout = "Hierarchy", targetPath = Path.Combine(h.WorkDir, "nuke-" + id) }).ConfigureAwait(false);
+            ExpectStatus(scopeResp, HttpStatusCode.Created, "create scope in doomed tenant");
+            string scopeId;
+            using (JsonDocument sd = await ReadJsonAsync(scopeResp).ConfigureAwait(false)) scopeId = sd.RootElement.GetProperty("id").GetString()!;
+
+            HttpResponseMessage catResp = await PostAsync(admin, CategoriesPath(id, scopeId), new { name = "notes", instructions = "x" }).ConfigureAwait(false);
+            ExpectStatus(catResp, HttpStatusCode.Created, "create category in doomed tenant");
+            string categoryId;
+            using (JsonDocument cd = await ReadJsonAsync(catResp).ConfigureAwait(false)) categoryId = cd.RootElement.GetProperty("id").GetString()!;
+
+            HttpResponseMessage memResp = await PostAsync(admin, MemoriesPath(id, scopeId), new { categoryId, slug = "m1", title = "m1", body = "hello" }).ConfigureAwait(false);
+            ExpectStatus(memResp, HttpStatusCode.OK, "upsert memory in doomed tenant");
+            await PostAsync(admin, TenantPath(id) + "/users", new { email = "extra@x.local", password = "pw123456" }).ConfigureAwait(false);
+            await PostAsync(admin, EndpointsPath(id), new { name = "emb", kind = "Embedding", apiFormat = "Ollama", hostname = "localhost", port = 11434, model = "all-minilm", dimensionality = 384 }).ConfigureAwait(false);
+
+            // Sanity: children exist.
+            TestCase.Require(await CountAsync(admin, ScopesPath(id)).ConfigureAwait(false) >= 1, "doomed tenant should have a scope before nuke.");
+
+            // Baseline for isolation: the default tenant's data must survive the nuke.
+            int defaultInstructionsBefore = await CountAsync(admin, TenantPath(h.TenantId) + "/instructions").ConfigureAwait(false);
+
+            HttpResponseMessage del = await admin.DeleteAsync(TenantPath(id)).ConfigureAwait(false);
+            ExpectStatus(del, HttpStatusCode.NoContent, "nuke tenant");
+
+            // Tenant and every child are gone.
+            HttpResponseMessage read = await admin.GetAsync(TenantPath(id)).ConfigureAwait(false);
+            ExpectStatus(read, HttpStatusCode.NotFound, "nuked tenant should be gone");
+            TestCase.Require(await CountAsync(admin, ScopesPath(id)).ConfigureAwait(false) == 0, "nuked tenant should have no scopes.");
+            TestCase.Require(await CountAsync(admin, CategoriesPath(id, scopeId)).ConfigureAwait(false) == 0, "nuked tenant should have no categories.");
+            TestCase.Require(await CountAsync(admin, TenantPath(id) + "/users").ConfigureAwait(false) == 0, "nuked tenant should have no users.");
+            TestCase.Require(await CountAsync(admin, TenantPath(id) + "/credentials").ConfigureAwait(false) == 0, "nuked tenant should have no credentials.");
+            TestCase.Require(await CountAsync(admin, TenantPath(id) + "/instructions").ConfigureAwait(false) == 0, "nuked tenant should have no instructions.");
+            TestCase.Require(await CountAsync(admin, EndpointsPath(id)).ConfigureAwait(false) == 0, "nuked tenant should have no endpoints.");
+
+            // Cross-tenant isolation: the default tenant is untouched.
+            TestCase.Require(await CountAsync(admin, TenantPath(h.TenantId) + "/instructions").ConfigureAwait(false) == defaultInstructionsBefore, "nuking one tenant must not affect another tenant's data.");
+        }
+
+        private static async Task TenantNukeProtectedAsync()
+        {
+            using ServerHarness h = await ServerHarness.StartAsync().ConfigureAwait(false);
+            using HttpClient admin = h.AdminClient();
+            HttpResponseMessage r = await admin.DeleteAsync(TenantPath(h.TenantId)).ConfigureAwait(false);
+            ExpectStatus(r, HttpStatusCode.Conflict, "nuke protected default tenant");
+        }
+
+        private static async Task TenantNukeNonAdminAsync()
+        {
+            using ServerHarness h = await ServerHarness.StartAsync().ConfigureAwait(false);
+            using HttpClient admin = h.AdminClient();
+            string id = await CreateTenantAsync(admin, "GuardedNuke").ConfigureAwait(false);
+            using HttpClient access = h.AccessClient();
+            HttpResponseMessage r = await access.DeleteAsync(TenantPath(id)).ConfigureAwait(false);
+            ExpectStatus(r, HttpStatusCode.Forbidden, "nuke tenant as credential");
+        }
+
+        private static async Task ScopeDeleteCascadeAsync()
+        {
+            using ServerHarness h = await ServerHarness.StartAsync().ConfigureAwait(false);
+            using HttpClient admin = h.AdminClient();
+            string scopeId = await CreateScopeAsync(admin, h, "cascadescope").ConfigureAwait(false);
+            string categoryId = await CreateCategoryAsync(admin, h, scopeId, "notes").ConfigureAwait(false);
+            await UpsertMemoryAsync(admin, h, scopeId, categoryId, "m1", "hello").ConfigureAwait(false);
+
+            TestCase.Require(await CountAsync(admin, CategoriesPath(h.TenantId, scopeId)).ConfigureAwait(false) >= 1, "scope should have a category before delete.");
+
+            HttpResponseMessage del = await admin.DeleteAsync(ScopesPath(h.TenantId) + "/" + scopeId).ConfigureAwait(false);
+            ExpectStatus(del, HttpStatusCode.NoContent, "delete scope");
+
+            TestCase.Require(await CountAsync(admin, CategoriesPath(h.TenantId, scopeId)).ConfigureAwait(false) == 0, "deleting a scope should cascade to its categories.");
+            TestCase.Require(await CountAsync(admin, MemoriesPath(h.TenantId, scopeId)).ConfigureAwait(false) == 0, "deleting a scope should cascade to its memories.");
+        }
+
+        private static async Task CategoryDeleteCascadeAsync()
+        {
+            using ServerHarness h = await ServerHarness.StartAsync().ConfigureAwait(false);
+            using HttpClient admin = h.AdminClient();
+            string scopeId = await CreateScopeAsync(admin, h, "catcascade").ConfigureAwait(false);
+            string categoryId = await CreateCategoryAsync(admin, h, scopeId, "notes").ConfigureAwait(false);
+            await UpsertMemoryAsync(admin, h, scopeId, categoryId, "m1", "hello").ConfigureAwait(false);
+
+            TestCase.Require(await CountAsync(admin, MemoriesPath(h.TenantId, scopeId)).ConfigureAwait(false) >= 1, "category should have a memory before delete.");
+
+            HttpResponseMessage del = await admin.DeleteAsync(CategoriesPath(h.TenantId, scopeId) + "/" + categoryId).ConfigureAwait(false);
+            ExpectStatus(del, HttpStatusCode.NoContent, "delete category");
+
+            TestCase.Require(await CountAsync(admin, MemoriesPath(h.TenantId, scopeId)).ConfigureAwait(false) == 0, "deleting a category should cascade to its memories.");
+        }
+
+        private static async Task UserDeleteCascadeAsync()
+        {
+            using ServerHarness h = await ServerHarness.StartAsync().ConfigureAwait(false);
+            using HttpClient admin = h.AdminClient();
+
+            HttpResponseMessage userResp = await PostAsync(admin, TenantPath(h.TenantId) + "/users", new { email = "casc@x.local", password = "pw123456" }).ConfigureAwait(false);
+            ExpectStatus(userResp, HttpStatusCode.Created, "create user");
+            string userId;
+            using (JsonDocument ud = await ReadJsonAsync(userResp).ConfigureAwait(false)) userId = ud.RootElement.GetProperty("id").GetString()!;
+
+            HttpResponseMessage credResp = await PostAsync(admin, TenantPath(h.TenantId) + "/credentials", new { name = "owned", userId }).ConfigureAwait(false);
+            ExpectStatus(credResp, HttpStatusCode.Created, "create owned credential");
+            string credentialId;
+            using (JsonDocument cd = await ReadJsonAsync(credResp).ConfigureAwait(false)) credentialId = cd.RootElement.GetProperty("id").GetString()!;
+
+            HttpResponseMessage before = await admin.GetAsync(TenantPath(h.TenantId) + "/credentials/" + credentialId).ConfigureAwait(false);
+            ExpectStatus(before, HttpStatusCode.OK, "owned credential exists before user delete");
+
+            HttpResponseMessage del = await admin.DeleteAsync(TenantPath(h.TenantId) + "/users/" + userId).ConfigureAwait(false);
+            ExpectStatus(del, HttpStatusCode.NoContent, "delete user");
+
+            HttpResponseMessage after = await admin.GetAsync(TenantPath(h.TenantId) + "/credentials/" + credentialId).ConfigureAwait(false);
+            ExpectStatus(after, HttpStatusCode.NotFound, "deleting a user should cascade to its credentials");
+        }
+
+        private static async Task InstructionsBatchAsync()
+        {
+            using ServerHarness h = await ServerHarness.StartAsync().ConfigureAwait(false);
+            using HttpClient admin = h.AdminClient();
+            string basePath = TenantPath(h.TenantId) + "/instructions";
+
+            HttpResponseMessage create = await PostAsync(admin, basePath + "/batch", new { items = new[] { new { name = "b1", content = "x", position = 10 }, new { name = "b2", content = "y", position = 11 } } }).ConfigureAwait(false);
+            ExpectStatus(create, HttpStatusCode.Created, "batch create instructions");
+            List<string> ids = new List<string>();
+            using (JsonDocument cd = await ReadJsonAsync(create).ConfigureAwait(false))
+            {
+                foreach (JsonElement e in cd.RootElement.GetProperty("objects").EnumerateArray()) ids.Add(e.GetProperty("id").GetString()!);
+            }
+            TestCase.Require(ids.Count == 2, "batch create should return both created instructions.");
+
+            HttpResponseMessage get = await PostAsync(admin, basePath + "/batch-get", new { ids }).ConfigureAwait(false);
+            ExpectStatus(get, HttpStatusCode.OK, "batch-get instructions");
+            using (JsonDocument gd = await ReadJsonAsync(get).ConfigureAwait(false))
+            {
+                TestCase.Require(gd.RootElement.GetProperty("objects").GetArrayLength() == 2, "batch-get should return both ids.");
+            }
+
+            HttpResponseMessage del = await PostAsync(admin, basePath + "/batch-delete", new { ids }).ConfigureAwait(false);
+            ExpectStatus(del, HttpStatusCode.OK, "batch-delete instructions");
+            using (JsonDocument dd = await ReadJsonAsync(del).ConfigureAwait(false))
+            {
+                TestCase.Require(dd.RootElement.GetProperty("deleted").GetInt32() == 2, "batch-delete should report both deletions.");
+            }
+
+            HttpResponseMessage getAfter = await PostAsync(admin, basePath + "/batch-get", new { ids }).ConfigureAwait(false);
+            using (JsonDocument gd2 = await ReadJsonAsync(getAfter).ConfigureAwait(false))
+            {
+                TestCase.Require(gd2.RootElement.GetProperty("objects").GetArrayLength() == 0, "batch-deleted instructions should be gone.");
+            }
+        }
+
+        private static async Task ScopeBatchDeleteCascadeAsync()
+        {
+            using ServerHarness h = await ServerHarness.StartAsync().ConfigureAwait(false);
+            using HttpClient admin = h.AdminClient();
+
+            string scope1 = await CreateScopeAsync(admin, h, "bd1").ConfigureAwait(false);
+            string cat1 = await CreateCategoryAsync(admin, h, scope1, "n1").ConfigureAwait(false);
+            await UpsertMemoryAsync(admin, h, scope1, cat1, "m1", "a").ConfigureAwait(false);
+            string scope2 = await CreateScopeAsync(admin, h, "bd2").ConfigureAwait(false);
+            string cat2 = await CreateCategoryAsync(admin, h, scope2, "n2").ConfigureAwait(false);
+            await UpsertMemoryAsync(admin, h, scope2, cat2, "m2", "b").ConfigureAwait(false);
+
+            HttpResponseMessage del = await PostAsync(admin, ScopesPath(h.TenantId) + "/batch-delete", new { ids = new[] { scope1, scope2 } }).ConfigureAwait(false);
+            ExpectStatus(del, HttpStatusCode.OK, "batch-delete scopes");
+            using (JsonDocument dd = await ReadJsonAsync(del).ConfigureAwait(false))
+            {
+                TestCase.Require(dd.RootElement.GetProperty("deleted").GetInt32() == 2, "batch-delete should report both scopes.");
+            }
+
+            HttpResponseMessage read1 = await admin.GetAsync(ScopesPath(h.TenantId) + "/" + scope1).ConfigureAwait(false);
+            ExpectStatus(read1, HttpStatusCode.NotFound, "batch-deleted scope should be gone");
+            TestCase.Require(await CountAsync(admin, CategoriesPath(h.TenantId, scope1)).ConfigureAwait(false) == 0, "batch-deleting a scope should cascade to its categories.");
+            TestCase.Require(await CountAsync(admin, MemoriesPath(h.TenantId, scope1)).ConfigureAwait(false) == 0, "batch-deleting a scope should cascade to its memories.");
+        }
+
         #endregion
 
         #region Private-Methods-Scopes
@@ -300,6 +514,30 @@ namespace Test.Shared
             using HttpClient access = h.AccessClient();
             HttpResponseMessage r = await PostAsync(access, ScopesPath(h.TenantId), new { }).ConfigureAwait(false);
             ExpectStatus(r, HttpStatusCode.BadRequest, "scope without name");
+        }
+
+        private static async Task ScopeCreateRecallDbAutoWiresEndpointAsync()
+        {
+            using ServerHarness h = await ServerHarness.StartAsync().ConfigureAwait(false);
+            using HttpClient admin = h.AdminClient();
+
+            // With no embedding endpoint configured, a default (RecallDb) scope is rejected with guidance
+            // rather than persisted broken.
+            HttpResponseMessage noEndpoint = await PostAsync(admin, ScopesPath(h.TenantId), new { name = "recall-noep" }).ConfigureAwait(false);
+            ExpectStatus(noEndpoint, HttpStatusCode.BadRequest, "RecallDb scope with no embedding endpoint");
+
+            // After adding an embedding endpoint, a bare RecallDb scope adopts it and its dimensionality.
+            HttpResponseMessage epResp = await PostAsync(admin, EndpointsPath(h.TenantId), new { name = "emb", kind = "Embedding", apiFormat = "Ollama", hostname = "localhost", port = 11434, model = "all-minilm", dimensionality = 384 }).ConfigureAwait(false);
+            ExpectStatus(epResp, HttpStatusCode.Created, "create embedding endpoint");
+            string endpointId;
+            using (JsonDocument ed = await ReadJsonAsync(epResp).ConfigureAwait(false)) endpointId = ed.RootElement.GetProperty("id").GetString()!;
+
+            HttpResponseMessage scopeResp = await PostAsync(admin, ScopesPath(h.TenantId), new { name = "recall-auto" }).ConfigureAwait(false);
+            ExpectStatus(scopeResp, HttpStatusCode.Created, "RecallDb scope auto-wires endpoint");
+            using JsonDocument sd = await ReadJsonAsync(scopeResp).ConfigureAwait(false);
+            TestCase.Require(sd.RootElement.GetProperty("storeProvider").GetString() == "RecallDb", "default store should be RecallDb.");
+            TestCase.Require(sd.RootElement.GetProperty("embeddingEndpointId").GetString() == endpointId, "scope should adopt the tenant's embedding endpoint.");
+            TestCase.Require(sd.RootElement.GetProperty("dimensionality").GetInt32() == 384, "scope should adopt the endpoint's dimensionality (384).");
         }
 
         private static async Task ScopeListAsync()
@@ -825,7 +1063,7 @@ namespace Test.Shared
             HttpResponseMessage r = await PostAsync(admin, Tenants, new { name }).ConfigureAwait(false);
             ExpectStatus(r, HttpStatusCode.Created, "setup create tenant");
             using JsonDocument doc = await ReadJsonAsync(r).ConfigureAwait(false);
-            return doc.RootElement.GetProperty("id").GetString() ?? throw new InvalidOperationException("No tenant id.");
+            return doc.RootElement.GetProperty("tenant").GetProperty("id").GetString() ?? throw new InvalidOperationException("No tenant id.");
         }
 
         private static async Task<string> CreateScopeAsync(HttpClient client, ServerHarness h, string name)

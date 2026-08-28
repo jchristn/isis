@@ -7,6 +7,8 @@ import {
   IconCpu, IconDatabase, IconHistory, IconPlay, IconGear, IconUsers, IconKey
 } from './Icons';
 
+const IconBook = IconNote;
+
 /**
  * Grouped, workflow-oriented navigation. Administration is only shown to admins
  * (client-side gating is UX only; the server still enforces authorization).
@@ -21,7 +23,9 @@ function Sidebar() {
       label: t('nav.groups.memory'),
       items: [
         { to: '/dashboard/home', label: t('nav.home'), icon: IconHome },
-        { to: '/dashboard/scopes', label: t('nav.scopes'), icon: IconLayers }
+        { to: '/dashboard/scopes', label: t('nav.scopes'), icon: IconLayers },
+        { to: '/dashboard/memories', label: t('nav.memories'), icon: IconNote },
+        { to: '/dashboard/instructions', label: t('nav.instructions'), icon: IconBook }
       ]
     },
     {

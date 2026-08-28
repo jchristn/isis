@@ -4,6 +4,8 @@ namespace Isis.Server.Services
     using System.Threading;
     using System.Threading.Tasks;
     using Isis.Core.Database;
+    using Isis.Core.Enums;
+    using Isis.Core.Helpers;
     using Isis.Core.Models;
     using Isis.Core.Security;
     using Isis.Server.Settings;
@@ -47,9 +49,10 @@ namespace Isis.Server.Services
         /// <param name="database">The database driver.</param>
         /// <param name="auth">Authentication settings (provides the default access key).</param>
         /// <param name="log">A log callback.</param>
+        /// <param name="seedEndpoints">When true, seed default embedding/inference endpoints if none exist.</param>
         /// <param name="token">Cancellation token.</param>
         /// <returns>Awaitable task.</returns>
-        public static async Task SeedAsync(DatabaseDriverBase database, AuthSettings auth, Action<string> log, CancellationToken token = default)
+        public static async Task SeedAsync(DatabaseDriverBase database, AuthSettings auth, Action<string> log, bool seedEndpoints = true, CancellationToken token = default)
         {
             if (database == null) throw new ArgumentNullException(nameof(database));
             if (auth == null) throw new ArgumentNullException(nameof(auth));
@@ -122,6 +125,69 @@ namespace Isis.Server.Services
                 };
                 await database.Credentials.CreateAsync(credential, token).ConfigureAwait(false);
                 log?.Invoke("seeded default credential '" + DefaultCredentialId + "' (access/secret key from settings)");
+            }
+
+            EnumerationResult<Instruction> instructions = await database.Instructions.EnumerateAsync(DefaultTenantId, new EnumerationQuery { MaxResults = 1 }, token).ConfigureAwait(false);
+            if (instructions.TotalRecords == 0)
+            {
+                await database.Instructions.CreateManyAsync(DefaultInstructions.For(DefaultTenantId), token).ConfigureAwait(false);
+                log?.Invoke("seeded default instructions for '" + DefaultTenantId + "'");
+            }
+
+            if (seedEndpoints) await SeedEndpointsAsync(database, log, token).ConfigureAwait(false);
+        }
+
+        #endregion
+
+        #region Private-Methods
+
+        private static async Task SeedEndpointsAsync(DatabaseDriverBase database, Action<string>? log, CancellationToken token)
+        {
+            EnumerationQuery query = new EnumerationQuery { MaxResults = 1 };
+
+            // Hostname the default Ollama endpoints point at. Defaults to 'localhost' for a bare local run; the
+            // Docker stack sets ISIS_DEFAULT_ENDPOINT_HOST='ollama' so the in-container endpoints reach the
+            // bundled Ollama service (localhost inside the container would be the container itself).
+            string endpointHost = Environment.GetEnvironmentVariable("ISIS_DEFAULT_ENDPOINT_HOST");
+            if (string.IsNullOrWhiteSpace(endpointHost)) endpointHost = "localhost";
+
+            EnumerationResult<ModelEndpoint> embeddings = await database.ModelEndpoints.EnumerateAsync(DefaultTenantId, EndpointKindEnum.Embedding, query, token).ConfigureAwait(false);
+            if (embeddings.TotalRecords == 0)
+            {
+                ModelEndpoint embedding = new ModelEndpoint
+                {
+                    Id = IdGenerator.EmbeddingEndpoint(),
+                    TenantId = DefaultTenantId,
+                    Name = "Default Embedding (Ollama all-minilm)",
+                    Kind = EndpointKindEnum.Embedding,
+                    ApiFormat = ApiFormatEnum.Ollama,
+                    Hostname = endpointHost,
+                    Port = 11434,
+                    Model = "all-minilm",
+                    Dimensionality = 384,
+                    HealthCheckUrl = "/api/tags"
+                };
+                await database.ModelEndpoints.CreateAsync(embedding, token).ConfigureAwait(false);
+                log?.Invoke("seeded default embedding endpoint (Ollama all-minilm @ " + endpointHost + ":11434)");
+            }
+
+            EnumerationResult<ModelEndpoint> inference = await database.ModelEndpoints.EnumerateAsync(DefaultTenantId, EndpointKindEnum.Inference, query, token).ConfigureAwait(false);
+            if (inference.TotalRecords == 0)
+            {
+                ModelEndpoint completion = new ModelEndpoint
+                {
+                    Id = IdGenerator.InferenceEndpoint(),
+                    TenantId = DefaultTenantId,
+                    Name = "Default Inference (Ollama gemma3:4b)",
+                    Kind = EndpointKindEnum.Inference,
+                    ApiFormat = ApiFormatEnum.Ollama,
+                    Hostname = endpointHost,
+                    Port = 11434,
+                    Model = "gemma3:4b",
+                    HealthCheckUrl = "/api/tags"
+                };
+                await database.ModelEndpoints.CreateAsync(completion, token).ConfigureAwait(false);
+                log?.Invoke("seeded default inference endpoint (Ollama gemma3:4b @ " + endpointHost + ":11434)");
             }
         }
 

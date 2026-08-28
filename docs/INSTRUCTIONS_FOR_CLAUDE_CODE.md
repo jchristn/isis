@@ -4,7 +4,7 @@
 
 ## Connecting Claude Code to Isis over MCP
 
-Isis serves the modern **MCP Streamable HTTP + SSE** transport at `http://127.0.0.1:8720/mcp`. Every request must carry two auth headers: `x-access-key` (a credential access key, default `isisdefaultkey`) and `x-secret-key` (its secret key, default `isisdefaultsecret`). Together they identify a tenant credential and scope the connection to its tenant. Change the defaults before exposing Isis outside a trusted local environment.
+Isis serves the modern **MCP Streamable HTTP + SSE** transport at `http://127.0.0.1:8720/mcp`. Every request authenticates with a single header: `x-access-key` (a credential access key, default `isisdefaultkey`). The access key alone identifies a tenant credential and scopes the connection to its tenant. The secret key is never sent by Claude Code. Because the access key authenticates on its own, treat it as a **capability token** and prefer a least-privilege credential. Change the default before exposing Isis outside a trusted local environment.
 
 ### Option A -- `isis mcp install` (one-step, recommended)
 
@@ -14,17 +14,17 @@ The fastest way to connect Claude Code is the built-in installer:
 isis mcp install
 ```
 
-This patches `~/.claude.json` with an `isis` MCP server pointing at `http://127.0.0.1:8720/mcp`, including the `x-access-key` and `x-secret-key` headers. It reads the port and host from `isis.mcp.json` and the `ISIS_MCP_*` environment variables, and accepts optional `--access-key`, `--secret-key`, `--port`, and `--host` flags. It is safe to run repeatedly -- it updates the existing `isis` entry in place and preserves every other MCP server. Restart Claude Code afterward to pick up the change.
+This patches `~/.claude.json` with an `isis` MCP server pointing at `http://127.0.0.1:8720/mcp`, including the `x-access-key` header. It reads the port and host from `isis.mcp.json` and the `ISIS_MCP_*` environment variables, and accepts optional `--access-key`, `--port`, and `--host` flags. It is safe to run repeatedly -- it updates the existing `isis` entry in place and preserves every other MCP server. Restart Claude Code afterward to pick up the change.
 
 ### Option B -- `claude mcp add` (CLI)
 
-Add Isis as an HTTP MCP server with both auth headers inline:
+Add Isis as an HTTP MCP server with the access-key header inline:
 
 ```bash
-claude mcp add --transport http isis http://127.0.0.1:8720/mcp --header "x-access-key: isisdefaultkey" --header "x-secret-key: isisdefaultsecret"
+claude mcp add --transport http isis http://127.0.0.1:8720/mcp --header "x-access-key: isisdefaultkey"
 ```
 
-Both headers are required. Restart Claude Code (or reload the MCP servers) after adding.
+The access key is the only header required; the secret key is never sent. Restart Claude Code (or reload the MCP servers) after adding.
 
 ### Option C -- Project `.mcp.json`
 
@@ -37,15 +37,14 @@ Commit a `.mcp.json` file at the root of your project so every agent working in 
       "type": "http",
       "url": "http://127.0.0.1:8720/mcp",
       "headers": {
-        "x-access-key": "isisdefaultkey",
-        "x-secret-key": "isisdefaultsecret"
+        "x-access-key": "isisdefaultkey"
       }
     }
   }
 }
 ```
 
-Both headers are required. Do not commit production credentials into a shared repo; prefer a least-privilege credential, or keep the file untracked. Once connected, `tools/list` returns the ten `isis_*` tools.
+Only the access-key header is required; the secret key is never sent. Because the access key is a capability token, do not commit production credentials into a shared repo; prefer a least-privilege credential, or keep the file untracked. Once connected, `tools/list` returns the ten `isis_*` tools.
 
 ---
 
@@ -172,4 +171,4 @@ Every tool returns the same envelope; the proxied REST response is under `data`:
 { "tool": "isis_whoami", "success": true, "statusCode": 200, "data": { "tenantId": "ten_a1b2c3", "principalType": "Credential", "principalId": "crd_9x8y7z" } }
 ```
 
-When a call fails, `success` is `false`, `statusCode` carries the upstream code (e.g. `401`, `403`, `404`), and `data` holds the error body. A missing auth header is rejected before any tool runs with `401 Provide x-access-key and x-secret-key headers.` A `403` on a tenant call means your credential is not authorized for that `tenantId` -- call `isis_whoami` and use the `tenantId` it returns.
+When a call fails, `success` is `false`, `statusCode` carries the upstream code (e.g. `401`, `403`, `404`), and `data` holds the error body. A request with no access key is rejected before any tool runs with `401`. A `403` on a tenant call means your credential is not authorized for that `tenantId` -- call `isis_whoami` and use the `tenantId` it returns.

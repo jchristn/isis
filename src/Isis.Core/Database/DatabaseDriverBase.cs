@@ -66,6 +66,11 @@ namespace Isis.Core.Database
         public IPermissionMethods Permissions { get; protected set; } = null!;
 
         /// <summary>
+        /// Tenant-scoped agent instruction data access methods.
+        /// </summary>
+        public IInstructionMethods Instructions { get; protected set; } = null!;
+
+        /// <summary>
         /// The settings used to construct this driver.
         /// </summary>
         public DatabaseSettings Settings { get; protected set; }

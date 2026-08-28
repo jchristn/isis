@@ -192,6 +192,7 @@ function CredentialsView() {
         data={credentials}
         loading={loading}
         onRefresh={load}
+        onRowClick={(x) => { setEditing(x); setShowForm(true); }}
         emptyMessage={t('credentials.empty')}
       />
 

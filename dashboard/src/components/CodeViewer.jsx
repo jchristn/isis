@@ -25,7 +25,7 @@ function CodeViewer({ value, language = 'json', maxHeight = 360 }) {
   return (
     <div className="code-viewer">
       <div className="code-copy">
-        <CopyableId value={text} label="" truncate={false} />
+        <CopyableId value={text} iconOnly />
       </div>
       <pre style={{ maxHeight }}>{text}</pre>
     </div>

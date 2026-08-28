@@ -9,6 +9,7 @@ namespace Isis.Server.Routes
     using Isis.Core.Helpers;
     using Isis.Core.Models;
     using Isis.Core.Security;
+    using Isis.Server.Models;
     using Isis.Server.Services;
     using WatsonWebserver;
     using WatsonWebserver.Core;
@@ -59,6 +60,9 @@ namespace Isis.Server.Routes
             server.Routes.PostAuthentication.Parameter.Add(HttpMethod.PUT, "/v1.0/api/tenants/{tenantId}/endpoints/{endpointId}", UpdateAsync, null, openApiMetadata: OpenApiRouteMetadata.Create("Update a model endpoint", "Endpoints"));
             server.Routes.PostAuthentication.Parameter.Add(HttpMethod.DELETE, "/v1.0/api/tenants/{tenantId}/endpoints/{endpointId}", DeleteAsync, null, openApiMetadata: OpenApiRouteMetadata.Create("Delete a model endpoint", "Endpoints"));
             server.Routes.PostAuthentication.Parameter.Add(HttpMethod.GET, "/v1.0/api/tenants/{tenantId}/endpoint-health", HealthAsync, null, openApiMetadata: OpenApiRouteMetadata.Create("Probe model endpoint health", "Endpoints"));
+            server.Routes.PostAuthentication.Parameter.Add(HttpMethod.POST, "/v1.0/api/tenants/{tenantId}/endpoints/batch-get", BatchGetAsync, null, openApiMetadata: OpenApiRouteMetadata.Create("Batch-get model endpoints", "Endpoints"));
+            server.Routes.PostAuthentication.Parameter.Add(HttpMethod.POST, "/v1.0/api/tenants/{tenantId}/endpoints/batch", BatchCreateAsync, null, openApiMetadata: OpenApiRouteMetadata.Create("Batch-create model endpoints", "Endpoints"));
+            server.Routes.PostAuthentication.Parameter.Add(HttpMethod.POST, "/v1.0/api/tenants/{tenantId}/endpoints/batch-delete", BatchDeleteAsync, null, openApiMetadata: OpenApiRouteMetadata.Create("Batch-delete model endpoints", "Endpoints"));
         }
 
         #endregion
@@ -207,6 +211,72 @@ namespace Isis.Server.Routes
             response["endpointCount"] = endpoints.Objects.Count;
             response["endpoints"] = statuses;
             await RouteHelpers.JsonAsync(context, 200, response).ConfigureAwait(false);
+        }
+
+        private async Task BatchGetAsync(HttpContextBase context)
+        {
+            if (!Authorize(context, out string tenantId))
+            {
+                await RouteHelpers.ErrorAsync(context, 403, "Forbidden", "Not permitted for this tenant.").ConfigureAwait(false);
+                return;
+            }
+
+            BatchIdsRequest? request = RouteHelpers.Body<BatchIdsRequest>(context);
+            List<ModelEndpoint> objects = new List<ModelEndpoint>();
+            if (request != null && request.Ids != null && request.Ids.Count > 0)
+            {
+                objects = await _Database.ModelEndpoints.ReadManyAsync(tenantId, request.Ids, context.Token).ConfigureAwait(false);
+            }
+
+            Dictionary<string, object?> body = new Dictionary<string, object?>();
+            body["objects"] = objects;
+            await RouteHelpers.JsonAsync(context, 200, body).ConfigureAwait(false);
+        }
+
+        private async Task BatchCreateAsync(HttpContextBase context)
+        {
+            if (!Authorize(context, out string tenantId))
+            {
+                await RouteHelpers.ErrorAsync(context, 403, "Forbidden", "Not permitted for this tenant.").ConfigureAwait(false);
+                return;
+            }
+
+            BatchModelEndpointRequest? request = RouteHelpers.Body<BatchModelEndpointRequest>(context);
+            List<ModelEndpoint> objects = new List<ModelEndpoint>();
+            if (request != null && request.Items != null && request.Items.Count > 0)
+            {
+                foreach (ModelEndpoint item in request.Items)
+                {
+                    item.TenantId = tenantId;
+                    item.Id = IdGenerator.Endpoint(item.Kind);
+                }
+
+                objects = await _Database.ModelEndpoints.CreateManyAsync(request.Items, context.Token).ConfigureAwait(false);
+            }
+
+            Dictionary<string, object?> body = new Dictionary<string, object?>();
+            body["objects"] = objects;
+            await RouteHelpers.JsonAsync(context, 201, body).ConfigureAwait(false);
+        }
+
+        private async Task BatchDeleteAsync(HttpContextBase context)
+        {
+            if (!Authorize(context, out string tenantId))
+            {
+                await RouteHelpers.ErrorAsync(context, 403, "Forbidden", "Not permitted for this tenant.").ConfigureAwait(false);
+                return;
+            }
+
+            BatchIdsRequest? request = RouteHelpers.Body<BatchIdsRequest>(context);
+            int deleted = 0;
+            if (request != null && request.Ids != null && request.Ids.Count > 0)
+            {
+                deleted = await _Database.ModelEndpoints.DeleteManyAsync(tenantId, request.Ids, context.Token).ConfigureAwait(false);
+            }
+
+            Dictionary<string, object?> body = new Dictionary<string, object?>();
+            body["deleted"] = deleted;
+            await RouteHelpers.JsonAsync(context, 200, body).ConfigureAwait(false);
         }
 
         #endregion

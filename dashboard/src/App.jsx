@@ -10,6 +10,7 @@ import ScopesView from './views/ScopesView';
 import ScopeDetail from './views/ScopeDetail';
 import CategoriesView from './views/CategoriesView';
 import MemoriesView from './views/MemoriesView';
+import MemoryBrowserView from './views/MemoryBrowserView';
 import SearchExplorerView from './views/SearchExplorerView';
 import ChatView from './views/ChatView';
 import EmbeddingEndpointsView from './views/EmbeddingEndpointsView';
@@ -21,6 +22,7 @@ import SettingsView from './views/SettingsView';
 import TenantsView from './views/TenantsView';
 import UsersView from './views/UsersView';
 import CredentialsView from './views/CredentialsView';
+import InstructionsView from './views/InstructionsView';
 import './App.css';
 
 function PrivateRoute({ children }) {
@@ -57,6 +59,8 @@ function AppRoutes() {
         <Route index element={<Navigate to="home" replace />} />
         <Route path="home" element={<HomeView />} />
         <Route path="scopes" element={<ScopesView />} />
+        <Route path="memories" element={<MemoryBrowserView />} />
+        <Route path="instructions" element={<InstructionsView />} />
         <Route path="scopes/:scopeId" element={<ScopeDetail />} />
         <Route path="scopes/:scopeId/categories" element={<CategoriesView />} />
         <Route path="scopes/:scopeId/memories" element={<MemoriesView />} />

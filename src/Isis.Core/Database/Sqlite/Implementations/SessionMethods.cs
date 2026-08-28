@@ -1,7 +1,9 @@
 namespace Isis.Core.Database.Sqlite.Implementations
 {
     using System;
+    using System.Collections.Generic;
     using System.Data;
+    using System.Linq;
     using System.Text;
     using System.Threading;
     using System.Threading.Tasks;
@@ -156,6 +158,43 @@ namespace Isis.Core.Database.Sqlite.Implementations
 
             await _Driver.ExecuteQueryAsync("DELETE FROM authsessions WHERE id = " + SqliteHelpers.ToSqlRequired(id) + ";", true, token).ConfigureAwait(false);
             return true;
+        }
+
+        /// <inheritdoc />
+        public async Task<List<AuthSession>> ReadManyAsync(string tenantId, IReadOnlyCollection<string> ids, CancellationToken token = default)
+        {
+            if (ids == null || ids.Count == 0) return new List<AuthSession>();
+
+            string inList = String.Join(", ", ids.Select(id => SqliteHelpers.ToSqlRequired(id)));
+            DataTable table = await _Driver.ExecuteQueryAsync(
+                "SELECT * FROM authsessions WHERE tenantid = " + SqliteHelpers.ToSqlRequired(tenantId) +
+                " AND id IN (" + inList + ");", false, token).ConfigureAwait(false);
+
+            List<AuthSession> results = new List<AuthSession>();
+            foreach (DataRow row in table.Rows) results.Add(FromRow(row));
+            return results;
+        }
+
+        /// <inheritdoc />
+        public async Task<List<AuthSession>> CreateManyAsync(IReadOnlyCollection<AuthSession> items, CancellationToken token = default)
+        {
+            if (items == null || items.Count == 0) return new List<AuthSession>();
+
+            List<AuthSession> results = new List<AuthSession>();
+            foreach (AuthSession item in items) results.Add(await CreateAsync(item, token).ConfigureAwait(false));
+            return results;
+        }
+
+        /// <inheritdoc />
+        public async Task<int> DeleteManyAsync(string tenantId, IReadOnlyCollection<string> ids, CancellationToken token = default)
+        {
+            if (ids == null || ids.Count == 0) return 0;
+
+            string inList = String.Join(", ", ids.Select(id => SqliteHelpers.ToSqlRequired(id)));
+            await _Driver.ExecuteQueryAsync(
+                "DELETE FROM authsessions WHERE tenantid = " + SqliteHelpers.ToSqlRequired(tenantId) +
+                " AND id IN (" + inList + ");", true, token).ConfigureAwait(false);
+            return ids.Count;
         }
 
         #endregion

@@ -19,22 +19,30 @@ authentication and tenant scoping.
 
 ## Security Model
 
-Every MCP request must present a credential access key **and** its secret key, one in each
-of two request headers. The MCP server rejects requests that are missing either header with
-HTTP `401` and the message `Provide x-access-key and x-secret-key headers.`
+Every MCP request must present a credential **access key**. The access key alone
+authenticates the caller and identifies the tenant credential; the secret key is **optional**.
+Present the access key one of two ways:
 
-| Header | Value | Default value | Use |
-|--------|-------|---------------|-----|
-| `x-access-key` | Credential access key | `isisdefaultkey` | Identifies the tenant credential |
-| `x-secret-key` | Credential secret key | `isisdefaultsecret` | Proves the caller holds the credential |
+| Auth material | How to send it | Default value | Notes |
+|---------------|----------------|---------------|-------|
+| Access key (bearer) | `Authorization: Bearer <accessKey>` | `isisdefaultkey` | Single-header clients (e.g. Mux) use this |
+| Access key (header) | `x-access-key: <accessKey>` | `isisdefaultkey` | Equivalent alternative to the bearer token |
+| Secret key (optional) | `x-secret-key: <secretKey>` | `isisdefaultsecret` | Validated **only if present**; never required |
 
-Send both headers on every request. Together they identify a tenant credential; the access
-key alone is no longer sufficient — the secret is now required. Both values are forwarded
-verbatim to the Isis REST API, which enforces tenant isolation. Tenant identity is never
-trusted from a tool argument alone; the REST layer validates that the caller's credential is
-authorized for the `tenantId` it operates on. Administrative power, when a credential's user
-has it, comes from the user record's `IsAdmin` (system-wide) or `IsTenantAdmin` (tenant-wide)
-flags — there is no separate admin key.
+The MCP server accepts either the `Authorization: Bearer <accessKey>` token or the
+`x-access-key` header, and honors an `x-secret-key` header only when one is supplied. A
+request that presents **no access key** is rejected with HTTP `401` before any tool runs. The
+access key is **public and transferable** — it authenticates on its own, so treat it as a
+**capability token** and prefer a least-privilege credential. The `x-secret-key` header is a
+legacy/optional extra: the server still validates it when present, but no agent installer
+(Claude Code, Codex, Cursor, Gemini, Mux) sends one — the secret never leaves the client.
+
+The access key (and the secret key, when present) is forwarded verbatim to the Isis REST API,
+which enforces tenant isolation. Tenant identity is never trusted from a tool argument alone;
+the REST layer validates that the caller's credential is authorized for the `tenantId` it
+operates on. Administrative power, when a credential's user has it, comes from the user
+record's `IsAdmin` (system-wide) or `IsTenantAdmin` (tenant-wide) flags — there is no separate
+admin key.
 
 Change the default keys before exposing Isis outside a trusted local environment.
 
@@ -68,12 +76,14 @@ When the REST call fails, `success` is `false`, `statusCode` carries the upstrea
 
 ## Tool Inventory
 
-Isis exposes ten MCP tools.
+Isis exposes twelve MCP tools.
 
 | Tool | Purpose |
 |------|---------|
 | `isis_whoami` | Resolve the tenant and principal the caller's credential maps to |
 | `isis_scope_enumerate` | List the memory scopes in a tenant |
+| `isis_scope_create` | Create a memory scope for a project when none exists |
+| `isis_instructions` | Get the tenant's standing instructions |
 | `isis_guide` | Get the operating guide for a scope: categories, usage instructions, capabilities |
 | `isis_category_enumerate` | List categories in a scope, including usage instructions |
 | `isis_category_create` | Create a category in a scope |
@@ -89,8 +99,9 @@ Isis is memory, not a filesystem. Read before you write, and prefer summaries be
 bodies to conserve tokens.
 
 1. Call `isis_whoami` to learn your `tenantId`.
-2. Call `isis_scope_enumerate` with that `tenantId` to find the scope you want (a project,
-   a book, or a shared "global" scope).
+2. Call `isis_instructions` with that `tenantId` to read the tenant's standing guidance, then
+   `isis_scope_enumerate` to find the scope you want (a project, a book, or a shared "global"
+   scope). If no scope fits your project, create one with `isis_scope_create`.
 3. Call `isis_guide` for the selected scope. This is the single most important call: it
    returns the scope's categories, their usage instructions (when and how to write each
    kind of memory), and the store's search capabilities.
@@ -147,9 +158,11 @@ No arguments.
 #### Guidance
 
 - Cache the returned `tenantId` for the rest of the session.
-- The caller resolves to the tenant credential its `x-access-key`/`x-secret-key` pair maps
-  to. If that credential's user is an admin (`IsAdmin` / `IsTenantAdmin`), the resolved
-  principal reflects it.
+- Callers authenticate with the credential access key (dev default `isisdefaultkey`),
+  presented as `Authorization: Bearer <accessKey>` or in the `x-access-key` header; an optional
+  `x-secret-key` (dev default `isisdefaultsecret`) is validated only when present. The caller
+  resolves to the tenant credential the access key maps to. If that credential's user is an
+  admin (`IsAdmin` / `IsTenantAdmin`), the resolved principal reflects it.
 
 ### `isis_scope_enumerate`
 
@@ -198,6 +211,103 @@ Proxies `GET /v1.0/api/tenants/{tenantId}/scopes`.
 - A scope is a named memory space. Select one by `scopeId` before any category or memory call.
 - `storeProvider` tells you whether semantic search is available (`RecallDb`) or whether the
   scope is keyword-only (`Verbex`, `Filesystem`).
+
+### `isis_scope_create`
+
+Create a memory scope for a project when none exists. Use this once, at the start of a project,
+after `isis_scope_enumerate` shows no suitable scope.
+
+Proxies `POST /v1.0/api/tenants/{tenantId}/scopes`.
+
+#### Input
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `tenantId` | string | Yes | n/a | Tenant identifier from `isis_whoami` |
+| `name` | string | Yes | n/a | Scope name (for example the project name) |
+| `description` | string | No | null | What the scope holds |
+| `storeProvider` | string | No | server default | Backing store: `RecallDb`, `Verbex`, or `Filesystem` |
+| `embeddingEndpointId` | string | No | null | Embedding endpoint id for semantic scopes |
+| `dimensionality` | integer | No | null | Embedding vector dimension |
+| `filesystemLayout` | string | No | null | Layout for a `Filesystem` scope (single-file or hierarchy) |
+| `targetPath` | string | No | null | Root path for a `Filesystem` scope |
+
+#### Example Request
+
+```json
+{
+  "tenantId": "ten_a1b2c3",
+  "name": "agent-memory-repo",
+  "description": "Memory for the AgentMemory project.",
+  "storeProvider": "RecallDb"
+}
+```
+
+#### Response
+
+```json
+{
+  "tool": "isis_scope_create",
+  "success": true,
+  "statusCode": 201,
+  "data": {
+    "scopeId": "scp_repo",
+    "name": "agent-memory-repo",
+    "storeProvider": "RecallDb"
+  }
+}
+```
+
+#### Guidance
+
+- Enumerate first; create a scope only when none fits. One scope per project is the norm.
+- For semantic search, provide an `embeddingEndpointId` and `dimensionality` that match the
+  configured embedding endpoint.
+
+### `isis_instructions`
+
+Get the tenant's standing instructions — tenant-wide guidance the operator wants every agent to
+follow. Returned in ascending `position` order.
+
+Proxies `GET /v1.0/api/tenants/{tenantId}/instructions`.
+
+#### Input
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `tenantId` | string | Yes | n/a | Tenant identifier from `isis_whoami` |
+
+#### Example Request
+
+```json
+{
+  "tenantId": "ten_a1b2c3"
+}
+```
+
+#### Response
+
+```json
+{
+  "tool": "isis_instructions",
+  "success": true,
+  "statusCode": 200,
+  "data": [
+    {
+      "id": "ins_1",
+      "name": "House style",
+      "content": "Prefer terse commit messages that reference an issue id.",
+      "position": 0,
+      "active": true
+    }
+  ]
+}
+```
+
+#### Guidance
+
+- Read the tenant's instructions early; they are always-on guidance to honor without being asked.
+- Instructions are tenant-wide and apply across every scope in the tenant.
 
 ### `isis_guide`
 
@@ -598,10 +708,11 @@ Proxies `DELETE /v1.0/api/tenants/{tenantId}/scopes/{scopeId}/memories/{memoryId
 
 ## Error Behavior
 
-A missing credential is rejected at the transport layer before any tool runs:
+A request with no access key is rejected at the transport layer before any tool runs (present
+the access key as `Authorization: Bearer <accessKey>` or `x-access-key`):
 
 ```text
-HTTP 401  Provide x-access-key and x-secret-key headers.
+HTTP 401
 ```
 
 A missing required argument raises an error from the tool:

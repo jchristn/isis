@@ -1,10 +1,12 @@
 namespace Isis.Server.Routes
 {
     using System;
+    using System.Collections.Generic;
     using System.Threading.Tasks;
     using Isis.Core.Database;
     using Isis.Core.Models;
     using Isis.Core.Security;
+    using Isis.Server.Models;
     using Isis.Server.Services;
     using WatsonWebserver;
     using WatsonWebserver.Core;
@@ -19,6 +21,7 @@ namespace Isis.Server.Routes
 
         private readonly DatabaseDriverBase _Database;
         private readonly AuthorizationService _Authorization;
+        private readonly MemoryService _MemoryService;
 
         #endregion
 
@@ -29,11 +32,13 @@ namespace Isis.Server.Routes
         /// </summary>
         /// <param name="database">The database driver.</param>
         /// <param name="authorization">The authorization service.</param>
+        /// <param name="memoryService">The memory service (used for cascade delete of category memories).</param>
         /// <exception cref="ArgumentNullException">Thrown when a required argument is null.</exception>
-        public CategoryRoutes(DatabaseDriverBase database, AuthorizationService authorization)
+        public CategoryRoutes(DatabaseDriverBase database, AuthorizationService authorization, MemoryService memoryService)
         {
             _Database = database ?? throw new ArgumentNullException(nameof(database));
             _Authorization = authorization ?? throw new ArgumentNullException(nameof(authorization));
+            _MemoryService = memoryService ?? throw new ArgumentNullException(nameof(memoryService));
         }
 
         #endregion
@@ -51,6 +56,8 @@ namespace Isis.Server.Routes
             server.Routes.PostAuthentication.Parameter.Add(HttpMethod.GET, "/v1.0/api/tenants/{tenantId}/scopes/{scopeId}/categories/{categoryId}", ReadAsync, null, openApiMetadata: OpenApiRouteMetadata.Create("Read a category", "Categories"));
             server.Routes.PostAuthentication.Parameter.Add(HttpMethod.PUT, "/v1.0/api/tenants/{tenantId}/scopes/{scopeId}/categories/{categoryId}", UpdateAsync, null, openApiMetadata: OpenApiRouteMetadata.Create("Update a category", "Categories"));
             server.Routes.PostAuthentication.Parameter.Add(HttpMethod.DELETE, "/v1.0/api/tenants/{tenantId}/scopes/{scopeId}/categories/{categoryId}", DeleteAsync, null, openApiMetadata: OpenApiRouteMetadata.Create("Delete a category", "Categories"));
+            server.Routes.PostAuthentication.Parameter.Add(HttpMethod.POST, "/v1.0/api/tenants/{tenantId}/scopes/{scopeId}/categories/batch-get", BatchGetAsync, null, openApiMetadata: OpenApiRouteMetadata.Create("Batch-get categories", "Categories"));
+            server.Routes.PostAuthentication.Parameter.Add(HttpMethod.POST, "/v1.0/api/tenants/{tenantId}/scopes/{scopeId}/categories/batch-delete", BatchDeleteAsync, null, openApiMetadata: OpenApiRouteMetadata.Create("Batch-delete categories", "Categories"));
         }
 
         #endregion
@@ -164,15 +171,70 @@ namespace Isis.Server.Routes
             }
 
             string categoryId = RouteHelpers.Param(context, "categoryId") ?? string.Empty;
-            bool deleted = await _Database.Categories.DeleteAsync(tenantId, categoryId, context.Token).ConfigureAwait(false);
-            if (!deleted)
+            Category? category = await _Database.Categories.ReadAsync(tenantId, categoryId, context.Token).ConfigureAwait(false);
+            if (category == null)
             {
                 await RouteHelpers.ErrorAsync(context, 404, "NotFound", "Category not found.").ConfigureAwait(false);
                 return;
             }
 
+            // Cascade: delete the category's memories (store + index), then the category row.
+            Scope? scope = await _Database.Scopes.ReadAsync(tenantId, scopeId, context.Token).ConfigureAwait(false);
+            if (scope != null) await _MemoryService.DeleteCategoryMemoriesAsync(scope, categoryId, context.Token).ConfigureAwait(false);
+            await _Database.Categories.DeleteAsync(tenantId, categoryId, context.Token).ConfigureAwait(false);
+
             context.Response.StatusCode = 204;
             await context.Response.Send().ConfigureAwait(false);
+        }
+
+        private async Task BatchGetAsync(HttpContextBase context)
+        {
+            if (!Authorize(context, out string tenantId, out string scopeId))
+            {
+                await RouteHelpers.ErrorAsync(context, 403, "Forbidden", "Not permitted for this tenant.").ConfigureAwait(false);
+                return;
+            }
+
+            BatchIdsRequest? request = RouteHelpers.Body<BatchIdsRequest>(context);
+            List<Category> objects = new List<Category>();
+            if (request != null && request.Ids != null && request.Ids.Count > 0)
+            {
+                objects = await _Database.Categories.ReadManyAsync(tenantId, request.Ids, context.Token).ConfigureAwait(false);
+            }
+
+            Dictionary<string, object?> body = new Dictionary<string, object?>();
+            body["objects"] = objects;
+            await RouteHelpers.JsonAsync(context, 200, body).ConfigureAwait(false);
+        }
+
+        private async Task BatchDeleteAsync(HttpContextBase context)
+        {
+            if (!Authorize(context, out string tenantId, out string scopeId))
+            {
+                await RouteHelpers.ErrorAsync(context, 403, "Forbidden", "Not permitted for this tenant.").ConfigureAwait(false);
+                return;
+            }
+
+            BatchIdsRequest? request = RouteHelpers.Body<BatchIdsRequest>(context);
+            int deleted = 0;
+            if (request != null && request.Ids != null && request.Ids.Count > 0)
+            {
+                foreach (string categoryId in request.Ids)
+                {
+                    Category? category = await _Database.Categories.ReadAsync(tenantId, categoryId, context.Token).ConfigureAwait(false);
+                    if (category == null || category.ScopeId != scopeId) continue;
+
+                    // Cascade: delete the category's memories (store + index), then the category row.
+                    Scope? scope = await _Database.Scopes.ReadAsync(tenantId, scopeId, context.Token).ConfigureAwait(false);
+                    if (scope != null) await _MemoryService.DeleteCategoryMemoriesAsync(scope, categoryId, context.Token).ConfigureAwait(false);
+                    await _Database.Categories.DeleteAsync(tenantId, categoryId, context.Token).ConfigureAwait(false);
+                    deleted++;
+                }
+            }
+
+            Dictionary<string, object?> body = new Dictionary<string, object?>();
+            body["deleted"] = deleted;
+            await RouteHelpers.JsonAsync(context, 200, body).ConfigureAwait(false);
         }
 
         #endregion

@@ -1,5 +1,6 @@
 namespace Isis.Core.Database.Interfaces
 {
+    using System.Collections.Generic;
     using System.Threading;
     using System.Threading.Tasks;
     using Isis.Core.Enums;
@@ -53,5 +54,31 @@ namespace Isis.Core.Database.Interfaces
         /// <param name="token">Cancellation token.</param>
         /// <returns>True if a record was deleted.</returns>
         Task<bool> DeleteAsync(string tenantId, string id, CancellationToken token = default);
+
+        /// <summary>
+        /// Read multiple endpoints by identifier.
+        /// </summary>
+        /// <param name="tenantId">The owning tenant identifier.</param>
+        /// <param name="ids">The endpoint identifiers.</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>The matching endpoints; empty when none match.</returns>
+        Task<List<ModelEndpoint>> ReadManyAsync(string tenantId, IReadOnlyCollection<string> ids, CancellationToken token = default);
+
+        /// <summary>
+        /// Create multiple endpoints.
+        /// </summary>
+        /// <param name="items">The endpoints to create.</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>The created endpoints.</returns>
+        Task<List<ModelEndpoint>> CreateManyAsync(IReadOnlyCollection<ModelEndpoint> items, CancellationToken token = default);
+
+        /// <summary>
+        /// Delete multiple endpoints by identifier.
+        /// </summary>
+        /// <param name="tenantId">The owning tenant identifier.</param>
+        /// <param name="ids">The endpoint identifiers.</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>The number of identifiers requested for deletion.</returns>
+        Task<int> DeleteManyAsync(string tenantId, IReadOnlyCollection<string> ids, CancellationToken token = default);
     }
 }

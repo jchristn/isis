@@ -225,6 +225,75 @@
               "path": ["v1.0", "api", "tenants"]
             }
           }
+        },
+        {
+          "name": "Create tenant (provisioned)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Demo\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/v1.0/api/tenants",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1.0", "api", "tenants"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('tenant provisioned', () => pm.expect([200, 201]).to.include(pm.response.code));",
+                  "const body = pm.response.json();",
+                  "if (body.tenant && body.tenant.id) {",
+                  "  pm.collectionVariables.set('tenantId', body.tenant.id);",
+                  "}",
+                  "if (body.admin) {",
+                  "  pm.collectionVariables.set('email', body.admin.email);",
+                  "  pm.collectionVariables.set('password', body.admin.password);",
+                  "}",
+                  "if (body.credential) {",
+                  "  pm.collectionVariables.set('accessKey', body.credential.accessKey);",
+                  "  pm.collectionVariables.set('secretKey', body.credential.secretKey);",
+                  "}",
+                  "console.log('Provisioned tenant', body.tenant && body.tenant.id, '— admin password and secret key are shown ONCE and are now captured into collection variables.');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Nuke tenant",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1.0/api/tenants/{{tenantId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1.0", "api", "tenants", "{{tenantId}}"]
+            },
+            "description": "Deletes the tenant and cascades to all of its users, credentials, scopes, categories, memories, instructions, endpoints, and sessions (including external store content). Protected tenants (e.g. ten_default) are refused with 409."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Instructions",
+      "item": [
+        {
+          "name": "Batch get instructions",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"ids\": [\"ins_example1\", \"ins_example2\"]\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/v1.0/api/tenants/{{tenantId}}/instructions/batch-get",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1.0", "api", "tenants", "{{tenantId}}", "instructions", "batch-get"]
+            },
+            "description": "Uniform batch pattern: POST { \"ids\": [...] } to batch-get / batch-delete, POST { \"items\": [...] } to batch (create/upsert). Responses: { \"objects\": [...] } for get/create, { \"deleted\": <int> } for delete."
+          }
         }
       ]
     }

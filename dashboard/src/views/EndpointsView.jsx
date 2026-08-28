@@ -107,7 +107,7 @@ function EndpointForm({ kind, initial, onSubmit, onClose, t }) {
     <Modal
       isOpen
       onClose={onClose}
-      title={initial ? t('common.edit') : kind === 'Embedding' ? t('endpoints.addEmbedding') : t('endpoints.addInference')}
+      title={initial?.id ? t('common.edit') : kind === 'Embedding' ? t('endpoints.addEmbedding') : t('endpoints.addInference')}
       size="wide"
       footer={
         <>
@@ -299,6 +299,11 @@ function EndpointsView({ kind }) {
     setTestItem({ endpoint: ep, loading: false, health });
   };
 
+  // Open the health details modal with the latest known health (no forced re-probe).
+  const openHealth = (ep) => {
+    setTestItem({ endpoint: ep, loading: false, health: healthById[ep.id || ep.Id] });
+  };
+
   const healthTone = (ep) => {
     if (ep.active === false) return { tone: 'neutral', label: t('endpoints.inactive') };
     const h = healthById[ep.id || ep.Id];
@@ -335,7 +340,15 @@ function EndpointsView({ kind }) {
         const hist = historyRef.current[e.id || e.Id] || [];
         return (
           <span style={{ display: 'inline-flex', gap: '0.5rem', alignItems: 'center' }}>
-            <StatusBadge tone={tone}>{label}</StatusBadge>
+            <button
+              type="button"
+              className="badge-button"
+              data-row-click-ignore="true"
+              title={t('endpoints.viewHealth')}
+              onClick={(ev) => { ev.stopPropagation(); openHealth(e); }}
+            >
+              <StatusBadge tone={tone}>{label}</StatusBadge>
+            </button>
             {hist.length > 0 && <HealthHistogram history={hist} />}
           </span>
         );
@@ -358,6 +371,7 @@ function EndpointsView({ kind }) {
           actions={[
             { label: t('endpoints.test'), onClick: () => runTest(e) },
             { label: t('common.edit'), onClick: () => { setEditing(e); setShowForm(true); } },
+            { label: t('common.duplicate'), onClick: () => { setEditing({ ...e, id: undefined, Id: undefined, name: `${e.name} (copy)` }); setShowForm(true); } },
             { label: t('common.viewJson'), onClick: () => setJsonItem(e) },
             { divider: true },
             { label: t('common.delete'), danger: true, onClick: () => setDeleteTarget(e) }
@@ -406,7 +420,17 @@ function EndpointsView({ kind }) {
       )}
 
       {testItem && (
-        <Modal isOpen onClose={() => setTestItem(null)} title={`${t('endpoints.test')}: ${testItem.endpoint.name}`}>
+        <Modal
+          isOpen
+          onClose={() => setTestItem(null)}
+          title={`${t('endpoints.health')}: ${testItem.endpoint.name}`}
+          footer={
+            <>
+              <button className="btn-secondary" onClick={() => setTestItem(null)}>{t('common.close')}</button>
+              <button className="btn-primary" disabled={testItem.loading} onClick={() => runTest(testItem.endpoint)}>{t('endpoints.retest')}</button>
+            </>
+          }
+        >
           {testItem.loading ? (
             <div className="state-block"><div className="spinner" /></div>
           ) : testItem.health ? (

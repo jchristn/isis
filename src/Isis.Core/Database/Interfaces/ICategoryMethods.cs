@@ -1,5 +1,6 @@
 namespace Isis.Core.Database.Interfaces
 {
+    using System.Collections.Generic;
     using System.Threading;
     using System.Threading.Tasks;
     using Isis.Core.Models;
@@ -62,5 +63,31 @@ namespace Isis.Core.Database.Interfaces
         /// <param name="token">Cancellation token.</param>
         /// <returns>True if a record was deleted.</returns>
         Task<bool> DeleteAsync(string tenantId, string id, CancellationToken token = default);
+
+        /// <summary>
+        /// Read multiple categories by identifier.
+        /// </summary>
+        /// <param name="tenantId">The owning tenant identifier.</param>
+        /// <param name="ids">The category identifiers.</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>The matching categories; empty when none match.</returns>
+        Task<List<Category>> ReadManyAsync(string tenantId, IReadOnlyCollection<string> ids, CancellationToken token = default);
+
+        /// <summary>
+        /// Create multiple categories.
+        /// </summary>
+        /// <param name="items">The categories to create.</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>The created categories.</returns>
+        Task<List<Category>> CreateManyAsync(IReadOnlyCollection<Category> items, CancellationToken token = default);
+
+        /// <summary>
+        /// Delete multiple categories by identifier.
+        /// </summary>
+        /// <param name="tenantId">The owning tenant identifier.</param>
+        /// <param name="ids">The category identifiers.</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>The number of identifiers requested for deletion.</returns>
+        Task<int> DeleteManyAsync(string tenantId, IReadOnlyCollection<string> ids, CancellationToken token = default);
     }
 }

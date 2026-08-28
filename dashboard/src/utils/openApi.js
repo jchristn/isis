@@ -121,6 +121,41 @@ export function getRequestBodyTemplate(requestBody, spec) {
   return JSON.stringify(example, null, 2);
 }
 
+/**
+ * Curated sample request bodies for Isis write endpoints, used as a fallback when the OpenAPI document
+ * carries no requestBody schema (Isis registers routes with summary/tag only). Matched by method + a path
+ * suffix regex; order matters (more specific paths first).
+ */
+const REQUEST_SAMPLES = [
+  { m: 'POST', re: /\/tenants-for-email$/, body: { email: 'admin@isis.local' } },
+  { m: 'POST', re: /\/token$/, body: { email: 'admin@isis.local', password: 'isisadmin', tenantId: 'ten_default' } },
+  { m: 'POST', re: /\/tenants$/, body: { name: 'Acme', description: '' } },
+  { m: 'PUT', re: /\/tenants\/\{[^}]+\}$/, body: { name: 'Acme', description: '' } },
+  { m: 'POST', re: /\/users$/, body: { firstName: 'Ada', lastName: 'Lovelace', email: 'ada@example.com', password: 'change-me', isTenantAdmin: false, active: true } },
+  { m: 'PUT', re: /\/users\/\{[^}]+\}$/, body: { firstName: 'Ada', lastName: 'Lovelace', email: 'ada@example.com', isTenantAdmin: false, active: true } },
+  { m: 'POST', re: /\/credentials$/, body: { name: 'CI pipeline', userId: 'usr_admin', active: true } },
+  { m: 'PUT', re: /\/credentials\/\{[^}]+\}$/, body: { name: 'CI pipeline', active: true } },
+  { m: 'POST', re: /\/instructions$/, body: { name: 'House rules', content: 'Write one memory per idea; prefer stable slugs.', position: 0, active: true } },
+  { m: 'PUT', re: /\/instructions\/\{[^}]+\}$/, body: { name: 'House rules', content: 'Write one memory per idea; prefer stable slugs.', position: 0, active: true } },
+  { m: 'POST', re: /\/memories\/search$/, body: { queryText: 'grip fighting', mode: 'Hybrid', topK: 8 } },
+  { m: 'POST', re: /\/memories$/, body: { categoryId: 'cat_replace_me', slug: 'grip', title: 'Grip fighting', summary: 'Win the grip to win the exchange.', body: 'Control the sleeve and collar before advancing.', type: 'Project' } },
+  { m: 'POST', re: /\/categories$/, body: { name: 'notes', description: '', instructions: 'One idea per memory.' } },
+  { m: 'PUT', re: /\/categories\/\{[^}]+\}$/, body: { name: 'notes', description: '', instructions: 'One idea per memory.' } },
+  { m: 'POST', re: /\/scopes$/, body: { name: 'my-project', description: '', storeProvider: 'RecallDb', dimensionality: 384, embeddingEndpointId: '' } },
+  { m: 'PUT', re: /\/scopes\/\{[^}]+\}$/, body: { name: 'my-project', description: '', active: true } },
+  { m: 'POST', re: /\/endpoints$/, body: { name: 'Ollama', kind: 'Embedding', apiFormat: 'Ollama', hostname: 'localhost', port: 11434, model: 'all-minilm', dimensionality: 384, active: true } },
+  { m: 'PUT', re: /\/endpoints\/\{[^}]+\}$/, body: { name: 'Ollama', kind: 'Embedding', apiFormat: 'Ollama', hostname: 'localhost', port: 11434, model: 'all-minilm', active: true } },
+  { m: 'POST', re: /\/chat$/, body: { question: 'What do we know so far?', topK: 8, inferenceEndpointId: '' } },
+  { m: 'POST', re: /\/collections$/, body: { name: 'my-collection', dimensionality: 384 } }
+];
+
+/** Return a curated sample JSON body string for a known Isis write operation, or '' if none applies. */
+export function sampleBodyFor(op) {
+  if (!op || ['GET', 'HEAD', 'DELETE'].includes(op.method)) return '';
+  const match = REQUEST_SAMPLES.find((s) => s.m === op.method && s.re.test(op.path));
+  return match ? JSON.stringify(match.body, null, 2) : '';
+}
+
 /** Build curl, fetch, and C# HttpClient code snippets for a composed request. */
 export function buildCodeSnippets({ method, url, headers = {}, body }) {
   const headerEntries = Object.entries(headers).filter(([k]) => k);

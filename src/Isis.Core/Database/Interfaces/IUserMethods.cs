@@ -71,5 +71,31 @@ namespace Isis.Core.Database.Interfaces
         /// <param name="token">Cancellation token.</param>
         /// <returns>True if a record was deleted.</returns>
         Task<bool> DeleteAsync(string tenantId, string id, CancellationToken token = default);
+
+        /// <summary>
+        /// Read multiple users by identifier.
+        /// </summary>
+        /// <param name="tenantId">The owning tenant identifier.</param>
+        /// <param name="ids">The user identifiers.</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>The matching users; empty when none match.</returns>
+        Task<List<User>> ReadManyAsync(string tenantId, IReadOnlyCollection<string> ids, CancellationToken token = default);
+
+        /// <summary>
+        /// Create multiple users.
+        /// </summary>
+        /// <param name="items">The users to create.</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>The created users.</returns>
+        Task<List<User>> CreateManyAsync(IReadOnlyCollection<User> items, CancellationToken token = default);
+
+        /// <summary>
+        /// Delete multiple users by identifier.
+        /// </summary>
+        /// <param name="tenantId">The owning tenant identifier.</param>
+        /// <param name="ids">The user identifiers.</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>The number of identifiers requested for deletion.</returns>
+        Task<int> DeleteManyAsync(string tenantId, IReadOnlyCollection<string> ids, CancellationToken token = default);
     }
 }

@@ -5,7 +5,7 @@ import { IconCopy, IconCheck } from './Icons';
  * Consistent copy-to-clipboard control for IDs, URLs, tokens, and commands.
  * Preserves the exact value and briefly flips to a checkmark on success.
  */
-function CopyableId({ value, label, truncate = true, mono = true }) {
+function CopyableId({ value, label, truncate = true, mono = true, iconOnly = false }) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(
@@ -39,12 +39,14 @@ function CopyableId({ value, label, truncate = true, mono = true }) {
 
   return (
     <span className="copyable-id" title={String(value)}>
-      <span
-        className="copy-value"
-        style={{ fontFamily: mono ? 'var(--font-mono)' : 'inherit', maxWidth: truncate ? '22ch' : 'none' }}
-      >
-        {label || value}
-      </span>
+      {!iconOnly && (
+        <span
+          className="copy-value"
+          style={{ fontFamily: mono ? 'var(--font-mono)' : 'inherit', maxWidth: truncate ? '22ch' : 'none' }}
+        >
+          {label || value}
+        </span>
+      )}
       <button
         type="button"
         className={`copy-btn btn-icon${copied ? ' copied' : ''}`}

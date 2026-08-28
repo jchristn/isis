@@ -718,6 +718,41 @@ table.data-table {
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
 }
+.cell-truncate {
+  display: inline-block;
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+/* Clickable badge (e.g. endpoint health) — no button chrome, badge stays interactive. */
+.badge-button {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  font: inherit;
+  line-height: 0;
+}
+/* API Explorer: full-width searchable operation picker, request card stacked below. */
+.explorer-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.explorer-picker .explorer-search,
+.explorer-picker .explorer-select {
+  width: 100%;
+}
+.explorer-picker .explorer-select {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+.explorer-panel.card {
+  padding: var(--spacing-lg);
+}
 .cell-num {
   text-align: right;
   font-variant-numeric: tabular-nums;
@@ -1189,6 +1224,37 @@ table.data-table {
   word-break: break-word;
 }
 
+/* ---------- Detail modal sections (request history) ---------- */
+.detail-section {
+  margin-bottom: var(--spacing-lg);
+}
+.detail-section:last-of-type {
+  margin-bottom: 0;
+}
+.detail-section .section-title {
+  font-size: var(--font-size-sm);
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-secondary);
+  margin-bottom: var(--spacing-sm);
+}
+.detail-empty {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+.detail-raw {
+  margin-top: var(--spacing-lg);
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--spacing-md);
+}
+.detail-raw > summary {
+  cursor: pointer;
+  user-select: none;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
 /* ---------- Chat ---------- */
 .chat-log {
   display: flex;
@@ -1231,6 +1297,147 @@ table.data-table {
   flex: 1;
   min-height: 44px;
   max-height: 140px;
+}
+
+.chat-answer {
+  white-space: pre-wrap;
+}
+.chat-msg-system {
+  max-width: 100%;
+}
+.chat-sys-title {
+  font-weight: 650;
+  margin-bottom: 0.4rem;
+}
+.chat-sys-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: var(--font-size-sm);
+}
+.chat-sys-table th,
+.chat-sys-table td {
+  text-align: left;
+  padding: 0.3rem 0.6rem;
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: top;
+}
+.chat-sys-table th {
+  color: var(--color-text-secondary);
+  font-weight: 600;
+}
+.chat-sys-table tr:last-child td {
+  border-bottom: none;
+}
+
+/* Collapsible model reasoning, shown above the answer when thinking arrives. */
+.chat-thinking {
+  margin-bottom: 0.5rem;
+  border-left: 2px solid var(--color-border);
+  padding: 0.1rem 0 0.1rem 0.6rem;
+}
+.chat-thinking > summary {
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+.chat-thinking-content {
+  margin-top: 0.3rem;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  white-space: pre-wrap;
+}
+
+/* Retrieval trace: Isis's analog of a tool call — the memories that grounded the answer. */
+.chat-tool-trace {
+  margin-bottom: 0.6rem;
+  font-size: var(--font-size-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface-alt);
+}
+.chat-tool-trace > summary {
+  cursor: pointer;
+  padding: 0.4rem 0.7rem;
+  color: var(--color-text-secondary);
+  user-select: none;
+}
+.chat-tool-trace ul {
+  list-style: none;
+  margin: 0;
+  padding: 0 0.7rem 0.5rem;
+}
+.chat-tool-item {
+  padding: 0.15rem 0;
+}
+.chat-tool-item > summary {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.2rem 0;
+  user-select: none;
+}
+.chat-tool-item .tool-slug {
+  font-family: var(--font-mono);
+  font-size: 0.82em;
+  word-break: break-word;
+}
+.chat-tool-item .tool-title {
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-tool-item .tool-score {
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+.chat-tool-snippet {
+  margin: 0.2rem 0 0.4rem 0.9rem;
+  padding: 0.5rem 0.6rem;
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--color-text-secondary);
+}
+
+/* Per-answer telemetry: an (i) affordance revealing a stats popover on hover/focus. */
+.chat-stats-info {
+  position: relative;
+  display: inline-flex;
+  margin-top: 0.6rem;
+}
+.chat-stats-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.1rem 0.55rem 0.1rem 0.4rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+.chat-stats-i {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: 0.62rem;
+  font-style: italic;
+  font-weight: 600;
+  line-height: 1;
 }
 
 /* ---------- API explorer layout ---------- */

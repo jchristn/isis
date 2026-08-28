@@ -55,7 +55,7 @@ namespace Test.Shared
                 Require(isis.GetProperty("url").GetString() == "http://127.0.0.1:8720/mcp", "Expected the url to match.");
                 JsonElement freshHeaders = isis.GetProperty("headers");
                 Require(freshHeaders.GetProperty("x-access-key").GetString() == "isisdefaultkey", "Expected the x-access-key header to be 'isisdefaultkey'.");
-                Require(freshHeaders.GetProperty("x-secret-key").GetString() == "isisdefaultsecret", "Expected the x-secret-key header to be 'isisdefaultsecret'.");
+                Require(!freshHeaders.TryGetProperty("x-secret-key", out _), "Expected no x-secret-key header (secret must never be written to a client config).");
                 Require(!freshHeaders.TryGetProperty("x-api-key", out _), "Expected no x-api-key header.");
             }
             finally
@@ -111,13 +111,13 @@ namespace Test.Shared
             string tmp = TempFile();
             try
             {
-                Dictionary<string, string> headers = new Dictionary<string, string> { ["x-access-key"] = "tok", ["x-secret-key"] = "shh" };
+                Dictionary<string, string> headers = new Dictionary<string, string> { ["x-access-key"] = "tok" };
                 McpInstaller.Install(tmp, "http://127.0.0.1:8720/mcp", headers);
 
                 using JsonDocument doc = Load(tmp);
                 JsonElement written = doc.RootElement.GetProperty("mcpServers").GetProperty("isis").GetProperty("headers");
                 Require(written.GetProperty("x-access-key").GetString() == "tok", "Expected the x-access-key header to be 'tok'.");
-                Require(written.GetProperty("x-secret-key").GetString() == "shh", "Expected the x-secret-key header to be 'shh'.");
+                Require(!written.TryGetProperty("x-secret-key", out _), "Expected no x-secret-key header to be written.");
                 Require(!written.TryGetProperty("x-api-key", out _), "Expected no x-api-key header when installing an access key.");
             }
             finally
@@ -212,7 +212,7 @@ namespace Test.Shared
 
         private static Dictionary<string, string> Creds()
         {
-            return new Dictionary<string, string> { ["x-access-key"] = "isisdefaultkey", ["x-secret-key"] = "isisdefaultsecret" };
+            return new Dictionary<string, string> { ["x-access-key"] = "isisdefaultkey" };
         }
 
         private static string TempFile()

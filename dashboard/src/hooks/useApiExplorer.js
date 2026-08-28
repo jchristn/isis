@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { flattenOpenApiSpec, substitutePathParams, getParameterDefault, getRequestBodyTemplate } from '../utils/openApi';
+import { flattenOpenApiSpec, substitutePathParams, getParameterDefault, getRequestBodyTemplate, sampleBodyFor } from '../utils/openApi';
 import { STORAGE_KEYS } from '../utils/constants';
 
 const HISTORY_CAP = 12;
@@ -72,7 +72,7 @@ export function useApiExplorer(apiClient) {
       setPathParams(nextPath);
       setQueryParams(nextQuery);
       setHeaders({});
-      setBody(getRequestBodyTemplate(op.requestBody, spec));
+      setBody(getRequestBodyTemplate(op.requestBody, spec) || sampleBodyFor(op));
     },
     [operations, spec]
   );

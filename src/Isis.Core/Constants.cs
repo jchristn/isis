@@ -81,6 +81,11 @@ namespace Isis.Core
         public static readonly string PolicyPrefix = "pol_";
 
         /// <summary>
+        /// Instruction identifier prefix.
+        /// </summary>
+        public static readonly string InstructionPrefix = "ins_";
+
+        /// <summary>
         /// Seed pack identifier prefix.
         /// </summary>
         public static readonly string SeedPackPrefix = "seed_";

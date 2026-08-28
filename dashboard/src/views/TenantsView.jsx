@@ -5,14 +5,18 @@ import { useApp } from '../context/AppContext';
 import PageHeader from '../components/PageHeader';
 import DataTable from '../components/DataTable';
 import Modal from '../components/Modal';
-import ConfirmModal from '../components/ConfirmModal';
 import ActionMenu from '../components/ActionMenu';
 import CopyableId from '../components/CopyableId';
 import CodeViewer from '../components/CodeViewer';
+import StatusBadge from '../components/StatusBadge';
 import { EmptyState, ErrorBanner } from '../components/States';
 
 function TenantForm({ initial, onSubmit, onClose, t }) {
-  const [form, setForm] = useState(initial || { name: '', description: '' });
+  const [form, setForm] = useState(
+    initial
+      ? { name: initial.name || '', description: initial.description || '', active: initial.active !== false }
+      : { name: '', description: '', active: true }
+  );
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -22,7 +26,7 @@ function TenantForm({ initial, onSubmit, onClose, t }) {
     setBusy(true);
     setErr(null);
     try {
-      await onSubmit({ name: form.name, description: form.description });
+      await onSubmit({ name: form.name, description: form.description, active: form.active });
       onClose();
     } catch (e2) {
       setErr(e2.message);
@@ -57,6 +61,12 @@ function TenantForm({ initial, onSubmit, onClose, t }) {
           <label>{t('common.description')}</label>
           <textarea value={form.description} onChange={(e) => set('description', e.target.value)} rows={2} />
         </div>
+        <div className="field">
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <input type="checkbox" style={{ width: 'auto' }} checked={form.active} onChange={(e) => set('active', e.target.checked)} />
+            {t('common.active')}
+          </label>
+        </div>
       </form>
     </Modal>
   );
@@ -73,7 +83,10 @@ function TenantsView() {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [jsonItem, setJsonItem] = useState(null);
-  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [nukeTarget, setNukeTarget] = useState(null);
+  const [nukeInput, setNukeInput] = useState('');
+  const [nukeBusy, setNukeBusy] = useState(false);
+  const [provisioned, setProvisioned] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -96,19 +109,33 @@ function TenantsView() {
   const handleSubmit = async (body) => {
     if (editing?.id || editing?.Id) {
       await apiClient.updateTenant(editing.id || editing.Id, body);
-      addToast('Tenant updated', 'success');
+      addToast(t('tenants.updated'), 'success');
     } else {
-      await apiClient.createTenant(body);
-      addToast('Tenant created', 'success');
+      const res = await apiClient.createTenant(body);
+      addToast(t('tenants.created'), 'success');
+      // Provisioning returns the generated admin + credential once — reveal them.
+      if (res?.admin || res?.credential) setProvisioned(res);
     }
     load();
   };
 
-  const handleDelete = async () => {
-    await apiClient.deleteTenant(deleteTarget.id || deleteTarget.Id);
-    addToast('Tenant deleted', 'success');
-    setDeleteTarget(null);
-    load();
+  const openNuke = (x) => {
+    setNukeTarget(x);
+    setNukeInput('');
+  };
+
+  const handleNuke = async () => {
+    setNukeBusy(true);
+    try {
+      await apiClient.deleteTenant(nukeTarget.id || nukeTarget.Id);
+      addToast(t('tenants.nuked'), 'success');
+      setNukeTarget(null);
+      load();
+    } catch (err) {
+      addToast(err.message, 'error');
+    } finally {
+      setNukeBusy(false);
+    }
   };
 
   const columns = [
@@ -122,6 +149,15 @@ function TenantsView() {
     { key: 'name', label: t('common.name'), pinned: true },
     { key: 'description', label: t('common.description'), render: (x) => x.description || '—' },
     {
+      key: 'active',
+      label: t('common.status'),
+      render: (x) => (
+        <StatusBadge tone={x.active === false ? 'neutral' : 'success'}>
+          {x.active === false ? t('common.inactive') : t('common.active')}
+        </StatusBadge>
+      )
+    },
+    {
       key: 'actions',
       label: t('common.actions'),
       pinned: true,
@@ -132,9 +168,10 @@ function TenantsView() {
         <ActionMenu
           actions={[
             { label: t('common.edit'), onClick: () => { setEditing(x); setShowForm(true); } },
+            { label: t('common.duplicate'), onClick: () => { setEditing({ ...x, id: undefined, Id: undefined, name: `${x.name} (copy)` }); setShowForm(true); } },
             { label: t('common.viewJson'), onClick: () => setJsonItem(x) },
             { divider: true },
-            { label: t('common.delete'), danger: true, onClick: () => setDeleteTarget(x) }
+            { label: t('tenants.nuke'), danger: true, disabled: x.protected || x.Protected, onClick: () => openNuke(x) }
           ]}
         />
       )
@@ -180,12 +217,53 @@ function TenantsView() {
         </Modal>
       )}
 
-      <ConfirmModal
-        isOpen={Boolean(deleteTarget)}
-        onClose={() => setDeleteTarget(null)}
-        onConfirm={handleDelete}
-        message={t('confirm.deleteBody', { name: deleteTarget?.name })}
-      />
+      {nukeTarget && (
+        <Modal
+          isOpen
+          onClose={() => setNukeTarget(null)}
+          title={t('tenants.nukeTitle')}
+          footer={
+            <>
+              <button className="btn-secondary" onClick={() => setNukeTarget(null)} disabled={nukeBusy}>{t('common.cancel')}</button>
+              <button
+                className="btn-danger"
+                onClick={handleNuke}
+                disabled={nukeBusy || nukeInput.trim() !== (nukeTarget.id || nukeTarget.Id)}
+              >
+                {nukeBusy ? t('common.loading') : t('tenants.nukeConfirmButton')}
+              </button>
+            </>
+          }
+        >
+          <div className="error-banner">{t('tenants.nukeWarning', { name: nukeTarget.name })}</div>
+          <div className="field" style={{ marginTop: 'var(--spacing-md)' }}>
+            <label>{t('tenants.nukeTypeId')}</label>
+            <div style={{ marginBottom: '0.35rem' }}><CopyableId value={nukeTarget.id || nukeTarget.Id} truncate={false} mono /></div>
+            <input value={nukeInput} onChange={(e) => setNukeInput(e.target.value)} placeholder={nukeTarget.id || nukeTarget.Id} autoFocus autoComplete="off" />
+          </div>
+        </Modal>
+      )}
+
+      {provisioned && (
+        <Modal
+          isOpen
+          onClose={() => setProvisioned(null)}
+          title={t('tenants.provisionedTitle')}
+          footer={<button className="btn-primary" onClick={() => setProvisioned(null)}>{t('common.close')}</button>}
+        >
+          <div className="error-banner" style={{ marginBottom: 'var(--spacing-md)' }}>{t('tenants.provisionedWarning')}</div>
+          <dl className="kv-grid">
+            <dt>{t('login.email')}</dt>
+            <dd><CopyableId value={provisioned.admin?.email} truncate={false} mono /></dd>
+            <dt>{t('login.password')}</dt>
+            <dd><CopyableId value={provisioned.admin?.password} truncate={false} mono /></dd>
+            <dt>{t('credentials.accessKey')}</dt>
+            <dd><CopyableId value={provisioned.credential?.accessKey} truncate={false} mono /></dd>
+            <dt>{t('credentials.secretKeyFull')}</dt>
+            <dd><CopyableId value={provisioned.credential?.secretKey} truncate={false} mono /></dd>
+          </dl>
+        </Modal>
+      )}
     </>
   );
 }

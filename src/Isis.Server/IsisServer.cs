@@ -1,7 +1,11 @@
 namespace Isis.Server
 {
     using System;
+    using System.Collections.Generic;
+    using System.Collections.Specialized;
     using System.Net.Http;
+    using System.Text.Json;
+    using System.Text.RegularExpressions;
     using System.Threading;
     using System.Threading.Tasks;
     using Isis.Core.Database;
@@ -45,6 +49,7 @@ namespace Isis.Server
         private readonly Webserver _Server;
         private readonly Action<string>? _Log;
         private readonly StoreOptions? _StoreOptions;
+        private readonly string? _SettingsFile;
         private bool _Disposed = false;
 
         #endregion
@@ -61,6 +66,7 @@ namespace Isis.Server
         /// <param name="memoryService">Memory service.</param>
         /// <param name="log">Optional log callback.</param>
         /// <param name="storeOptions">Optional external store options (RecallDB/Verbex).</param>
+        /// <param name="settingsFile">Optional settings file path, enabling the server settings routes to persist changes.</param>
         /// <exception cref="ArgumentNullException">Thrown when a required argument is null.</exception>
         public IsisServer(
             IsisSettings settings,
@@ -69,7 +75,8 @@ namespace Isis.Server
             AuthorizationService authorizationService,
             MemoryService memoryService,
             Action<string>? log = null,
-            StoreOptions? storeOptions = null)
+            StoreOptions? storeOptions = null,
+            string? settingsFile = null)
         {
             Settings = settings ?? throw new ArgumentNullException(nameof(settings));
             _Database = database ?? throw new ArgumentNullException(nameof(database));
@@ -78,6 +85,7 @@ namespace Isis.Server
             _MemoryService = memoryService ?? throw new ArgumentNullException(nameof(memoryService));
             _Log = log;
             _StoreOptions = storeOptions;
+            _SettingsFile = settingsFile;
 
             _ProbeClient = new HttpClient();
             _HealthCheck = new HealthCheckService(_ProbeClient);
@@ -145,18 +153,21 @@ namespace Isis.Server
         {
             new HealthRoutes(_Database, Settings.NodeId).Register(_Server);
             new ServerInfoRoutes(Settings.NodeId).Register(_Server);
+            TenantLifecycleService tenantLifecycle = new TenantLifecycleService(_Database, _MemoryService);
             new AuthRoutes(_Database, Settings.Auth).Register(_Server);
-            new TenantRoutes(_Database, _AuthorizationService).Register(_Server);
+            new TenantRoutes(_Database, _AuthorizationService, tenantLifecycle).Register(_Server);
             new UserRoutes(_Database, _AuthorizationService).Register(_Server);
             new CredentialRoutes(_Database, _AuthorizationService).Register(_Server);
-            new ScopeRoutes(_Database, _AuthorizationService).Register(_Server);
-            new CategoryRoutes(_Database, _AuthorizationService).Register(_Server);
+            new ScopeRoutes(_Database, _AuthorizationService, _MemoryService).Register(_Server);
+            new CategoryRoutes(_Database, _AuthorizationService, _MemoryService).Register(_Server);
             new MemoryRoutes(_Database, _AuthorizationService, _MemoryService).Register(_Server);
             new ModelEndpointRoutes(_Database, _AuthorizationService, _HealthCheck).Register(_Server);
             new ChatRoutes(_Database, _AuthorizationService, _ChatService).Register(_Server);
             new RequestHistoryRoutes(_Database, _AuthorizationService).Register(_Server);
             new CollectionRoutes(_AuthorizationService, _StoreOptions).Register(_Server);
             new GuideRoutes(_Database, _AuthorizationService).Register(_Server);
+            new InstructionRoutes(_Database, _AuthorizationService).Register(_Server);
+            new SettingsRoutes(Settings, _SettingsFile ?? "isis.json", _AuthorizationService).Register(_Server);
         }
 
         private static async Task DefaultRouteAsync(HttpContextBase context)
@@ -217,12 +228,73 @@ namespace Isis.Server
                 entry.TenantId = ctx?.TenantId;
                 entry.PrincipalName = ctx?.PrincipalName;
                 entry.SourceIp = context.Request.Source?.IpAddress;
+
+                if (Settings.RequestHistory.CaptureHeaders)
+                {
+                    entry.RequestHeaders = BuildHeadersJson(context.Request.Headers);
+                    entry.ResponseHeaders = BuildHeadersJson(context.Response.Headers);
+                }
+
+                if (Settings.RequestHistory.CaptureBodies)
+                {
+                    int maxBytes = Settings.RequestHistory.MaxBodyBytes > 0 ? Settings.RequestHistory.MaxBodyBytes : 16384;
+                    entry.RequestBody = CaptureBody(SafeRequestBody(context), maxBytes);
+                    entry.ResponseBody = CaptureBody(RouteHelpers.TakeCapturedResponseBody(context), maxBytes);
+                }
+
                 await _Database.RequestHistory.CreateAsync(entry, CancellationToken.None).ConfigureAwait(false);
             }
             catch
             {
                 // Best-effort capture; never fail the request because of history.
             }
+        }
+
+        private static string? SafeRequestBody(HttpContextBase context)
+        {
+            try
+            {
+                return context.Request.DataAsString;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static string? BuildHeadersJson(NameValueCollection? headers)
+        {
+            if (headers == null) return null;
+
+            Dictionary<string, string> map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string? key in headers.AllKeys)
+            {
+                if (string.IsNullOrEmpty(key)) continue;
+                map[key] = IsSensitiveHeader(key) ? "***" : (headers[key] ?? string.Empty);
+            }
+
+            if (map.Count == 0) return null;
+            return JsonSerializer.Serialize(map);
+        }
+
+        private static bool IsSensitiveHeader(string key)
+        {
+            string lower = key.ToLowerInvariant();
+            return lower == "authorization" || lower == "x-secret-key" || lower == "x-token" || lower == "cookie" || lower == "set-cookie";
+        }
+
+        private static string? CaptureBody(string? body, int maxBytes)
+        {
+            if (string.IsNullOrEmpty(body)) return null;
+
+            string redacted = Regex.Replace(
+                body,
+                "(\"(?:password|secretKey|secret_key|secret)\"\\s*:\\s*)\"[^\"]*\"",
+                "$1\"***\"",
+                RegexOptions.IgnoreCase);
+
+            if (redacted.Length > maxBytes) redacted = redacted.Substring(0, maxBytes) + "…[truncated]";
+            return redacted;
         }
 
         private void Dispose(bool disposing)

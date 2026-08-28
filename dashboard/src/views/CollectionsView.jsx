@@ -8,10 +8,8 @@ import StatusBadge from '../components/StatusBadge';
 import { EmptyState } from '../components/States';
 
 /**
- * RecallDB collections are administered via a thin pass-through to RecallDB's
- * own REST API, which this build does not yet proxy. Until then we surface the
- * scope → collection bindings Isis owns (read-only) plus an explanatory empty
- * state for the pass-through capability itself.
+ * Surfaces the RecallDB collections that back this tenant's scopes (the scope →
+ * collection bindings Isis owns), with a read-only table and an empty state.
  */
 function CollectionsView() {
   const { t } = useTranslation();
@@ -61,7 +59,6 @@ function CollectionsView() {
   return (
     <>
       <PageHeader title={t('collections.title')} subtitle={t('collections.subtitle')} />
-      <div className="notice-banner">{t('collections.passThroughNote')}</div>
 
       {bindings.length > 0 && !loading ? (
         <DataTable

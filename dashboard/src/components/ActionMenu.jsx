@@ -16,14 +16,36 @@ function ActionMenu({ actions = [] }) {
     const rect = triggerRef.current?.getBoundingClientRect();
     if (!rect) return;
     const menuWidth = 170;
+    const gap = 4;
+    const margin = 8;
+    // Measure the rendered menu height when available; fall back to an estimate before first paint.
+    const menuHeight = menuRef.current?.getBoundingClientRect().height || 240;
+
     let left = rect.right - menuWidth;
-    if (left < 8) left = 8;
-    setCoords({ top: rect.bottom + 4, left });
+    if (left < margin) left = margin;
+    const maxLeft = window.innerWidth - menuWidth - margin;
+    if (left > maxLeft) left = Math.max(margin, maxLeft);
+
+    // Prefer opening below; flip above when there isn't room and there is more room above.
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    let top;
+    if (spaceBelow >= menuHeight + gap || spaceBelow >= spaceAbove) {
+      top = rect.bottom + gap;
+      // Clamp so the menu never runs past the bottom of the viewport.
+      if (top + menuHeight + margin > window.innerHeight) top = Math.max(margin, window.innerHeight - menuHeight - margin);
+    } else {
+      top = rect.top - menuHeight - gap;
+      if (top < margin) top = margin;
+    }
+    setCoords({ top, left });
   }, []);
 
   useLayoutEffect(() => {
     if (!open) return undefined;
     position();
+    // Re-run once the menu has painted so the height-aware clamping is exact.
+    const raf = window.requestAnimationFrame(position);
     const onScroll = () => setOpen(false);
     const onClick = (e) => {
       if (menuRef.current && !menuRef.current.contains(e.target) && !triggerRef.current.contains(e.target)) {
@@ -34,6 +56,7 @@ function ActionMenu({ actions = [] }) {
     window.addEventListener('resize', onScroll);
     document.addEventListener('mousedown', onClick);
     return () => {
+      window.cancelAnimationFrame(raf);
       window.removeEventListener('scroll', onScroll, true);
       window.removeEventListener('resize', onScroll);
       document.removeEventListener('mousedown', onClick);

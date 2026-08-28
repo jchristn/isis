@@ -1,5 +1,6 @@
 namespace Isis.Core.Database.Interfaces
 {
+    using System.Collections.Generic;
     using System.Threading;
     using System.Threading.Tasks;
     using Isis.Core.Models;
@@ -60,5 +61,31 @@ namespace Isis.Core.Database.Interfaces
         /// <param name="token">Cancellation token.</param>
         /// <returns>True if a record was deleted.</returns>
         Task<bool> DeleteAsync(string tenantId, string id, CancellationToken token = default);
+
+        /// <summary>
+        /// Read multiple scopes by identifier.
+        /// </summary>
+        /// <param name="tenantId">The owning tenant identifier.</param>
+        /// <param name="ids">The scope identifiers.</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>The matching scopes; empty when none match.</returns>
+        Task<List<Scope>> ReadManyAsync(string tenantId, IReadOnlyCollection<string> ids, CancellationToken token = default);
+
+        /// <summary>
+        /// Create multiple scopes.
+        /// </summary>
+        /// <param name="items">The scopes to create.</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>The created scopes.</returns>
+        Task<List<Scope>> CreateManyAsync(IReadOnlyCollection<Scope> items, CancellationToken token = default);
+
+        /// <summary>
+        /// Delete multiple scopes by identifier.
+        /// </summary>
+        /// <param name="tenantId">The owning tenant identifier.</param>
+        /// <param name="ids">The scope identifiers.</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>The number of identifiers requested for deletion.</returns>
+        Task<int> DeleteManyAsync(string tenantId, IReadOnlyCollection<string> ids, CancellationToken token = default);
     }
 }

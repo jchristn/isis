@@ -13,14 +13,18 @@ For the full tool contract, response schemas, and per-tool guidance, see
 |----------|-------|
 | Endpoint | `http://localhost:8720/mcp` |
 | Transport | Streamable HTTP + SSE |
-| Auth header (access key) | `x-access-key: isisdefaultkey` |
-| Auth header (secret key) | `x-secret-key: isisdefaultsecret` |
+| Auth (access key) | `Authorization: Bearer isisdefaultkey` **or** `x-access-key: isisdefaultkey` |
 
-Every request must carry **both** auth headers: `x-access-key` (a credential's access key)
-and `x-secret-key` (its secret key). The two together identify a tenant credential and
-scope the connection to that credential's tenant; the access key alone is not enough. The
-values above are the shipped defaults; change them before exposing Isis outside a trusted
-local environment.
+Isis authenticates a caller by its credential **access key**, which on its own identifies
+the tenant credential and scopes the connection to that credential's tenant. Present the
+access key either as a bearer token (`Authorization: Bearer <accessKey>`) or in the
+`x-access-key` header. Every agent authenticates with the access key alone: **Mux** sends it
+as a bearer token (see the Mux section), and **Claude Code, Codex, Cursor, and Gemini** send it
+in the `x-access-key` header. No agent sends a secret key — it never leaves the client. The
+server still *optionally* accepts an `x-secret-key` header and validates it when present, but
+none of the installers send one. Because the access key alone authenticates, treat it as a
+**capability token** and prefer a least-privilege credential. The values above are the shipped
+defaults; change them before exposing Isis outside a trusted local environment.
 
 The host and port are configured in `isis.mcp.json` and can be overridden with the
 `ISIS_MCP_HOSTNAME` and `ISIS_MCP_PORT` environment variables. If you change the port,
@@ -36,11 +40,10 @@ isis mcp install
 ```
 
 This patches `~/.claude.json` with an `isis` MCP server pointing at
-`http://127.0.0.1:8720/mcp`, including the `x-access-key` and `x-secret-key` headers. It
-reads the port and host from `isis.mcp.json` and the `ISIS_MCP_*` environment variables,
-and accepts optional `--access-key`, `--secret-key`, `--port`, and `--host` flags. After it
-runs, restart Claude Code to pick up the change. See [Installer Reference](#installer-reference)
-for details.
+`http://127.0.0.1:8720/mcp`, including the `x-access-key` header. It reads the port and host
+from `isis.mcp.json` and the `ISIS_MCP_*` environment variables, and accepts optional
+`--access-key`, `--port`, and `--host` flags. After it runs, restart Claude Code to pick up the
+change. See [Installer Reference](#installer-reference) for details.
 
 To connect manually, or to connect a different client, use the snippets below.
 
@@ -48,14 +51,14 @@ To connect manually, or to connect a different client, use the snippets below.
 
 ### Option A: `claude mcp add` (CLI)
 
-Add Isis as an HTTP MCP server with both auth headers inline:
+Add Isis as an HTTP MCP server with the access-key header inline:
 
 ```bash
-claude mcp add --transport http isis http://localhost:8720/mcp --header "x-access-key: isisdefaultkey" --header "x-secret-key: isisdefaultsecret"
+claude mcp add --transport http isis http://localhost:8720/mcp --header "x-access-key: isisdefaultkey"
 ```
 
-Both headers are required; the access key identifies the credential and the secret key
-proves you hold it.
+The access key is the only header required; it identifies the credential and authenticates on
+its own. The secret key is never sent.
 
 Restart Claude Code (or reload the MCP servers) after adding.
 
@@ -71,16 +74,16 @@ shares the same Isis connection:
       "type": "http",
       "url": "http://localhost:8720/mcp",
       "headers": {
-        "x-access-key": "isisdefaultkey",
-        "x-secret-key": "isisdefaultsecret"
+        "x-access-key": "isisdefaultkey"
       }
     }
   }
 }
 ```
 
-Both headers are required. Do not commit production credentials into a shared repository;
-prefer a credential with least privilege, or keep the file untracked.
+Only the access-key header is required; the secret key is never sent. Because the access key is
+a capability token, do not commit production credentials into a shared repository; prefer a
+credential with least privilege, or keep the file untracked.
 
 ## Cursor
 
@@ -93,28 +96,53 @@ project):
     "isis": {
       "url": "http://localhost:8720/mcp",
       "headers": {
-        "x-access-key": "isisdefaultkey",
-        "x-secret-key": "isisdefaultsecret"
+        "x-access-key": "isisdefaultkey"
       }
     }
   }
 }
 ```
 
-Restart Cursor after saving so it reconnects to the MCP server.
+Only the access-key header is required; the secret key is never sent. Restart Cursor after
+saving so it reconnects to the MCP server.
+
+## Mux
+
+Mux can send only **one** auth header, so it authenticates with the credential **access key
+carried as a bearer token** — it does **not** send `x-access-key` / `x-secret-key`, and the
+secret key never leaves your machine. Add an `isis` entry to Mux's `mcp-servers.json` (its
+`servers` array) with a `bearer` auth block whose token is your access key:
+
+```json
+{
+  "servers": [
+    {
+      "name": "isis",
+      "transport": "http",
+      "url": "http://localhost:8720",
+      "mcpPath": "/mcp",
+      "auth": { "type": "bearer", "bearerToken": "isisdefaultkey" }
+    }
+  ]
+}
+```
+
+Point Mux at this file with `--mcp-config`, or use the `scripts/*/install-mux.*` helper.
+Because the access key alone authenticates, it is a **capability token** — scope it
+least-privilege. See [INSTRUCTIONS_FOR_MUX.md](INSTRUCTIONS_FOR_MUX.md) for the full Mux
+walkthrough.
 
 ## Generic MCP Client
 
-Any MCP client that speaks streamable HTTP can connect. Point it at the endpoint and set
-both auth headers:
+Any MCP client that speaks streamable HTTP can connect. Point it at the endpoint and set the
+access-key header (or send the access key as a bearer token):
 
 ```json
 {
   "type": "http",
   "url": "http://localhost:8720/mcp",
   "headers": {
-    "x-access-key": "isisdefaultkey",
-    "x-secret-key": "isisdefaultsecret"
+    "x-access-key": "isisdefaultkey"
   }
 }
 ```
@@ -131,11 +159,12 @@ curl -s http://localhost:8720/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -H "x-access-key: isisdefaultkey" \
-  -H "x-secret-key: isisdefaultsecret" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"1.0"}}}'
 ```
 
-Omitting either auth header returns `401 Provide x-access-key and x-secret-key headers.`
+This example sends the access key in the `x-access-key` header; a bearer token
+(`Authorization: Bearer isisdefaultkey`) authenticates equivalently. A request with no access
+key at all returns `401`.
 
 ## First Calls Walkthrough
 
@@ -211,11 +240,12 @@ body when you need it.
 
 ## Troubleshooting
 
-### `401 Provide x-access-key and x-secret-key headers`
+### `401` on connect
 
-The request reached Isis but carried an incomplete credential. Confirm your client is
-sending **both** the `x-access-key` and `x-secret-key` headers. Some clients require the
-headers under a `headers` object (see the snippets above) rather than as URL parameters.
+The request reached Isis but carried no access key. Every request needs the credential access
+key — sent either as `Authorization: Bearer <accessKey>` (Mux) or in the `x-access-key` header
+(Claude Code, Codex, Cursor, Gemini). No agent sends a secret key. Some clients require the
+header under a `headers` object (see the snippets above) rather than as a URL parameter.
 
 ### `403` on a tenant call
 

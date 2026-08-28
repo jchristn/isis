@@ -24,15 +24,46 @@ else
   echo "[seed] WARN: health endpoint not reachable; continuing best-effort"
 fi
 
-# 2) Create a demo tenant (best-effort). The response id is not parsed here (the curl image has no jq);
-#    the demo scope/categories/policies are applied interactively via the dashboard's "Apply seed pack".
+# 2) Create a demo tenant (best-effort). POST /tenants now auto-provisions a tenant-admin user, a
+#    credential, and a default instruction set; the admin password and credential secret key are
+#    returned ONLY in this response, so we parse and print them for the operator. The curl image has
+#    no jq, so fields are extracted with grep/sed. The demo scope/categories/policies are still
+#    applied interactively via the dashboard's "Apply seed pack".
+#
+# Tenant creation is system-administrator only; authenticate with the default credential ACCESS KEY
+# seeded on first boot (override with ISIS_AUTH_DEFAULT_ACCESS_KEY). The access key authenticates on its
+# own; the secret key is never sent.
+ACCESS_KEY="${ISIS_AUTH_DEFAULT_ACCESS_KEY:-isisdefaultkey}"
+
+# extract "<key>":"<value>" from a flat-ish JSON blob (first match wins).
+json_field() {
+  printf '%s' "$1" | grep -o "\"$2\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | head -n1 \
+    | sed 's/.*:[[:space:]]*"//; s/"$//'
+}
+
 echo "[seed] creating demo tenant (best-effort)"
-curl -fsS -X POST "${BASE}/v1.0/api/tenants" \
-  -H "x-api-key: ${ADMIN}" \
+RESP="$(curl -sS -X POST "${BASE}/v1.0/api/tenants" \
+  -H "x-access-key: ${ACCESS_KEY}" \
   -H 'Content-Type: application/json' \
-  -d '{"name":"Demo"}' >/dev/null 2>&1 \
-  && echo "[seed] demo tenant created" \
-  || echo "[seed] demo tenant not created (route unavailable or already exists) — skipping"
+  -d '{"name":"Demo"}' 2>/dev/null)"
+
+DEMO_ADMIN_EMAIL="$(json_field "${RESP}" email)"
+DEMO_ADMIN_PASSWORD="$(json_field "${RESP}" password)"
+DEMO_ACCESS_KEY="$(json_field "${RESP}" accessKey)"
+DEMO_SECRET_KEY="$(json_field "${RESP}" secretKey)"
+
+if [ -n "${DEMO_ADMIN_EMAIL}" ] && [ -n "${DEMO_SECRET_KEY}" ]; then
+  echo "[seed] demo tenant created and provisioned"
+  echo "[seed] ------------------------------------------------------------------"
+  echo "[seed] Demo tenant admin + credential (shown ONCE — copy them now):"
+  echo "[seed]   admin email:    ${DEMO_ADMIN_EMAIL}"
+  echo "[seed]   admin password: ${DEMO_ADMIN_PASSWORD}"
+  echo "[seed]   access key:     ${DEMO_ACCESS_KEY}"
+  echo "[seed]   secret key:     ${DEMO_SECRET_KEY}"
+  echo "[seed] ------------------------------------------------------------------"
+else
+  echo "[seed] demo tenant not created (route unavailable or already exists) — skipping"
+fi
 
 # 3) Point the operator at the demo seed pack for the rest.
 echo "[seed] ------------------------------------------------------------------"

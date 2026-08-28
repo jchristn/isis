@@ -249,6 +249,7 @@ function ScopesView() {
             { label: t('scopes.openChat'), onClick: () => navigate(`/dashboard/scopes/${s.id || s.Id}/chat`) },
             { divider: true },
             { label: t('common.edit'), onClick: () => openEdit(s) },
+            { label: t('common.duplicate'), onClick: () => { setEditing({ ...s, id: undefined, Id: undefined, name: `${s.name || ''} (copy)` }); setShowForm(true); } },
             { label: t('common.viewJson'), onClick: () => setJsonScope(s) },
             { divider: true },
             { label: t('common.delete'), danger: true, onClick: () => setDeleteTarget(s) }
@@ -276,7 +277,7 @@ function ScopesView() {
         data={scopes}
         loading={loading}
         onRefresh={load}
-        onRowClick={(s) => navigate(`/dashboard/scopes/${s.id || s.Id}`)}
+        onRowClick={(s) => openEdit(s)}
         emptyMessage={t('scopes.empty')}
       />
 

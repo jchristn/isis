@@ -12,6 +12,7 @@ namespace Isis.Server.Serialization
         #region Private-Members
 
         private static readonly JsonSerializerOptions _Options = BuildOptions();
+        private static readonly JsonSerializerOptions _CompactOptions = BuildCompactOptions();
 
         #endregion
 
@@ -43,6 +44,17 @@ namespace Isis.Server.Serialization
         }
 
         /// <summary>
+        /// Serialize a value to single-line JSON (no indentation). Used for framing where embedded newlines
+        /// would break the transport, such as Server-Sent Events.
+        /// </summary>
+        /// <param name="value">The value to serialize.</param>
+        /// <returns>A compact JSON string.</returns>
+        public static string SerializeCompact(object? value)
+        {
+            return JsonSerializer.Serialize(value, _CompactOptions);
+        }
+
+        /// <summary>
         /// Deserialize JSON to a typed value.
         /// </summary>
         /// <typeparam name="T">The target type.</typeparam>
@@ -58,6 +70,13 @@ namespace Isis.Server.Serialization
 
         #region Private-Methods
 
+        private static JsonSerializerOptions BuildCompactOptions()
+        {
+            JsonSerializerOptions options = BuildOptions();
+            options.WriteIndented = false;
+            return options;
+        }
+
         private static JsonSerializerOptions BuildOptions()
         {
             JsonSerializerOptions options = new JsonSerializerOptions();
@@ -65,6 +84,9 @@ namespace Isis.Server.Serialization
             options.PropertyNameCaseInsensitive = true;
             options.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
             options.WriteIndented = true;
+            // A specific, lenient converter for MemoryTypeEnum must be registered BEFORE the general string-enum
+            // converter so it wins for that type; the general converter still handles every other enum strictly.
+            options.Converters.Add(new MemoryTypeEnumConverter());
             options.Converters.Add(new JsonStringEnumConverter());
             return options;
         }

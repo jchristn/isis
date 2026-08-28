@@ -1,7 +1,9 @@
 namespace Test.Shared
 {
     using System.Collections.Generic;
+    using System.Linq;
     using System.Threading.Tasks;
+    using Isis.Core.Database;
     using Isis.Core.Models;
     using Isis.Core.Security;
     using Isis.Server.Services;
@@ -33,7 +35,8 @@ namespace Test.Shared
                     TestCase.Async("auth", "seeder-idempotent", "Seeder is idempotent", SeederIdempotentAsync),
                     TestCase.Async("auth", "seeder-credential-accesskey", "Seeder credential uses the configured access key", SeederAccessKeyAsync),
                     TestCase.Sync("auth", "password-hash-verify", "Password hash + verify round trips", PasswordHashVerify),
-                    TestCase.Async("auth", "enumerate-users-by-email", "Users are discoverable by email across tenants", EnumerateByEmailAsync)
+                    TestCase.Async("auth", "enumerate-users-by-email", "Users are discoverable by email across tenants", EnumerateByEmailAsync),
+                    TestCase.Async("auth", "batch-crud", "Batch create/read/delete round trips", BatchCrudAsync)
                 });
         }
 
@@ -92,6 +95,36 @@ namespace Test.Shared
 
             Credential? credential = await temp.Db.Credentials.ReadAsync(DefaultSeeder.DefaultTenantId, DefaultSeeder.DefaultCredentialId).ConfigureAwait(false);
             TestCase.Require(credential != null && !string.IsNullOrEmpty(credential!.SecretKey), "Default credential should be seeded with a secret key.");
+
+            EnumerationResult<Instruction> instructions = await temp.Db.Instructions.EnumerateAsync(DefaultSeeder.DefaultTenantId, new EnumerationQuery { MaxResults = 100 }).ConfigureAwait(false);
+            TestCase.Require(instructions.TotalRecords >= 1, "The default tenant should be seeded with a default instruction set.");
+        }
+
+        private static async Task BatchCrudAsync()
+        {
+            using TempSqlite temp = await TempSqlite.CreateAsync().ConfigureAwait(false);
+
+            // Batch create.
+            List<Instruction> toCreate = new List<Instruction>
+            {
+                new Instruction { TenantId = "ten_batch", Name = "a", Content = "one", Position = 0 },
+                new Instruction { TenantId = "ten_batch", Name = "b", Content = "two", Position = 1 }
+            };
+            List<Instruction> created = await temp.Db.Instructions.CreateManyAsync(toCreate).ConfigureAwait(false);
+            TestCase.Require(created.Count == 2, "CreateManyAsync should create every item.");
+
+            // Batch read by id.
+            List<string> ids = created.Select(i => i.Id).ToList();
+            List<Instruction> read = await temp.Db.Instructions.ReadManyAsync("ten_batch", ids).ConfigureAwait(false);
+            TestCase.Require(read.Count == 2, "ReadManyAsync should return every matching id.");
+            List<Instruction> none = await temp.Db.Instructions.ReadManyAsync("ten_batch", new List<string>()).ConfigureAwait(false);
+            TestCase.Require(none.Count == 0, "ReadManyAsync with no ids should return nothing.");
+
+            // Batch delete, including a negative (cross-tenant id is not deleted).
+            int deleted = await temp.Db.Instructions.DeleteManyAsync("ten_batch", ids).ConfigureAwait(false);
+            TestCase.Require(deleted == 2, "DeleteManyAsync should report the requested count.");
+            List<Instruction> afterDelete = await temp.Db.Instructions.ReadManyAsync("ten_batch", ids).ConfigureAwait(false);
+            TestCase.Require(afterDelete.Count == 0, "DeleteManyAsync should remove the rows.");
         }
 
         private static void PasswordHashVerify()

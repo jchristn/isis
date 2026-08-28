@@ -978,10 +978,24 @@ namespace Test.Shared
             DatabaseDriverBase db = t.Db;
 
             Tenant tenant = await db.Tenants.CreateAsync(new Tenant { Name = "Acme" }).ConfigureAwait(false);
-            RequestHistoryEntry created = await db.RequestHistory.CreateAsync(new RequestHistoryEntry { TenantId = tenant.Id, Method = "POST", Path = "/read-me", StatusCode = 201 }).ConfigureAwait(false);
+            RequestHistoryEntry created = await db.RequestHistory.CreateAsync(new RequestHistoryEntry
+            {
+                TenantId = tenant.Id,
+                Method = "POST",
+                Path = "/read-me",
+                StatusCode = 201,
+                RequestHeaders = "{\"content-type\":\"application/json\"}",
+                RequestBody = "{\"name\":\"widget\"}",
+                ResponseHeaders = "{\"x-request-id\":\"abc123\"}",
+                ResponseBody = "{\"id\":\"w-1\"}"
+            }).ConfigureAwait(false);
 
             RequestHistoryEntry? read = await db.RequestHistory.ReadAsync(created.Id).ConfigureAwait(false);
             TestCase.Require(read != null && read!.Path == "/read-me" && read.StatusCode == 201, "Request history entry did not round trip by id.");
+            TestCase.Require(read!.RequestHeaders == "{\"content-type\":\"application/json\"}", "Request history request headers did not round trip by id.");
+            TestCase.Require(read.RequestBody == "{\"name\":\"widget\"}", "Request history request body did not round trip by id.");
+            TestCase.Require(read.ResponseHeaders == "{\"x-request-id\":\"abc123\"}", "Request history response headers did not round trip by id.");
+            TestCase.Require(read.ResponseBody == "{\"id\":\"w-1\"}", "Request history response body did not round trip by id.");
         }
 
         private static async Task RequestHistoryDeleteAllTenantAsync()

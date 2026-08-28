@@ -74,7 +74,7 @@ namespace Test.Shared
 
             harness.Database = DatabaseDriverFactory.Create(settings.Database);
             await harness.Database.InitializeAsync().ConfigureAwait(false);
-            await DefaultSeeder.SeedAsync(harness.Database, settings.Auth, _ => { }).ConfigureAwait(false);
+            await DefaultSeeder.SeedAsync(harness.Database, settings.Auth, _ => { }, seedEndpoints: false).ConfigureAwait(false);
 
             AuthenticationService auth = new AuthenticationService(harness.Database, settings.Auth);
             AuthorizationService authz = new AuthorizationService();

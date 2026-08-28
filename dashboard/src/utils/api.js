@@ -156,6 +156,20 @@ class ApiClient {
   }
 
   // ------------------------------------------------------------------
+  // Server settings (system administrator)
+  // ------------------------------------------------------------------
+
+  getServerSettings() {
+    return this.get(`${API_BASE}/settings`);
+  }
+  updateServerSettings(settings) {
+    return this.put(`${API_BASE}/settings`, settings);
+  }
+  restartServer() {
+    return this.post(`${API_BASE}/settings/restart`, {});
+  }
+
+  // ------------------------------------------------------------------
   // Authentication (email/password → session token)
   // ------------------------------------------------------------------
 
@@ -234,6 +248,26 @@ class ApiClient {
   }
   deleteCredential(tid, cid) {
     return this.del(`${API_BASE}/tenants/${this._tid(tid)}/credentials/${encodeURIComponent(cid)}`);
+  }
+
+  // ------------------------------------------------------------------
+  // Instructions (tenant-scoped agent guidance surfaced over MCP)
+  // ------------------------------------------------------------------
+
+  listInstructions(tid, query = {}) {
+    return this.get(`${API_BASE}/tenants/${this._tid(tid)}/instructions`, query).then(normalizePaged);
+  }
+  getInstruction(tid, iid) {
+    return this.get(`${API_BASE}/tenants/${this._tid(tid)}/instructions/${encodeURIComponent(iid)}`);
+  }
+  createInstruction(tid, body) {
+    return this.post(`${API_BASE}/tenants/${this._tid(tid)}/instructions`, body);
+  }
+  updateInstruction(tid, iid, body) {
+    return this.put(`${API_BASE}/tenants/${this._tid(tid)}/instructions/${encodeURIComponent(iid)}`, body);
+  }
+  deleteInstruction(tid, iid) {
+    return this.del(`${API_BASE}/tenants/${this._tid(tid)}/instructions/${encodeURIComponent(iid)}`);
   }
 
   // ------------------------------------------------------------------
@@ -343,6 +377,91 @@ class ApiClient {
     );
   }
 
+  /**
+   * Streaming chat over server-sent events. Opens an authenticated POST, reads the
+   * response body as a stream, splits it into `data: <json>\n\n` frames, JSON-parses
+   * each frame, and invokes `onEvent(obj)` per event. Events carry a `type`
+   * discriminator: `retrieval`, `thinking`, `delta`, `complete`, or `error`.
+   *
+   * EventSource cannot send an Authorization header or a POST body, so this is a
+   * hand-rolled fetch + streams reader (mirrors `_request`'s 401/403 dispatch).
+   *
+   * @param {string} tid Tenant id.
+   * @param {string} sid Scope id.
+   * @param {object} body Request body (question, topK, inferenceEndpointId, …).
+   * @param {object} options
+   * @param {(event:object)=>void} options.onEvent Called per parsed event.
+   * @param {AbortSignal} [options.signal] Abort signal to cancel the stream.
+   */
+  async chatStream(tid, sid, body, { onEvent, signal } = {}) {
+    const path = `${API_BASE}/tenants/${this._tid(tid)}/scopes/${encodeURIComponent(sid)}/chat/stream`;
+    let response;
+    try {
+      response = await fetch(this._url(path), {
+        method: 'POST',
+        headers: this._headers(),
+        body: JSON.stringify(body),
+        signal
+      });
+    } catch (networkErr) {
+      throw new ApiError(0, `Network error: ${networkErr.message}`, null);
+    }
+
+    if (response.status === 401 || response.status === 403) {
+      window.dispatchEvent(new CustomEvent('auth:unauthorized', { detail: { status: response.status } }));
+    }
+
+    if (!response.ok || !response.body) {
+      const text = await response.text().catch(() => '');
+      let parsed = null;
+      if (text) {
+        try {
+          parsed = JSON.parse(text);
+        } catch {
+          parsed = text;
+        }
+      }
+      const message =
+        (parsed && (parsed.message || parsed.error)) || response.statusText || `HTTP ${response.status}`;
+      throw new ApiError(response.status, message, parsed);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    const dispatch = (frame) => {
+      const trimmed = frame.trim();
+      if (!trimmed) return;
+      const lines = trimmed.split('\n');
+      const dataParts = [];
+      for (const line of lines) {
+        if (line.startsWith('data:')) dataParts.push(line.slice(5).replace(/^ /, ''));
+      }
+      const payload = dataParts.length > 0 ? dataParts.join('\n') : trimmed;
+      let obj;
+      try {
+        obj = JSON.parse(payload);
+      } catch {
+        return;
+      }
+      if (obj && onEvent) onEvent(obj);
+    };
+
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let boundary;
+      while ((boundary = buffer.indexOf('\n\n')) >= 0) {
+        const frame = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        dispatch(frame);
+      }
+    }
+    dispatch(buffer);
+  }
+
   // ------------------------------------------------------------------
   // Model endpoints (embedding + inference) + health
   // ------------------------------------------------------------------
@@ -396,6 +515,9 @@ class ApiClient {
   }
   getRequestHistoryEntry(id) {
     return this.get(`${API_BASE}/requests/${encodeURIComponent(id)}`);
+  }
+  clearRequestHistory() {
+    return this.del(`${API_BASE}/requests`);
   }
 
   // ------------------------------------------------------------------

@@ -13,8 +13,9 @@ namespace Isis.Server.Services
     /// <summary>
     /// Resolves inbound requests to a typed <see cref="RequestContext"/>. Supports two schemes: a session
     /// bearer token issued by email/password login (Authorization: Bearer or x-token) and a per-tenant
-    /// credential access-key/secret-key pair (x-access-key + x-secret-key). Admin power derives solely from
-    /// the resolved user's IsAdmin / IsTenantAdmin flags.
+    /// credential identified by its access key (x-access-key). The access key is the public, transferable
+    /// material and authenticates on its own; a secret key (x-secret-key) is optional and, when presented, must
+    /// match. Admin power derives solely from the resolved user's IsAdmin / IsTenantAdmin flags.
     /// </summary>
     public class AuthenticationService
     {
@@ -80,13 +81,21 @@ namespace Isis.Server.Services
             string? accessKey = context.Request.Headers["x-access-key"];
             if (!string.IsNullOrEmpty(accessKey))
             {
-                string? secretKey = context.Request.Headers["x-secret-key"];
-                if (string.IsNullOrEmpty(secretKey)) return RequestContext.Unauthenticated();
-
                 Credential? credential = await _Database.Credentials.ReadByAccessKeyAsync(accessKey, token).ConfigureAwait(false);
-                if (credential != null && credential.Active && !string.IsNullOrEmpty(credential.SecretKey) && PasswordHasher.FixedTimeEquals(secretKey, credential.SecretKey))
+                if (credential != null && credential.Active)
                 {
                     if (credential.ExpirationUtc.HasValue && credential.ExpirationUtc.Value < DateTime.UtcNow) return RequestContext.Unauthenticated();
+
+                    // The access key is the public, transferable material and is sufficient on its own — this
+                    // is what lets single-header MCP clients (e.g. Mux, via 'Authorization: Bearer <accessKey>')
+                    // authenticate without ever transmitting the secret. When a client DOES present a secret it
+                    // must match; a mismatched secret is rejected outright rather than silently ignored.
+                    string? secretKey = context.Request.Headers["x-secret-key"];
+                    if (!string.IsNullOrEmpty(secretKey))
+                    {
+                        if (string.IsNullOrEmpty(credential.SecretKey) || !PasswordHasher.FixedTimeEquals(secretKey, credential.SecretKey)) return RequestContext.Unauthenticated();
+                    }
+
                     return await BuildCredentialContextAsync(credential, token).ConfigureAwait(false);
                 }
             }

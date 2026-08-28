@@ -182,6 +182,10 @@ IF OBJECT_ID(N'dbo.request_history', N'U') IS NULL CREATE TABLE request_history 
     statuscode INT NOT NULL DEFAULT 0,
     sourceip NVARCHAR(64),
     principalname NVARCHAR(255),
+    requestheaders NVARCHAR(MAX),
+    requestbody NVARCHAR(MAX),
+    responseheaders NVARCHAR(MAX),
+    responsebody NVARCHAR(MAX),
     durationms FLOAT NOT NULL DEFAULT 0,
     createdutc NVARCHAR(40) NOT NULL,
     INDEX idx_reqhistory_tenant_created (tenantid, createdutc)
@@ -199,6 +203,19 @@ IF OBJECT_ID(N'dbo.permissions', N'U') IS NULL CREATE TABLE permissions (
     createdutc NVARCHAR(40) NOT NULL,
     lastupdateutc NVARCHAR(40) NOT NULL,
     INDEX idx_permissions_tenant_user (tenantid, userid)
+);
+
+IF OBJECT_ID(N'dbo.instructions', N'U') IS NULL CREATE TABLE instructions (
+    id NVARCHAR(64) NOT NULL PRIMARY KEY,
+    tenantid NVARCHAR(64) NOT NULL,
+    name NVARCHAR(255) NOT NULL,
+    content NVARCHAR(MAX) NOT NULL,
+    position INT NOT NULL DEFAULT 0,
+    active INT NOT NULL DEFAULT 1,
+    isprotected INT NOT NULL DEFAULT 0,
+    createdutc NVARCHAR(40) NOT NULL,
+    lastupdateutc NVARCHAR(40) NOT NULL,
+    INDEX idx_instructions_tenantid (tenantid, position)
 );
 ";
         }

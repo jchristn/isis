@@ -43,6 +43,16 @@ namespace Isis.Core.Stores
         Task DeleteAsync(Scope scope, Memory memory, CancellationToken token = default);
 
         /// <summary>
+        /// Tear down all backing content for a scope (for example, drop the RecallDB collection or remove the
+        /// target directory/files). Best-effort: implementations should not throw for a missing backing store,
+        /// so that cascading deletes are not blocked.
+        /// </summary>
+        /// <param name="scope">The scope whose content is being removed.</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>Task.</returns>
+        Task DeleteScopeAsync(Scope scope, CancellationToken token = default);
+
+        /// <summary>
         /// Search the scope's memory content.
         /// </summary>
         /// <param name="scope">The scope to search.</param>

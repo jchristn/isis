@@ -1,11 +1,13 @@
 namespace Isis.Server.Routes
 {
     using System;
+    using System.Collections.Generic;
     using System.Threading.Tasks;
     using Isis.Core.Database;
     using Isis.Core.Models;
     using Isis.Core.Security;
     using Isis.Core.Stores;
+    using Isis.Server.Models;
     using Isis.Server.Services;
     using WatsonWebserver;
     using WatsonWebserver.Core;
@@ -55,6 +57,9 @@ namespace Isis.Server.Routes
             server.Routes.PostAuthentication.Parameter.Add(HttpMethod.POST, "/v1.0/api/tenants/{tenantId}/scopes/{scopeId}/memories/search", SearchAsync, null, openApiMetadata: OpenApiRouteMetadata.Create("Search memories", "Memories"));
             server.Routes.PostAuthentication.Parameter.Add(HttpMethod.GET, "/v1.0/api/tenants/{tenantId}/scopes/{scopeId}/memories/{memoryId}", ReadAsync, null, openApiMetadata: OpenApiRouteMetadata.Create("Read a memory", "Memories"));
             server.Routes.PostAuthentication.Parameter.Add(HttpMethod.DELETE, "/v1.0/api/tenants/{tenantId}/scopes/{scopeId}/memories/{memoryId}", DeleteAsync, null, openApiMetadata: OpenApiRouteMetadata.Create("Delete a memory", "Memories"));
+            server.Routes.PostAuthentication.Parameter.Add(HttpMethod.POST, "/v1.0/api/tenants/{tenantId}/scopes/{scopeId}/memories/batch-get", BatchGetAsync, null, openApiMetadata: OpenApiRouteMetadata.Create("Batch-get memories", "Memories"));
+            server.Routes.PostAuthentication.Parameter.Add(HttpMethod.POST, "/v1.0/api/tenants/{tenantId}/scopes/{scopeId}/memories/batch", BatchUpsertAsync, null, openApiMetadata: OpenApiRouteMetadata.Create("Batch-upsert memories", "Memories"));
+            server.Routes.PostAuthentication.Parameter.Add(HttpMethod.POST, "/v1.0/api/tenants/{tenantId}/scopes/{scopeId}/memories/batch-delete", BatchDeleteAsync, null, openApiMetadata: OpenApiRouteMetadata.Create("Batch-delete memories", "Memories"));
         }
 
         #endregion
@@ -96,7 +101,21 @@ namespace Isis.Server.Routes
             }
 
             Memory? body = RouteHelpers.Body<Memory>(context);
-            if (body == null || string.IsNullOrWhiteSpace(body.Slug) || string.IsNullOrWhiteSpace(body.CategoryId))
+            if (body == null)
+            {
+                // Distinguish an unparseable-but-present body from a genuinely missing one, so a caller that
+                // sent, say, a bad field type is not misdirected to "slug and categoryId".
+                if (!string.IsNullOrWhiteSpace(context.Request.DataAsString))
+                {
+                    await RouteHelpers.ErrorAsync(context, 400, "BadRequest", "The request body could not be parsed as a memory. Check the JSON and field types (note: 'type' is optional and, if set, should be one of User, Feedback, Project, Reference).").ConfigureAwait(false);
+                    return;
+                }
+
+                await RouteHelpers.ErrorAsync(context, 400, "BadRequest", "A memory requires a slug and a categoryId.").ConfigureAwait(false);
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(body.Slug) || string.IsNullOrWhiteSpace(body.CategoryId))
             {
                 await RouteHelpers.ErrorAsync(context, 400, "BadRequest", "A memory requires a slug and a categoryId.").ConfigureAwait(false);
                 return;
@@ -208,6 +227,96 @@ namespace Isis.Server.Routes
             await _MemoryService.DeleteAsync(scope, memory, context.Token).ConfigureAwait(false);
             context.Response.StatusCode = 204;
             await context.Response.Send().ConfigureAwait(false);
+        }
+
+        private async Task BatchGetAsync(HttpContextBase context)
+        {
+            if (!Authorize(context, out string tenantId, out string scopeId))
+            {
+                await RouteHelpers.ErrorAsync(context, 403, "Forbidden", "Not permitted for this tenant.").ConfigureAwait(false);
+                return;
+            }
+
+            BatchIdsRequest? request = RouteHelpers.Body<BatchIdsRequest>(context);
+            List<Memory> objects = new List<Memory>();
+            if (request != null && request.Ids != null && request.Ids.Count > 0)
+            {
+                objects = await _Database.Memories.ReadManyAsync(tenantId, request.Ids, context.Token).ConfigureAwait(false);
+            }
+
+            Dictionary<string, object?> body = new Dictionary<string, object?>();
+            body["objects"] = objects;
+            await RouteHelpers.JsonAsync(context, 200, body).ConfigureAwait(false);
+        }
+
+        private async Task BatchUpsertAsync(HttpContextBase context)
+        {
+            if (!Authorize(context, out string tenantId, out string scopeId))
+            {
+                await RouteHelpers.ErrorAsync(context, 403, "Forbidden", "Not permitted for this tenant.").ConfigureAwait(false);
+                return;
+            }
+
+            BatchMemoryRequest? request = RouteHelpers.Body<BatchMemoryRequest>(context);
+            List<Memory> objects = new List<Memory>();
+            if (request != null && request.Items != null && request.Items.Count > 0)
+            {
+                Scope? scope = await LoadScopeAsync(context, tenantId, scopeId).ConfigureAwait(false);
+                if (scope == null)
+                {
+                    await RouteHelpers.ErrorAsync(context, 404, "NotFound", "Scope not found.").ConfigureAwait(false);
+                    return;
+                }
+
+                foreach (Memory item in request.Items)
+                {
+                    if (item == null || string.IsNullOrWhiteSpace(item.Slug) || string.IsNullOrWhiteSpace(item.CategoryId)) continue;
+
+                    Category? category = await _Database.Categories.ReadAsync(tenantId, item.CategoryId, context.Token).ConfigureAwait(false);
+                    if (category == null || category.ScopeId != scopeId) continue;
+
+                    Memory saved = await _MemoryService.UpsertAsync(scope, category, item, context.Token).ConfigureAwait(false);
+                    objects.Add(saved);
+                }
+            }
+
+            Dictionary<string, object?> body = new Dictionary<string, object?>();
+            body["objects"] = objects;
+            await RouteHelpers.JsonAsync(context, 201, body).ConfigureAwait(false);
+        }
+
+        private async Task BatchDeleteAsync(HttpContextBase context)
+        {
+            if (!Authorize(context, out string tenantId, out string scopeId))
+            {
+                await RouteHelpers.ErrorAsync(context, 403, "Forbidden", "Not permitted for this tenant.").ConfigureAwait(false);
+                return;
+            }
+
+            BatchIdsRequest? request = RouteHelpers.Body<BatchIdsRequest>(context);
+            int deleted = 0;
+            if (request != null && request.Ids != null && request.Ids.Count > 0)
+            {
+                Scope? scope = await LoadScopeAsync(context, tenantId, scopeId).ConfigureAwait(false);
+                if (scope == null)
+                {
+                    await RouteHelpers.ErrorAsync(context, 404, "NotFound", "Scope not found.").ConfigureAwait(false);
+                    return;
+                }
+
+                foreach (string memoryId in request.Ids)
+                {
+                    Memory? memory = await _Database.Memories.ReadAsync(tenantId, memoryId, context.Token).ConfigureAwait(false);
+                    if (memory == null || memory.ScopeId != scopeId) continue;
+
+                    await _MemoryService.DeleteAsync(scope, memory, context.Token).ConfigureAwait(false);
+                    deleted++;
+                }
+            }
+
+            Dictionary<string, object?> body = new Dictionary<string, object?>();
+            body["deleted"] = deleted;
+            await RouteHelpers.JsonAsync(context, 200, body).ConfigureAwait(false);
         }
 
         #endregion

@@ -67,7 +67,7 @@ namespace Isis.Server
             };
             MemoryService memoryService = new MemoryService(database, embeddingService, storeOptions);
 
-            IsisServer server = new IsisServer(settings, database, authenticationService, authorizationService, memoryService, log, storeOptions);
+            IsisServer server = new IsisServer(settings, database, authenticationService, authorizationService, memoryService, log, storeOptions, settingsFile);
             server.Start();
             log("node '" + settings.NodeId + "' listening on " + settings.Rest.Hostname + ":" + settings.Rest.Port);
 

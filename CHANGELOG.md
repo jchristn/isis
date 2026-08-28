@@ -7,22 +7,85 @@ All notable changes to Isis are documented here. This project adheres to
 
 ### Added
 
+- **All agent installers are access-key-only.** All agent installers (Claude, Codex, Cursor,
+  Gemini, Mux) now authenticate with the credential access key only; none send `x-secret-key`.
+  The MCP installer dropped its `--secret-key` flag.
+- **MCP access-key bearer authentication (single-header MCP clients).** The MCP server now
+  authenticates a caller by the credential **access key**, presented either as
+  `Authorization: Bearer <accessKey>` or in the `x-access-key` header; the `x-secret-key` header
+  is now **optional** and validated only when present. The access key authenticates on its own —
+  it is public and transferable, so it is a **capability token** to scope least-privilege — and a
+  request with no access key is rejected with `401`. This makes Isis reachable from MCP clients
+  such as **Mux** that can send only a single auth header. `scripts/*/install-mux.*` now writes
+  Mux's native bearer schema (a `servers[]` entry with `auth: { type: "bearer", bearerToken:
+  <accessKey> }` and no secret), and every `install-<agent>` script accepts the access key as an
+  optional first positional CLI argument (arg #1 > `ISIS_ACCESS_KEY` > default). Claude Code,
+  Codex, Cursor, and Gemini send the access key in the `x-access-key` header; none send a secret.
+- **Tenant auto-provisioning.** `POST /v1.0/api/tenants` (system administrator) now stands up a
+  complete, ready-to-use environment in one call: the tenant plus an auto-generated tenant-admin
+  user, a credential for that user, and a default instruction set. The response returns
+  `{ tenant, admin: { userId, email, password }, credential: { credentialId, accessKey, secretKey } }`
+  where the admin `password` and the `secretKey` are shown **once** and never again.
+- **Cascading deletes across the backend.** Deleting a parent now removes all of its children,
+  including external memory-store content: `DELETE /v1.0/api/tenants/{tenantId}` — the **"Nuke
+  tenant"** operation — cascades to all of the tenant's users, credentials, scopes, categories,
+  memories, instructions, endpoints, and sessions, and is refused with **409** for protected
+  tenants (e.g. `ten_default`); deleting a scope cascades to its categories + memories and drops
+  the store collection/files; deleting a category cascades to its memories; deleting a user
+  cascades to that user's credentials, sessions, and permissions. The dashboard exposes **Nuke
+  tenant** as a type-the-tenant-id confirmation action.
+- **Batch retrieval / creation / deletion APIs (data layer + REST).** Every entity's data layer
+  gained `ReadMany` / `CreateMany` / `DeleteMany`, surfaced through uniform REST batch endpoints
+  (all POST): get/delete take `{ "ids": [...] }`, create takes `{ "items": [...] }`, and responses
+  are `{ "objects": [...] }` (get/create) or `{ "deleted": <int> }` (delete). Instructions,
+  Endpoints, and Memories expose the full trio (`…/batch-get`, `…/batch`, `…/batch-delete`;
+  Memories `batch` is an upsert and `batch-delete` cleans store content); Scopes, Categories,
+  Users, and Credentials expose `batch-get` + `batch-delete` (with the same cascade rules as their
+  single-resource deletes). The tenant nuke is implemented as batch deletes over enumerated child
+  ids.
+- **Default instruction set per tenant.** A default instruction set is seeded for the first-run
+  default tenant and provisioned for every newly created tenant.
+- **Tenant-scoped Instructions — tenant-wide standing guidance surfaced to agents.** New resource
+  with REST routes `GET/POST /v1.0/api/tenants/{tenantId}/instructions` and
+  `GET/PUT/DELETE /v1.0/api/tenants/{tenantId}/instructions/{instructionId}` (reads open to the
+  tenant; writes require `IsAdmin` / `IsTenantAdmin`), body `{ name, content, position, active }`,
+  returned in ascending `position` order. Surfaced through the new MCP tool `isis_instructions`
+  (get the tenant's standing instructions) and a dashboard Instructions management view.
+- **MCP `isis_scope_create`** — create a memory scope for a project when none exists (params
+  `tenantId`, `name`, optional `description` / `storeProvider` / `embeddingEndpointId` /
+  `dimensionality` / `filesystemLayout` / `targetPath`), bringing the MCP tool count to twelve.
+  MCP auth (`x-access-key` + `x-secret-key`, dev defaults `isisdefaultkey` / `isisdefaultsecret`)
+  is now documented in the `isis_whoami` tool description.
+- **Server settings management (system administrator only).** `GET /v1.0/api/settings` returns
+  `{ settings, settingsFile, liveSections }`; `PUT /v1.0/api/settings` persists a full settings body
+  to the settings file (request-history changes apply immediately, other sections require a restart,
+  signalled by `restartRequired: true`); `POST /v1.0/api/settings/restart` exits the node so Docker
+  (`restart: unless-stopped`) relaunches it with the saved settings. Exposed in the dashboard with a
+  **Restart Server** action.
+- **Default seeded model endpoints.** On first boot Isis seeds, for the default tenant when none
+  exist, a default embedding endpoint (Ollama, model `all-minilm`, `http://localhost:11434`) and a
+  default inference endpoint (Ollama, model `gemma3:4b`, `http://localhost:11434`).
+- **Dashboard enhancements:** Request History page wired to `/v1.0/api/requests`; a full-width,
+  searchable API Explorer operation picker with sample request bodies; Users, Credentials, and
+  Instructions management views; row-click-to-edit plus Duplicate actions; an endpoint health-details
+  modal; and Chat tenant / scope / inference-endpoint selectors.
 - **Authentication overhaul — email/password sessions + two-key credentials.** Removed the admin
   `x-api-key` bootstrap scheme entirely. There are now exactly two mechanisms: (1) **email + password
   → session token** for interactive users and the dashboard — `POST /v1.0/api/tenants-for-email`
   lists the tenants an email belongs to, `POST /v1.0/api/token` issues a bearer token (sent as
   `Authorization: Bearer <token>` or `x-token`), `GET /v1.0/api/whoami` resolves the principal, and
-  `DELETE /v1.0/api/token` revokes the session (logout); and (2) **credential access key + secret
-  key** for automation, MCP, and agents — callers now send **both** `x-access-key` and `x-secret-key`
-  (the secret is newly required; the access key alone no longer authenticates). Administrative power
+  `DELETE /v1.0/api/token` revokes the session (logout); and (2) **credential access key** for
+  automation, MCP, and agents — the access key authenticates on its own (sent as a bearer token or
+  in `x-access-key`); the `x-secret-key` header is optional and validated only when present.
+  Administrative power
   comes only from the user record's `IsAdmin` (system-wide) or `IsTenantAdmin` (tenant-wide) flags —
   there is no admin key or admin principal. Added user and credential management REST endpoints and
   dashboard views. First-boot seeding now creates a bootstrap admin user (`admin@isis.local` /
   `isisadmin`, env `ISIS_AUTH_SEED_ADMIN_EMAIL` / `ISIS_AUTH_SEED_ADMIN_PASSWORD`) in tenant
   `ten_default` and a default credential (`isisdefaultkey` / `isisdefaultsecret`, env
-  `ISIS_AUTH_DEFAULT_ACCESS_KEY` / `ISIS_AUTH_DEFAULT_SECRET_KEY`). The MCP installer's flags are now
-  `--access-key` / `--secret-key` and it writes both headers; the MCP 401 message is now
-  `Provide x-access-key and x-secret-key headers.`
+  `ISIS_AUTH_DEFAULT_ACCESS_KEY` / `ISIS_AUTH_DEFAULT_SECRET_KEY`). The MCP installer takes an
+  `--access-key` flag and writes the `x-access-key` header; a request with no access key is rejected
+  with `401`.
 - Initial repository scaffolding: `README.md` (with the backing-store capability matrix and alpha
   warning), `LICENSE.md` (MIT), `.gitignore`, `.dockerignore`, `isis.json`, and Pneuma-style build
   scripts (`build.bat`, `test.bat`, `build-server.bat`, `build-mcp.bat`, `build-dashboard.bat`,
@@ -115,9 +178,9 @@ All notable changes to Isis are documented here. This project adheres to
   creates the schema, exercises CRUD + JSON columns + pagination + tenant isolation, tears down) — all
   passing.
 - **`isis mcp install`** command in `Isis.McpServer`: upserts an `isis` MCP entry (`type: http`,
-  `url: http://127.0.0.1:8720/mcp`, `x-access-key` + `x-secret-key` headers) into the agent client
+  `url: http://127.0.0.1:8720/mcp`, `x-access-key` header) into the agent client
   config (`~/.claude.json` or a project `.mcp.json` with `--project`), preserving all other servers and
-  keys, writing a `.bak` backup. Flags: `--access-key`/`--secret-key`/`--host`/`--port`/`--url`/`--project`;
+  keys, writing a `.bak` backup. Flags: `--access-key`/`--host`/`--port`/`--url`/`--project`;
   reads defaults from `isis.mcp.json` + env.
 - **MCP connection docs** (`docs/`): `MCP_API.md` (the 10 tools), `CONNECTING_AGENTS.md` (Claude
   Code / Cursor / generic client setup + first-calls walkthrough), and a docs `README.md` index.

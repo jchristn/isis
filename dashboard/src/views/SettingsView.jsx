@@ -6,6 +6,7 @@ import PageHeader from '../components/PageHeader';
 import CopyableId from '../components/CopyableId';
 import StatusBadge from '../components/StatusBadge';
 import CodeViewer from '../components/CodeViewer';
+import ServerSettingsEditor from '../components/ServerSettingsEditor';
 import LanguageSelector from '../i18n/LanguageSelector';
 import { LoadingState } from '../components/States';
 import { formatDateTime } from '../i18n/formatters';
@@ -127,6 +128,14 @@ function SettingsView() {
               </button>
             </div>
           </div>
+
+          {isAdmin && (
+            <>
+              <div className="section-title" style={{ marginTop: 'var(--spacing-lg)' }}>{t('settings.serverSettings')}</div>
+              <p className="page-subtitle" style={{ marginBottom: 'var(--spacing-md)' }}>{t('settings.serverSettingsHint')}</p>
+              <ServerSettingsEditor apiClient={apiClient} addToast={addToast} />
+            </>
+          )}
 
           {whoami && (
             <div className="section card">

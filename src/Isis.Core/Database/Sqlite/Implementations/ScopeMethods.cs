@@ -1,7 +1,9 @@
 namespace Isis.Core.Database.Sqlite.Implementations
 {
     using System;
+    using System.Collections.Generic;
     using System.Data;
+    using System.Linq;
     using System.Text;
     using System.Threading;
     using System.Threading.Tasks;
@@ -152,6 +154,43 @@ namespace Isis.Core.Database.Sqlite.Implementations
                 "DELETE FROM scopes WHERE tenantid = " + SqliteHelpers.ToSqlRequired(tenantId) +
                 " AND id = " + SqliteHelpers.ToSqlRequired(id) + ";", true, token).ConfigureAwait(false);
             return true;
+        }
+
+        /// <inheritdoc />
+        public async Task<List<Scope>> ReadManyAsync(string tenantId, IReadOnlyCollection<string> ids, CancellationToken token = default)
+        {
+            if (ids == null || ids.Count == 0) return new List<Scope>();
+
+            string inList = String.Join(", ", ids.Select(id => SqliteHelpers.ToSqlRequired(id)));
+            DataTable table = await _Driver.ExecuteQueryAsync(
+                "SELECT * FROM scopes WHERE tenantid = " + SqliteHelpers.ToSqlRequired(tenantId) +
+                " AND id IN (" + inList + ");", false, token).ConfigureAwait(false);
+
+            List<Scope> results = new List<Scope>();
+            foreach (DataRow row in table.Rows) results.Add(FromRow(row));
+            return results;
+        }
+
+        /// <inheritdoc />
+        public async Task<List<Scope>> CreateManyAsync(IReadOnlyCollection<Scope> items, CancellationToken token = default)
+        {
+            if (items == null || items.Count == 0) return new List<Scope>();
+
+            List<Scope> results = new List<Scope>();
+            foreach (Scope item in items) results.Add(await CreateAsync(item, token).ConfigureAwait(false));
+            return results;
+        }
+
+        /// <inheritdoc />
+        public async Task<int> DeleteManyAsync(string tenantId, IReadOnlyCollection<string> ids, CancellationToken token = default)
+        {
+            if (ids == null || ids.Count == 0) return 0;
+
+            string inList = String.Join(", ", ids.Select(id => SqliteHelpers.ToSqlRequired(id)));
+            await _Driver.ExecuteQueryAsync(
+                "DELETE FROM scopes WHERE tenantid = " + SqliteHelpers.ToSqlRequired(tenantId) +
+                " AND id IN (" + inList + ");", true, token).ConfigureAwait(false);
+            return ids.Count;
         }
 
         #endregion

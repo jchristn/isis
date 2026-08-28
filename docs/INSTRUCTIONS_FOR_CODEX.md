@@ -4,11 +4,11 @@
 
 ## Connecting Codex to Isis over MCP
 
-Isis serves the modern **MCP Streamable HTTP + SSE** transport at `http://127.0.0.1:8720/mcp`. Every request must carry two auth headers: `x-access-key` (a credential access key, default `isisdefaultkey`) and `x-secret-key` (its secret key, default `isisdefaultsecret`). Together they identify a tenant credential and scope the connection to its tenant. Change the defaults before exposing Isis outside a trusted local environment.
+Isis serves the modern **MCP Streamable HTTP + SSE** transport at `http://127.0.0.1:8720/mcp`. Every request authenticates with a single header: `x-access-key` (a credential access key, default `isisdefaultkey`). The access key alone identifies a tenant credential and scopes the connection to its tenant. The secret key is never sent by Codex. Because the access key authenticates on its own, treat it as a **capability token** and prefer a least-privilege credential. Change the default before exposing Isis outside a trusted local environment.
 
 ### Config file -- `~/.codex/config.json`
 
-Codex reads its MCP servers from `~/.codex/config.json`. Add an `isis` entry under `mcpServers` pointing at the streamable-HTTP endpoint, with both auth headers:
+Codex reads its MCP servers from `~/.codex/config.json`. Add an `isis` entry under `mcpServers` pointing at the streamable-HTTP endpoint, with the access-key header:
 
 ```json
 {
@@ -17,15 +17,14 @@ Codex reads its MCP servers from `~/.codex/config.json`. Add an `isis` entry und
       "type": "http",
       "url": "http://127.0.0.1:8720/mcp",
       "headers": {
-        "x-access-key": "isisdefaultkey",
-        "x-secret-key": "isisdefaultsecret"
+        "x-access-key": "isisdefaultkey"
       }
     }
   }
 }
 ```
 
-Both headers are required. Restart Codex after saving so it reconnects and discovers the ten `isis_*` tools.
+Only the access-key header is required; the secret key is never sent. Restart Codex after saving so it reconnects and discovers the ten `isis_*` tools.
 
 If your Codex build only speaks the stdio MCP transport, bridge to the HTTP endpoint with a generic remote-MCP shim:
 
@@ -34,7 +33,7 @@ If your Codex build only speaks the stdio MCP transport, bridge to the HTTP endp
   "mcpServers": {
     "isis": {
       "command": "npx",
-      "args": ["-y", "mcp-remote", "http://127.0.0.1:8720/mcp", "--header", "x-access-key: isisdefaultkey", "--header", "x-secret-key: isisdefaultsecret"]
+      "args": ["-y", "mcp-remote", "http://127.0.0.1:8720/mcp", "--header", "x-access-key: isisdefaultkey"]
     }
   }
 }
@@ -167,4 +166,4 @@ Every tool returns the same envelope; the proxied REST response is under `data`:
 { "tool": "isis_whoami", "success": true, "statusCode": 200, "data": { "tenantId": "ten_a1b2c3", "principalType": "Credential", "principalId": "crd_9x8y7z" } }
 ```
 
-When a call fails, `success` is `false`, `statusCode` carries the upstream code (e.g. `401`, `403`, `404`), and `data` holds the error body. A missing auth header is rejected before any tool runs with `401 Provide x-access-key and x-secret-key headers.` A `403` on a tenant call means your credential is not authorized for that `tenantId` -- call `isis_whoami` and use the `tenantId` it returns.
+When a call fails, `success` is `false`, `statusCode` carries the upstream code (e.g. `401`, `403`, `404`), and `data` holds the error body. A request with no access key is rejected before any tool runs with `401`. A `403` on a tenant call means your credential is not authorized for that `tenantId` -- call `isis_whoami` and use the `tenantId` it returns.

@@ -1,6 +1,8 @@
 namespace Isis.Server.Services
 {
     using System;
+    using System.Collections.Generic;
+    using System.Linq;
     using System.Threading;
     using System.Threading.Tasks;
     using Isis.Core.Database;
@@ -113,6 +115,73 @@ namespace Isis.Server.Services
             IMemoryStore store = MemoryStoreFactory.Create(scope, _StoreOptions);
             await store.DeleteAsync(scope, memory, token).ConfigureAwait(false);
             return await _Database.Memories.DeleteAsync(scope.TenantId, memory.Id, token).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Cascade-delete a scope: tear down its external store content (RecallDB collection / filesystem
+        /// files) and batch-delete all of its memory and category index rows, then delete the scope row.
+        /// </summary>
+        /// <param name="scope">The scope to delete.</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>Task.</returns>
+        public async Task DeleteScopeAsync(Scope scope, CancellationToken token = default)
+        {
+            if (scope == null) throw new ArgumentNullException(nameof(scope));
+
+            IMemoryStore store = MemoryStoreFactory.Create(scope, _StoreOptions);
+            await store.DeleteScopeAsync(scope, token).ConfigureAwait(false);
+
+            while (true)
+            {
+                EnumerationResult<Memory> page = await _Database.Memories.EnumerateAsync(scope.TenantId, scope.Id, null, new EnumerationQuery { MaxResults = 500 }, token).ConfigureAwait(false);
+                if (page.Objects.Count == 0) break;
+                await _Database.Memories.DeleteManyAsync(scope.TenantId, page.Objects.Select(m => m.Id).ToList(), token).ConfigureAwait(false);
+            }
+
+            while (true)
+            {
+                EnumerationResult<Category> page = await _Database.Categories.EnumerateAsync(scope.TenantId, scope.Id, new EnumerationQuery { MaxResults = 500 }, token).ConfigureAwait(false);
+                if (page.Objects.Count == 0) break;
+                await _Database.Categories.DeleteManyAsync(scope.TenantId, page.Objects.Select(c => c.Id).ToList(), token).ConfigureAwait(false);
+            }
+
+            await _Database.Scopes.DeleteAsync(scope.TenantId, scope.Id, token).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Cascade-delete a category: delete each of its memories from the store and index, then the category
+        /// row. Returns false when the category has no memories and the caller should still delete the row.
+        /// </summary>
+        /// <param name="scope">The owning scope.</param>
+        /// <param name="categoryId">The category identifier.</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>Task.</returns>
+        public async Task DeleteCategoryMemoriesAsync(Scope scope, string categoryId, CancellationToken token = default)
+        {
+            if (scope == null) throw new ArgumentNullException(nameof(scope));
+            if (string.IsNullOrEmpty(categoryId)) throw new ArgumentNullException(nameof(categoryId));
+
+            IMemoryStore store = MemoryStoreFactory.Create(scope, _StoreOptions);
+
+            while (true)
+            {
+                EnumerationResult<Memory> page = await _Database.Memories.EnumerateAsync(scope.TenantId, scope.Id, categoryId, new EnumerationQuery { MaxResults = 500 }, token).ConfigureAwait(false);
+                if (page.Objects.Count == 0) break;
+
+                foreach (Memory memory in page.Objects)
+                {
+                    try
+                    {
+                        await store.DeleteAsync(scope, memory, token).ConfigureAwait(false);
+                    }
+                    catch (NotSupportedException)
+                    {
+                        // Best-effort store cleanup during cascade (e.g. Verbex not wired).
+                    }
+                }
+
+                await _Database.Memories.DeleteManyAsync(scope.TenantId, page.Objects.Select(m => m.Id).ToList(), token).ConfigureAwait(false);
+            }
         }
 
         /// <summary>

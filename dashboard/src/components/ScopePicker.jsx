@@ -6,9 +6,10 @@ import { useAuth } from '../context/AuthContext';
  * Loads scopes for the active tenant and renders a labeled selector. Calls
  * onChange with the selected scope id. Auto-selects the first scope.
  */
-function ScopePicker({ value, onChange, onScopesLoaded }) {
+function ScopePicker({ value, onChange, onScopesLoaded, tenantId: tenantIdProp }) {
   const { t } = useTranslation();
-  const { apiClient, tenantId } = useAuth();
+  const { apiClient, tenantId: authTenantId } = useAuth();
+  const tenantId = tenantIdProp || authTenantId;
   const [scopes, setScopes] = useState([]);
 
   useEffect(() => {

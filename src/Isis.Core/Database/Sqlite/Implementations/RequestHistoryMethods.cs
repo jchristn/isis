@@ -38,7 +38,7 @@ namespace Isis.Core.Database.Sqlite.Implementations
             if (String.IsNullOrEmpty(entry.Id)) entry.Id = IdGenerator.Request();
 
             string query =
-                "INSERT INTO request_history (id, tenantid, method, path, statuscode, sourceip, principalname, durationms, createdutc) VALUES (" +
+                "INSERT INTO request_history (id, tenantid, method, path, statuscode, sourceip, principalname, requestheaders, requestbody, responseheaders, responsebody, durationms, createdutc) VALUES (" +
                 SqliteHelpers.ToSqlRequired(entry.Id) + ", " +
                 SqliteHelpers.ToSql(entry.TenantId) + ", " +
                 SqliteHelpers.ToSqlRequired(entry.Method) + ", " +
@@ -46,6 +46,10 @@ namespace Isis.Core.Database.Sqlite.Implementations
                 entry.StatusCode + ", " +
                 SqliteHelpers.ToSql(entry.SourceIp) + ", " +
                 SqliteHelpers.ToSql(entry.PrincipalName) + ", " +
+                SqliteHelpers.ToSql(entry.RequestHeaders) + ", " +
+                SqliteHelpers.ToSql(entry.RequestBody) + ", " +
+                SqliteHelpers.ToSql(entry.ResponseHeaders) + ", " +
+                SqliteHelpers.ToSql(entry.ResponseBody) + ", " +
                 entry.DurationMs.ToString(System.Globalization.CultureInfo.InvariantCulture) + ", " +
                 SqliteHelpers.ToSqlRequired(entry.CreatedUtc) + ");";
 
@@ -122,9 +126,19 @@ namespace Isis.Core.Database.Sqlite.Implementations
             entry.StatusCode = SqliteHelpers.GetInt(row["statuscode"]);
             entry.SourceIp = SqliteHelpers.NullIfEmpty(SqliteHelpers.GetString(row["sourceip"]));
             entry.PrincipalName = SqliteHelpers.NullIfEmpty(SqliteHelpers.GetString(row["principalname"]));
+            entry.RequestHeaders = ReadOptional(row, "requestheaders");
+            entry.RequestBody = ReadOptional(row, "requestbody");
+            entry.ResponseHeaders = ReadOptional(row, "responseheaders");
+            entry.ResponseBody = ReadOptional(row, "responsebody");
             entry.DurationMs = SqliteHelpers.GetDouble(row["durationms"]);
             entry.CreatedUtc = SqliteHelpers.ParseTimestamp(row["createdutc"]);
             return entry;
+        }
+
+        private static string? ReadOptional(DataRow row, string name)
+        {
+            if (!row.Table.Columns.Contains(name)) return null;
+            return SqliteHelpers.NullIfEmpty(SqliteHelpers.GetString(row[name]));
         }
 
         #endregion

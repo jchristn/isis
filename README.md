@@ -83,8 +83,8 @@ Then:
   **`isisadmin`**, tenant **Default**. Change these before any shared deployment.
 - **REST API** — <http://127.0.0.1:8700> (direct) or <http://127.0.0.1:8080> (via nginx). OpenAPI at
   `/openapi.json`; see `docs/REST_API.md` and the Postman collection at `docs/isis.postman_collection.json`.
-- **MCP** — `http://127.0.0.1:8720/mcp`. Connect an agent with an access-key/secret-key pair; see
-  `docs/CONNECTING_AGENTS.md`.
+- **MCP** — `http://127.0.0.1:8720/mcp`. Connect an agent with its credential access key (a bearer
+  token, or the `x-access-key` header); no secret is sent. See `docs/CONNECTING_AGENTS.md`.
 - **Observability** — Grafana <http://127.0.0.1:3000>, Prometheus <http://127.0.0.1:9090>, RecallDB
   console <http://127.0.0.1:8601>.
 
@@ -121,8 +121,11 @@ Operator/UI  ──REST──▶ nginx ─▶ Isis.Server (Watson 7.1) ◀──
    create, upsert, search, read, enumerate, guide); operators and the dashboard use the tenant-scoped
    REST API.
 2. **Authentication.** Interactive users sign in with **email + password** and receive a session
-   token (`Authorization: Bearer`); automation and MCP use a credential **access-key + secret-key**
-   pair. Admin authority comes from user `IsAdmin` / `IsTenantAdmin` flags. See `docs/REST_API.md`.
+   token (`Authorization: Bearer`); automation and MCP authenticate with a credential **access key**
+   (sent as a bearer token or `x-access-key`), which authenticates on its own as a capability token —
+   an `x-secret-key` is optional and validated only when present. Single-header MCP clients such as Mux
+   send just the access key. Admin authority comes from user `IsAdmin` / `IsTenantAdmin` flags. See
+   `docs/REST_API.md`.
 3. **Storage is chosen per scope.** A scope binds to RecallDB (semantic/hybrid), Verbex (lexical), or
    Filesystem (flat files). RecallDB scopes require an embedding endpoint; Isis computes the vector and
    passes it to RecallDB. A scope's embedding model and dimension are fixed at creation — changing them

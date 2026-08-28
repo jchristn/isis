@@ -176,6 +176,10 @@ CREATE TABLE IF NOT EXISTS request_history (
     statuscode INTEGER NOT NULL DEFAULT 0,
     sourceip TEXT,
     principalname TEXT,
+    requestheaders TEXT,
+    requestbody TEXT,
+    responseheaders TEXT,
+    responsebody TEXT,
     durationms REAL NOT NULL DEFAULT 0,
     createdutc TEXT NOT NULL
 );
@@ -189,6 +193,18 @@ CREATE TABLE IF NOT EXISTS permissions (
     permissiontype TEXT NOT NULL DEFAULT 'Permit',
     resourceid TEXT,
     active INTEGER NOT NULL DEFAULT 1,
+    createdutc TEXT NOT NULL,
+    lastupdateutc TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS instructions (
+    id TEXT PRIMARY KEY,
+    tenantid TEXT NOT NULL,
+    name TEXT NOT NULL,
+    content TEXT NOT NULL DEFAULT '',
+    position INTEGER NOT NULL DEFAULT 0,
+    active INTEGER NOT NULL DEFAULT 1,
+    isprotected INTEGER NOT NULL DEFAULT 0,
     createdutc TEXT NOT NULL,
     lastupdateutc TEXT NOT NULL
 );
@@ -217,6 +233,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_scope_category_slug ON memories(s
 CREATE INDEX IF NOT EXISTS idx_endpoints_tenant_kind ON model_endpoints(tenantid, kind);
 CREATE INDEX IF NOT EXISTS idx_reqhistory_tenant_created ON request_history(tenantid, createdutc);
 CREATE INDEX IF NOT EXISTS idx_permissions_tenant_user ON permissions(tenantid, userid);
+CREATE INDEX IF NOT EXISTS idx_instructions_tenantid ON instructions(tenantid, position);
 ";
         }
 

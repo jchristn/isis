@@ -116,6 +116,15 @@ namespace Isis.Core.Helpers
         }
 
         /// <summary>
+        /// Generate an instruction identifier.
+        /// </summary>
+        /// <returns>Instruction identifier.</returns>
+        public static string Instruction()
+        {
+            return _Generator.GenerateKSortable(Constants.InstructionPrefix, Constants.IdLength);
+        }
+
+        /// <summary>
         /// Generate a seed pack identifier.
         /// </summary>
         /// <returns>Seed pack identifier.</returns>

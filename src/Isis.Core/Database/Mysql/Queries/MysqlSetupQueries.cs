@@ -182,6 +182,10 @@ CREATE TABLE IF NOT EXISTS request_history (
     statuscode INT NOT NULL DEFAULT 0,
     sourceip VARCHAR(64),
     principalname VARCHAR(255),
+    requestheaders LONGTEXT,
+    requestbody LONGTEXT,
+    responseheaders LONGTEXT,
+    responsebody LONGTEXT,
     durationms DOUBLE NOT NULL DEFAULT 0,
     createdutc VARCHAR(40) NOT NULL,
     INDEX idx_reqhistory_tenant_created (tenantid, createdutc)
@@ -199,6 +203,19 @@ CREATE TABLE IF NOT EXISTS permissions (
     createdutc VARCHAR(40) NOT NULL,
     lastupdateutc VARCHAR(40) NOT NULL,
     INDEX idx_permissions_tenant_user (tenantid, userid)
+);
+
+CREATE TABLE IF NOT EXISTS instructions (
+    id VARCHAR(64) PRIMARY KEY,
+    tenantid VARCHAR(64) NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    content LONGTEXT NOT NULL,
+    position INT NOT NULL DEFAULT 0,
+    active INT NOT NULL DEFAULT 1,
+    isprotected INT NOT NULL DEFAULT 0,
+    createdutc VARCHAR(40) NOT NULL,
+    lastupdateutc VARCHAR(40) NOT NULL,
+    INDEX idx_instructions_tenantid (tenantid, position)
 );
 ";
         }

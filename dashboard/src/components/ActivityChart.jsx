@@ -65,7 +65,7 @@ function ActivityChart({ buckets = [], height = 220, onBucketClick = null, empty
                 stroke="var(--color-border)"
                 strokeWidth="1"
               />
-              <text x={padding.left - 8} y={y + 4} textAnchor="end" fontSize="10" fill="var(--color-text-muted)">
+              <text x={padding.left - 8} y={y + 4} textAnchor="end" fontSize="8" fill="var(--color-text-muted)">
                 {formatNumber(tick.value, i18n.language)}
               </text>
             </g>
@@ -109,7 +109,7 @@ function ActivityChart({ buckets = [], height = 220, onBucketClick = null, empty
               x={padding.left + i * (chartW / buckets.length) + barW / 2}
               y={height - 10}
               textAnchor="middle"
-              fontSize="10"
+              fontSize="8"
               fill="var(--color-text-muted)"
             >
               {b.label}

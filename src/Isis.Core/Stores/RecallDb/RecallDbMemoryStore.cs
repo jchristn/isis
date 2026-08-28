@@ -148,6 +148,22 @@ namespace Isis.Core.Stores.RecallDb
         }
 
         /// <inheritdoc />
+        public async Task DeleteScopeAsync(Scope scope, CancellationToken token = default)
+        {
+            if (scope == null) throw new ArgumentNullException(nameof(scope));
+            if (_Client == null || string.IsNullOrEmpty(scope.RecallCollectionId)) return;
+
+            try
+            {
+                await _Client.DeleteCollectionAsync(scope.TenantId, scope.RecallCollectionId, token).ConfigureAwait(false);
+            }
+            catch (RecallDbException)
+            {
+                // Best-effort teardown during cascade; ignore a missing/failed collection drop.
+            }
+        }
+
+        /// <inheritdoc />
         public async Task<MemorySearchResult> SearchAsync(Scope scope, MemorySearchQuery query, float[]? queryEmbedding, CancellationToken token = default)
         {
             if (scope == null) throw new ArgumentNullException(nameof(scope));
@@ -155,56 +171,79 @@ namespace Isis.Core.Stores.RecallDb
             RecallDbClient client = RequireClient();
             if (string.IsNullOrEmpty(scope.RecallCollectionId)) throw new InvalidOperationException("The scope has no RecallDB collection; call EnsureScopeAsync first.");
 
-            SearchQuery search = new SearchQuery();
-            search.MaxResults = query.TopK;
+            int topK = query.TopK < 1 ? 5 : query.TopK;
+            int fetch = Math.Max(topK, 10);
+            bool wantSemantic = queryEmbedding != null && query.Mode != SearchModeEnum.Keyword;
+            bool wantKeyword = query.Mode != SearchModeEnum.Semantic && !string.IsNullOrEmpty(query.QueryText);
 
-            bool semantic = queryEmbedding != null && query.Mode != SearchModeEnum.Keyword;
-            if (semantic)
-            {
-                search.Vector = new VectorQuery { SearchType = "CosineSimilarity", Embeddings = queryEmbedding!.ToList() };
-            }
+            LabelFilter? labelFilter = !string.IsNullOrEmpty(query.CategoryFilter)
+                ? new LabelFilter { Required = new List<string> { query.CategoryFilter! } }
+                : null;
 
-            if (query.Mode != SearchModeEnum.Semantic && !string.IsNullOrEmpty(query.QueryText))
-            {
-                search.FullText = new FullTextQuery { Query = query.QueryText, TextWeight = query.TextWeight };
-            }
+            List<DocumentRecord> documents;
+            SearchModeEnum effectiveMode;
 
-            if (!string.IsNullOrEmpty(query.CategoryFilter))
+            if (wantSemantic && wantKeyword)
             {
-                search.LabelFilter = new LabelFilter { Required = new List<string> { query.CategoryFilter! } };
-            }
+                // Hybrid = UNION of a vector-only and a full-text-only search, fused by reciprocal rank.
+                // RecallDB's combined Vector+FullText query applies the text query as a REQUIRED filter, so a
+                // strong vector match is dropped whenever a natural-language question shares no literal keyword
+                // with the memory (the common case for "what can you tell me about X?"). Running the two
+                // searches separately and unioning them keeps semantic hits that have no keyword overlap.
+                SearchQuery vectorQuery = new SearchQuery
+                {
+                    MaxResults = fetch,
+                    LabelFilter = labelFilter,
+                    Vector = new VectorQuery { SearchType = "CosineSimilarity", Embeddings = queryEmbedding!.ToList() }
+                };
+                SearchQuery textQuery = new SearchQuery
+                {
+                    MaxResults = fetch,
+                    LabelFilter = labelFilter,
+                    FullText = new FullTextQuery { Query = query.QueryText, TextWeight = query.TextWeight }
+                };
 
-            SearchResult result;
-            try
-            {
-                result = await client.SearchAsync(scope.TenantId, scope.RecallCollectionId, search, token).ConfigureAwait(false);
+                SearchResult vectorResult = await ExecuteSearchAsync(client, scope, vectorQuery, token).ConfigureAwait(false);
+                SearchResult textResult = await ExecuteSearchAsync(client, scope, textQuery, token).ConfigureAwait(false);
+                documents = FuseByReciprocalRank(new[] { vectorResult.Documents, textResult.Documents }, topK);
+                effectiveMode = SearchModeEnum.Hybrid;
             }
-            catch (RecallDbException e)
+            else
             {
-                throw new InvalidOperationException("RecallDB search failed: " + e.Message, e);
+                SearchQuery single = new SearchQuery { MaxResults = fetch, LabelFilter = labelFilter };
+                if (wantSemantic)
+                {
+                    single.Vector = new VectorQuery { SearchType = "CosineSimilarity", Embeddings = queryEmbedding!.ToList() };
+                    effectiveMode = SearchModeEnum.Semantic;
+                }
+                else
+                {
+                    single.FullText = new FullTextQuery { Query = query.QueryText, TextWeight = query.TextWeight };
+                    effectiveMode = SearchModeEnum.Keyword;
+                }
+
+                SearchResult result = await ExecuteSearchAsync(client, scope, single, token).ConfigureAwait(false);
+                documents = result.Documents != null ? result.Documents.Take(topK).ToList() : new List<DocumentRecord>();
             }
 
             MemorySearchResult output = new MemorySearchResult();
-            output.EffectiveMode = semantic ? (search.FullText != null ? SearchModeEnum.Hybrid : SearchModeEnum.Semantic) : SearchModeEnum.Keyword;
+            output.EffectiveMode = effectiveMode;
 
             int budget = query.TokenBudget.HasValue && query.TokenBudget.Value > 0 ? query.TokenBudget.Value : 240;
-            if (result.Documents != null)
+            foreach (DocumentRecord document in documents)
             {
-                foreach (DocumentRecord document in result.Documents)
-                {
-                    string content = document.Content ?? string.Empty;
-                    string snippet = content.Length > budget ? content.Substring(0, budget) + "…" : content;
-                    string? title = document.Tags != null && document.Tags.TryGetValue("title", out string? titleValue) ? titleValue : null;
+                string content = document.Content ?? string.Empty;
+                string snippet = content.Length > budget ? content.Substring(0, budget) + "…" : content;
+                string? title = document.Tags != null && document.Tags.TryGetValue("title", out string? titleValue) ? titleValue : null;
 
-                    output.Hits.Add(new MemorySearchHit
-                    {
-                        StoreKey = document.DocumentKey,
-                        Slug = document.DocumentId,
-                        Title = title,
-                        Snippet = snippet,
-                        Score = document.Score
-                    });
-                }
+                output.Hits.Add(new MemorySearchHit
+                {
+                    StoreKey = document.DocumentKey,
+                    Slug = document.DocumentId,
+                    Title = title,
+                    Snippet = snippet,
+                    Score = document.Score
+                });
             }
 
             return output;
@@ -213,6 +252,48 @@ namespace Isis.Core.Stores.RecallDb
         #endregion
 
         #region Private-Methods
+
+        private static async Task<SearchResult> ExecuteSearchAsync(RecallDbClient client, Scope scope, SearchQuery search, CancellationToken token)
+        {
+            try
+            {
+                return await client.SearchAsync(scope.TenantId, scope.RecallCollectionId, search, token).ConfigureAwait(false);
+            }
+            catch (RecallDbException e)
+            {
+                throw new InvalidOperationException("RecallDB search failed: " + e.Message, e);
+            }
+        }
+
+        /// <summary>
+        /// Reciprocal-rank fusion: union multiple ranked result lists, scoring each document by the sum of
+        /// 1/(k + rank) across the lists it appears in, then return the top results. This blends the vector
+        /// and full-text rankings without needing to normalize their score scales.
+        /// </summary>
+        private static List<DocumentRecord> FuseByReciprocalRank(IEnumerable<List<DocumentRecord>?> lists, int topK)
+        {
+            const int k = 60;
+            Dictionary<string, DocumentRecord> byKey = new Dictionary<string, DocumentRecord>();
+            Dictionary<string, double> scores = new Dictionary<string, double>();
+
+            foreach (List<DocumentRecord>? list in lists)
+            {
+                if (list == null) continue;
+                for (int rank = 0; rank < list.Count; rank++)
+                {
+                    DocumentRecord document = list[rank];
+                    string key = document.DocumentKey ?? document.DocumentId ?? (rank + ":" + (document.Content ?? string.Empty).GetHashCode());
+                    if (!byKey.ContainsKey(key)) byKey[key] = document;
+                    scores[key] = (scores.TryGetValue(key, out double existing) ? existing : 0.0) + 1.0 / (k + rank + 1);
+                }
+            }
+
+            return scores
+                .OrderByDescending(pair => pair.Value)
+                .Take(topK)
+                .Select(pair => byKey[pair.Key])
+                .ToList();
+        }
 
         private RecallDbClient RequireClient()
         {

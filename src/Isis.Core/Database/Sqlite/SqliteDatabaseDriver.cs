@@ -51,6 +51,8 @@ namespace Isis.Core.Database.Sqlite
             Memories = new MemoryIndexMethods(this);
             ModelEndpoints = new ModelEndpointMethods(this);
             RequestHistory = new RequestHistoryMethods(this);
+            Instructions = new InstructionMethods(this);
+            Permissions = new PermissionMethods(this);
         }
 
         #endregion

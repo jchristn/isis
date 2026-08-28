@@ -97,6 +97,37 @@ namespace Isis.Core.Stores.Filesystem
         }
 
         /// <inheritdoc />
+        public async Task DeleteScopeAsync(Scope scope, CancellationToken token = default)
+        {
+            if (scope == null) throw new ArgumentNullException(nameof(scope));
+            if (String.IsNullOrEmpty(scope.TargetPath)) return;
+
+            try
+            {
+                if (scope.FilesystemLayout == FilesystemLayoutEnum.SingleFile)
+                {
+                    string file = SingleFilePath(scope);
+                    if (File.Exists(file)) File.Delete(file);
+                }
+                else
+                {
+                    string root = ResolveRoot(scope);
+                    if (Directory.Exists(root)) Directory.Delete(root, true);
+                }
+            }
+            catch (IOException)
+            {
+                // Best-effort teardown during cascade; ignore locked/missing files.
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Best-effort teardown during cascade; ignore permission failures.
+            }
+
+            await Task.CompletedTask.ConfigureAwait(false);
+        }
+
+        /// <inheritdoc />
         public async Task<MemorySearchResult> SearchAsync(Scope scope, MemorySearchQuery query, float[]? queryEmbedding, CancellationToken token = default)
         {
             if (scope == null) throw new ArgumentNullException(nameof(scope));

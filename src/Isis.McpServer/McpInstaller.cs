@@ -29,7 +29,6 @@ namespace Isis.McpServer
             string host = settings.Hostname == "*" || string.IsNullOrEmpty(settings.Hostname) ? "127.0.0.1" : settings.Hostname;
             int port = settings.Port;
             string accessKey = "isisdefaultkey";
-            string secretKey = "isisdefaultsecret";
             bool project = false;
             string? explicitUrl = null;
 
@@ -39,8 +38,6 @@ namespace Isis.McpServer
             if (!string.IsNullOrEmpty(envPort) && int.TryParse(envPort, out int ep)) port = ep;
             string? envAccessKey = Environment.GetEnvironmentVariable("ISIS_MCP_ACCESS_KEY") ?? Environment.GetEnvironmentVariable("ISIS_AUTH_DEFAULT_ACCESS_KEY");
             if (!string.IsNullOrEmpty(envAccessKey)) accessKey = envAccessKey;
-            string? envSecretKey = Environment.GetEnvironmentVariable("ISIS_MCP_SECRET_KEY") ?? Environment.GetEnvironmentVariable("ISIS_AUTH_DEFAULT_SECRET_KEY");
-            if (!string.IsNullOrEmpty(envSecretKey)) secretKey = envSecretKey;
 
             for (int i = 0; i < args.Length; i++)
             {
@@ -48,9 +45,6 @@ namespace Isis.McpServer
                 {
                     case "--access-key":
                         if (i + 1 < args.Length) accessKey = args[++i];
-                        break;
-                    case "--secret-key":
-                        if (i + 1 < args.Length) secretKey = args[++i];
                         break;
                     case "--port":
                         if (i + 1 < args.Length && int.TryParse(args[i + 1], out int p)) { port = p; i++; }
@@ -70,10 +64,11 @@ namespace Isis.McpServer
             string url = explicitUrl ?? ("http://" + host + ":" + port + settings.McpPath);
             string target = ResolveTarget(project);
 
+            // Authenticate with the credential ACCESS KEY only. The access key is the public, transferable
+            // material; the secret key is never written into a client config and never leaves the client.
             Dictionary<string, string> headers = new Dictionary<string, string>
             {
-                ["x-access-key"] = accessKey,
-                ["x-secret-key"] = secretKey
+                ["x-access-key"] = accessKey
             };
 
             try
@@ -82,7 +77,6 @@ namespace Isis.McpServer
                 Console.WriteLine("Installed Isis MCP server 'isis' -> " + url);
                 Console.WriteLine("  config: " + target);
                 Console.WriteLine("  x-access-key: " + Mask(accessKey));
-                Console.WriteLine("  x-secret-key: " + Mask(secretKey));
                 Console.WriteLine("Restart your agent client to pick up the change.");
                 return 0;
             }
@@ -117,7 +111,7 @@ namespace Isis.McpServer
         /// </summary>
         /// <param name="target">The config file path.</param>
         /// <param name="url">The MCP endpoint URL.</param>
-        /// <param name="headers">The auth headers to write (e.g. x-access-key and x-secret-key).</param>
+        /// <param name="headers">The auth headers to write (e.g. x-access-key).</param>
         public static void Install(string target, string url, Dictionary<string, string> headers)
         {
             if (headers == null) throw new ArgumentNullException(nameof(headers));

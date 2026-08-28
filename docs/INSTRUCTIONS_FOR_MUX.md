@@ -4,7 +4,7 @@
 
 ## Connecting Mux to Isis over MCP
 
-Mux talks to Isis through Isis's MCP server. Isis serves the modern **MCP Streamable HTTP + SSE** transport at `http://127.0.0.1:8720/mcp`. Every request must carry two auth headers: `x-access-key` (a credential access key, default `isisdefaultkey`) and `x-secret-key` (its secret key, default `isisdefaultsecret`). Together they identify a tenant credential and scope the connection to its tenant. Change the defaults before exposing Isis outside a trusted local environment.
+Mux talks to Isis through Isis's MCP server. Isis serves the modern **MCP Streamable HTTP + SSE** transport at `http://127.0.0.1:8720/mcp`. Mux can send only **one** auth header, so it authenticates with the credential **access key carried as a bearer token** (`Authorization: Bearer <accessKey>`, default access key `isisdefaultkey`). The access key identifies a tenant credential and scopes the connection to its tenant. The **secret key is never sent to Mux** and never leaves your machine — because the access key alone authenticates, it is a **capability token**: use a least-privilege credential and change the default before exposing Isis outside a trusted local environment.
 
 ### Option A -- Interactive (`/mcp` in a Mux session)
 
@@ -27,13 +27,13 @@ mux
    - **transport**: `http`
    - **url**: `http://127.0.0.1:8720`
    - **mcp path**: `/mcp` (the default -- leave as-is)
-   - **auth**: add two headers -- `x-access-key` with value `isisdefaultkey` and `x-secret-key` with value `isisdefaultsecret`
+   - **auth**: choose **bearer** and set the bearer token to your credential's **access key** (default `isisdefaultkey`). Do **not** add `x-access-key` / `x-secret-key` headers — Mux sends the access key as the bearer token and never sends the secret.
 
-Each server row shows a live connectivity glyph -- `●` online (with its discovered tool count) or `○` offline. Once `isis` shows `●` with 10 tools, you are connected. The server is saved to the Mux config directory's `mcp-servers.json`, so it loads automatically in future sessions.
+Each server row shows a live connectivity glyph -- `●` online (with its discovered tool count) or `○` offline. Once `isis` shows `●` with a nonzero tool count, you are connected. The server is saved to the Mux config directory's `mcp-servers.json`, so it loads automatically in future sessions.
 
 ### Option B -- Config file (headless / scripted runs)
 
-Mux's headless MCP is off unless you pass `--mcp-config`. Create a Mux MCP config file, for example `isis.mcp.json`:
+Mux's headless MCP is off unless you pass `--mcp-config`. Mux persists servers in its `mcp-servers.json`; a server entry lives in the `servers` array with a `bearer` auth block. Create a Mux MCP config file, for example `isis.mcp.json`:
 
 ```json
 {
@@ -43,13 +43,15 @@ Mux's headless MCP is off unless you pass `--mcp-config`. Create a Mux MCP confi
       "transport": "http",
       "url": "http://127.0.0.1:8720",
       "mcpPath": "/mcp",
-      "headers": { "x-access-key": "isisdefaultkey", "x-secret-key": "isisdefaultsecret" }
+      "auth": { "type": "bearer", "bearerToken": "isisdefaultkey" }
     }
   ]
 }
 ```
 
-Run Mux with that config so the Isis tools load:
+`bearerToken` is your credential's **access key**. There is no `headers` object and no secret key — Mux
+cannot send a second header, so the access key alone authenticates. Run Mux with that config so the Isis
+tools load:
 
 ```bash
 mux --mcp-config ./isis.mcp.json print --yolo "what do we remember about this project?"
@@ -58,14 +60,14 @@ mux --mcp-config ./isis.mcp.json print --yolo "what do we remember about this pr
 Or pass the config inline:
 
 ```bash
-mux print --yolo --mcp-config '{"servers":[{"name":"isis","transport":"http","url":"http://127.0.0.1:8720","mcpPath":"/mcp","headers":{"x-access-key":"isisdefaultkey","x-secret-key":"isisdefaultsecret"}}]}' "what do we remember about this project?"
+mux print --yolo --mcp-config '{"servers":[{"name":"isis","transport":"http","url":"http://127.0.0.1:8720","mcpPath":"/mcp","auth":{"type":"bearer","bearerToken":"isisdefaultkey"}}]}' "what do we remember about this project?"
 ```
 
-Both headers are required; the access key identifies the credential and the secret key proves you hold it.
+The access key is the only credential Mux sends; it is public and transferable, so treat it as a capability token and scope it least-privilege. The secret key is never sent to Mux.
 
 ### Notes
 
-Verify the connection with `mux probe --output-format json --require-tools` -- the `isis` server should appear with a tool count of 10. Once connected, `tools/list` returns the ten `isis_*` tools. If the server shows `○` offline, confirm Isis is running and listening on `127.0.0.1:8720` (see Troubleshooting in `CONNECTING_AGENTS.md`).
+Verify the connection with `mux probe --output-format json --require-tools` -- the `isis` server should appear with a nonzero tool count. Once connected, `tools/list` returns the `isis_*` memory tools (plus a few server built-ins such as `ping`). If the server shows `○` offline, confirm Isis is running and listening on `127.0.0.1:8720` (see Troubleshooting in `CONNECTING_AGENTS.md`).
 
 ---
 
@@ -163,7 +165,9 @@ Match every write to a category and follow that category's `instructions`. When 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
 | `isis_whoami` | -- | Resolve the tenant and principal your credential maps to. Call first. |
+| `isis_instructions` | `tenantId` (required) | Read this tenant's standing memory manual/instructions. Call after `isis_whoami`. |
 | `isis_scope_enumerate` | `tenantId` (required) | List the memory scopes in a tenant. |
+| `isis_scope_create` | `tenantId`, `name` (required); `description`, `storeProvider`, `embeddingEndpointId`, `dimensionality`, `filesystemLayout`, `targetPath` | Create a memory scope when none fits. |
 | `isis_guide` | `tenantId`, `scopeId` (required) | The scope's categories, their usage instructions, and policies. Call before writing. |
 | `isis_category_enumerate` | `tenantId`, `scopeId` (required) | List categories in a scope, including usage instructions. |
 | `isis_category_create` | `tenantId`, `scopeId`, `name` (required); `description`, `instructions` | Create a category. Supply `instructions`. |
@@ -192,4 +196,4 @@ Every tool returns the same envelope; the proxied REST response is under `data`:
 { "tool": "isis_whoami", "success": true, "statusCode": 200, "data": { "tenantId": "ten_a1b2c3", "principalType": "Credential", "principalId": "crd_9x8y7z" } }
 ```
 
-When a call fails, `success` is `false`, `statusCode` carries the upstream code (e.g. `401`, `403`, `404`), and `data` holds the error body. A missing auth header is rejected before any tool runs with `401 Provide x-access-key and x-secret-key headers.` A `403` on a tenant call means your credential is not authorized for that `tenantId` -- call `isis_whoami` and use the `tenantId` it returns.
+When a call fails, `success` is `false`, `statusCode` carries the upstream code (e.g. `401`, `403`, `404`), and `data` holds the error body. A request with no access key is rejected before any tool runs with `401`. A `403` on a tenant call means your credential is not authorized for that `tenantId` -- call `isis_whoami` and use the `tenantId` it returns.

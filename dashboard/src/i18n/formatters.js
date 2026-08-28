@@ -30,6 +30,13 @@ export function formatTime(value, locale) {
   return new Intl.DateTimeFormat(activeLocale(locale), { timeStyle: 'medium' }).format(d);
 }
 
+export function formatTimeShort(value, locale) {
+  if (!value) return '—';
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return '—';
+  return new Intl.DateTimeFormat(activeLocale(locale), { timeStyle: 'short' }).format(d);
+}
+
 export function formatDateTime(value, locale) {
   if (!value) return '—';
   const d = value instanceof Date ? value : new Date(value);

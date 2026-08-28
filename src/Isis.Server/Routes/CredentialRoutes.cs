@@ -56,6 +56,8 @@ namespace Isis.Server.Routes
             server.Routes.PostAuthentication.Parameter.Add(HttpMethod.GET, "/v1.0/api/tenants/{tenantId}/credentials/{credentialId}", ReadAsync, null, openApiMetadata: OpenApiRouteMetadata.Create("Read a credential", "Credentials"));
             server.Routes.PostAuthentication.Parameter.Add(HttpMethod.PUT, "/v1.0/api/tenants/{tenantId}/credentials/{credentialId}", UpdateAsync, null, openApiMetadata: OpenApiRouteMetadata.Create("Update a credential", "Credentials"));
             server.Routes.PostAuthentication.Parameter.Add(HttpMethod.DELETE, "/v1.0/api/tenants/{tenantId}/credentials/{credentialId}", DeleteAsync, null, openApiMetadata: OpenApiRouteMetadata.Create("Delete a credential", "Credentials"));
+            server.Routes.PostAuthentication.Parameter.Add(HttpMethod.POST, "/v1.0/api/tenants/{tenantId}/credentials/batch-get", BatchGetAsync, null, openApiMetadata: OpenApiRouteMetadata.Create("Batch-get credentials", "Credentials"));
+            server.Routes.PostAuthentication.Parameter.Add(HttpMethod.POST, "/v1.0/api/tenants/{tenantId}/credentials/batch-delete", BatchDeleteAsync, null, openApiMetadata: OpenApiRouteMetadata.Create("Batch-delete credentials", "Credentials"));
         }
 
         #endregion
@@ -200,6 +202,47 @@ namespace Isis.Server.Routes
 
             context.Response.StatusCode = 204;
             await context.Response.Send().ConfigureAwait(false);
+        }
+
+        private async Task BatchGetAsync(HttpContextBase context)
+        {
+            if (!Authorize(context, out _, out string tenantId))
+            {
+                await RouteHelpers.ErrorAsync(context, 403, "Forbidden", "Not permitted to manage credentials for this tenant.").ConfigureAwait(false);
+                return;
+            }
+
+            BatchIdsRequest? request = RouteHelpers.Body<BatchIdsRequest>(context);
+            List<Dictionary<string, object?>> objects = new List<Dictionary<string, object?>>();
+            if (request != null && request.Ids != null && request.Ids.Count > 0)
+            {
+                List<Credential> credentials = await _Database.Credentials.ReadManyAsync(tenantId, request.Ids, context.Token).ConfigureAwait(false);
+                foreach (Credential credential in credentials) objects.Add(View(credential));
+            }
+
+            Dictionary<string, object?> body = new Dictionary<string, object?>();
+            body["objects"] = objects;
+            await RouteHelpers.JsonAsync(context, 200, body).ConfigureAwait(false);
+        }
+
+        private async Task BatchDeleteAsync(HttpContextBase context)
+        {
+            if (!Authorize(context, out _, out string tenantId))
+            {
+                await RouteHelpers.ErrorAsync(context, 403, "Forbidden", "Not permitted to manage credentials for this tenant.").ConfigureAwait(false);
+                return;
+            }
+
+            BatchIdsRequest? request = RouteHelpers.Body<BatchIdsRequest>(context);
+            int deleted = 0;
+            if (request != null && request.Ids != null && request.Ids.Count > 0)
+            {
+                deleted = await _Database.Credentials.DeleteManyAsync(tenantId, request.Ids, context.Token).ConfigureAwait(false);
+            }
+
+            Dictionary<string, object?> body = new Dictionary<string, object?>();
+            body["deleted"] = deleted;
+            await RouteHelpers.JsonAsync(context, 200, body).ConfigureAwait(false);
         }
 
         private static Dictionary<string, object?> View(Credential credential)

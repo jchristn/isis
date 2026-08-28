@@ -4,11 +4,11 @@
 
 ## Connecting Cursor to Isis over MCP
 
-Isis serves the modern **MCP Streamable HTTP + SSE** transport at `http://127.0.0.1:8720/mcp`. Every request must carry two auth headers: `x-access-key` (a credential access key, default `isisdefaultkey`) and `x-secret-key` (its secret key, default `isisdefaultsecret`). Together they identify a tenant credential and scope the connection to its tenant. Change the defaults before exposing Isis outside a trusted local environment.
+Isis serves the modern **MCP Streamable HTTP + SSE** transport at `http://127.0.0.1:8720/mcp`. Every request authenticates with a single header: `x-access-key` (a credential access key, default `isisdefaultkey`). The access key alone identifies a tenant credential and scopes the connection to its tenant. The secret key is never sent by Cursor. Because the access key authenticates on its own, treat it as a **capability token** and prefer a least-privilege credential. Change the default before exposing Isis outside a trusted local environment.
 
 ### Config file -- `~/.cursor/mcp.json`
 
-Cursor reads its MCP servers from `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (per project). Add an `isis` entry under `mcpServers` with the endpoint and both auth headers:
+Cursor reads its MCP servers from `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (per project). Add an `isis` entry under `mcpServers` with the endpoint and the access-key header:
 
 ```json
 {
@@ -16,15 +16,14 @@ Cursor reads its MCP servers from `~/.cursor/mcp.json` (global) or `.cursor/mcp.
     "isis": {
       "url": "http://127.0.0.1:8720/mcp",
       "headers": {
-        "x-access-key": "isisdefaultkey",
-        "x-secret-key": "isisdefaultsecret"
+        "x-access-key": "isisdefaultkey"
       }
     }
   }
 }
 ```
 
-Both headers are required. Restart Cursor after saving so it reconnects; open **Settings -> MCP** to confirm the `isis` server is green and the ten `isis_*` tools are listed.
+Only the access-key header is required; the secret key is never sent. Restart Cursor after saving so it reconnects; open **Settings -> MCP** to confirm the `isis` server is green and the ten `isis_*` tools are listed.
 
 ---
 
@@ -151,4 +150,4 @@ Every tool returns the same envelope; the proxied REST response is under `data`:
 { "tool": "isis_whoami", "success": true, "statusCode": 200, "data": { "tenantId": "ten_a1b2c3", "principalType": "Credential", "principalId": "crd_9x8y7z" } }
 ```
 
-When a call fails, `success` is `false`, `statusCode` carries the upstream code (e.g. `401`, `403`, `404`), and `data` holds the error body. A missing auth header is rejected before any tool runs with `401 Provide x-access-key and x-secret-key headers.` A `403` on a tenant call means your credential is not authorized for that `tenantId` -- call `isis_whoami` and use the `tenantId` it returns.
+When a call fails, `success` is `false`, `statusCode` carries the upstream code (e.g. `401`, `403`, `404`), and `data` holds the error body. A request with no access key is rejected before any tool runs with `401`. A `403` on a tenant call means your credential is not authorized for that `tenantId` -- call `isis_whoami` and use the `tenantId` it returns.

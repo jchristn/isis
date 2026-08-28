@@ -57,6 +57,26 @@ namespace Isis.Core.Models
         public string? PrincipalName { get; set; } = null;
 
         /// <summary>
+        /// The request headers, serialized as a JSON object mapping header name to value, when captured.
+        /// </summary>
+        public string? RequestHeaders { get; set; } = null;
+
+        /// <summary>
+        /// The request body, when captured.
+        /// </summary>
+        public string? RequestBody { get; set; } = null;
+
+        /// <summary>
+        /// The response headers, serialized as a JSON object mapping header name to value, when captured.
+        /// </summary>
+        public string? ResponseHeaders { get; set; } = null;
+
+        /// <summary>
+        /// The response body, when captured.
+        /// </summary>
+        public string? ResponseBody { get; set; } = null;
+
+        /// <summary>
         /// The total request duration in milliseconds.
         /// </summary>
         public double DurationMs { get; set; } = 0.0;

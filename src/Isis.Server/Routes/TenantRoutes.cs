@@ -20,6 +20,7 @@ namespace Isis.Server.Routes
 
         private readonly DatabaseDriverBase _Database;
         private readonly AuthorizationService _Authorization;
+        private readonly TenantLifecycleService _Lifecycle;
 
         #endregion
 
@@ -30,11 +31,13 @@ namespace Isis.Server.Routes
         /// </summary>
         /// <param name="database">The database driver.</param>
         /// <param name="authorization">The authorization service.</param>
+        /// <param name="lifecycle">The tenant lifecycle service (provisioning + cascade delete).</param>
         /// <exception cref="ArgumentNullException">Thrown when a required argument is null.</exception>
-        public TenantRoutes(DatabaseDriverBase database, AuthorizationService authorization)
+        public TenantRoutes(DatabaseDriverBase database, AuthorizationService authorization, TenantLifecycleService lifecycle)
         {
             _Database = database ?? throw new ArgumentNullException(nameof(database));
             _Authorization = authorization ?? throw new ArgumentNullException(nameof(authorization));
+            _Lifecycle = lifecycle ?? throw new ArgumentNullException(nameof(lifecycle));
         }
 
         #endregion
@@ -97,8 +100,24 @@ namespace Isis.Server.Routes
                 return;
             }
 
-            Tenant created = await _Database.Tenants.CreateAsync(tenant, context.Token).ConfigureAwait(false);
-            await RouteHelpers.JsonAsync(context, 201, created).ConfigureAwait(false);
+            // Provision the tenant plus its default admin user, credential, and instruction set.
+            TenantProvisionResult result = await _Lifecycle.ProvisionAsync(tenant, context.Token).ConfigureAwait(false);
+
+            System.Collections.Generic.Dictionary<string, object?> body = new System.Collections.Generic.Dictionary<string, object?>();
+            body["tenant"] = result.Tenant;
+            body["admin"] = new System.Collections.Generic.Dictionary<string, object?>
+            {
+                ["userId"] = result.AdminUserId,
+                ["email"] = result.AdminEmail,
+                ["password"] = result.AdminPassword
+            };
+            body["credential"] = new System.Collections.Generic.Dictionary<string, object?>
+            {
+                ["credentialId"] = result.CredentialId,
+                ["accessKey"] = result.AccessKey,
+                ["secretKey"] = result.SecretKey
+            };
+            await RouteHelpers.JsonAsync(context, 201, body).ConfigureAwait(false);
         }
 
         private async Task ReadAsync(HttpContextBase context)
@@ -161,10 +180,16 @@ namespace Isis.Server.Routes
                 return;
             }
 
-            bool deleted = await _Database.Tenants.DeleteAsync(id, context.Token).ConfigureAwait(false);
-            if (!deleted)
+            TenantDeleteOutcome outcome = await _Lifecycle.DeleteTenantAsync(id, context.Token).ConfigureAwait(false);
+            if (outcome == TenantDeleteOutcome.NotFound)
             {
                 await RouteHelpers.ErrorAsync(context, 404, "NotFound", "Tenant not found.").ConfigureAwait(false);
+                return;
+            }
+
+            if (outcome == TenantDeleteOutcome.Protected)
+            {
+                await RouteHelpers.ErrorAsync(context, 409, "Conflict", "This tenant is protected and cannot be deleted.").ConfigureAwait(false);
                 return;
             }
 
