@@ -1,16 +1,8 @@
 apiVersion: 1
 
-# Load the Isis dashboard JSON (mounted from assets/grafana) into categorized Grafana folders.
-# Each subdirectory of the dashboards path (Overview, API, Services, Storage, Runtime) becomes its
-# own Grafana folder via foldersFromFilesStructure, rather than piling everything into one folder
-# or one mega-dashboard.
-providers:
-  - name: 'Isis'
-    orgId: 1
-    folder: 'Isis'
-    type: file
-    disableDeletion: false
-    editable: true
-    options:
-      path: /var/lib/grafana/dashboards/isis
-      foldersFromFilesStructure: true
+# Dashboards are NOT provisioned from files here. Grafana 13's file provisioner cannot build a nested
+# folder hierarchy (foldersFromFilesStructure only creates a single flat folder per dashboard, and the
+# `folder` field can't nest). To get a single top-level "Isis" folder with nested category subfolders,
+# the one-shot `grafana-init` service uploads the dashboards through the Grafana HTTP API instead (see
+# docker/grafana/provision-folders.sh). Leaving no providers here avoids creating duplicate flat folders.
+providers: []
