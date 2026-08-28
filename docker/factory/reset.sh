@@ -3,8 +3,18 @@
 #
 # Destroys all runtime docker data (Postgres, RecallDB, Prometheus, Tempo, Loki, Alloy, Grafana volumes)
 # and clears local logs, leaving the stack ready for a fresh seeded "docker compose ... up".
+#
+# Usage: reset.sh [--no-ollama]
+#   --no-ollama   Preserve the Ollama model volume so gemma3:4b / all-minilm are not re-downloaded.
 
 set -u
+
+NO_OLLAMA=0
+for arg in "$@"; do
+  case "$arg" in
+    --no-ollama) NO_OLLAMA=1 ;;
+  esac
+done
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DOCKER_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -17,6 +27,10 @@ echo
 echo "WARNING: This is DESTRUCTIVE. All docker volumes (Postgres with the isis"
 echo "and recalldb databases, RecallDB, and the observability stack) and the"
 echo "local logs directory will be deleted."
+if [ "${NO_OLLAMA}" = "1" ]; then
+  echo
+  echo "  (--no-ollama) The Ollama model volume will be PRESERVED."
+fi
 echo
 printf "Type 'RESET' to confirm: "
 read CONFIRM
@@ -27,10 +41,21 @@ if [ "${CONFIRM}" != "RESET" ]; then
   exit 1
 fi
 
-echo "[1/2] Stopping containers and removing volumes..."
 cd "${DOCKER_DIR}"
-docker compose -f compose.yaml -f factory/compose.factory.yaml down -v 2>/dev/null || true
-docker compose down -v 2>/dev/null || true
+
+if [ "${NO_OLLAMA}" = "1" ]; then
+  echo "[1/2] Stopping containers (preserving the Ollama model volume)..."
+  docker compose -f compose.yaml -f factory/compose.factory.yaml down 2>/dev/null || true
+  docker compose down 2>/dev/null || true
+  # Remove every Isis volume except the Ollama model cache.
+  for v in $(docker volume ls --format '{{.Name}}' | grep -i isis | grep -vi ollama); do
+    docker volume rm "$v" >/dev/null 2>&1 || true
+  done
+else
+  echo "[1/2] Stopping containers and removing volumes..."
+  docker compose -f compose.yaml -f factory/compose.factory.yaml down -v 2>/dev/null || true
+  docker compose down -v 2>/dev/null || true
+fi
 
 echo "[2/2] Clearing local logs..."
 rm -rf "${DOCKER_DIR}/logs"

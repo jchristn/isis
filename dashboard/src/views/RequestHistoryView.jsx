@@ -265,25 +265,25 @@ function RequestHistoryView() {
             </dl>
           </div>
 
-          <div className="detail-section">
-            <div className="section-title">{t('requestHistory.requestHeaders')}</div>
+          <details className="detail-section" open>
+            <summary>{t('requestHistory.requestHeaders')}</summary>
             <HeadersSection raw={inspect.requestHeaders} emptyLabel={t('requestHistory.noHeaders')} />
-          </div>
+          </details>
 
-          <div className="detail-section">
-            <div className="section-title">{t('requestHistory.requestBody')}</div>
+          <details className="detail-section" open>
+            <summary>{t('requestHistory.requestBody')}</summary>
             <BodySection raw={inspect.requestBody} emptyLabel={t('requestHistory.noBody')} />
-          </div>
+          </details>
 
-          <div className="detail-section">
-            <div className="section-title">{t('requestHistory.responseHeaders')}</div>
+          <details className="detail-section" open>
+            <summary>{t('requestHistory.responseHeaders')}</summary>
             <HeadersSection raw={inspect.responseHeaders} emptyLabel={t('requestHistory.noHeaders')} />
-          </div>
+          </details>
 
-          <div className="detail-section">
-            <div className="section-title">{t('requestHistory.responseBody')}</div>
+          <details className="detail-section" open>
+            <summary>{t('requestHistory.responseBody')}</summary>
             <BodySection raw={inspect.responseBody} emptyLabel={t('requestHistory.noBody')} />
-          </div>
+          </details>
 
           <details className="detail-raw">
             <summary>{t('requestHistory.rawRecord')}</summary>

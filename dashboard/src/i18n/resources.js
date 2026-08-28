@@ -334,7 +334,7 @@ export const en = {
       principal: 'Principal',
       sourceIp: 'Source IP',
       time: 'Time',
-      rawRecord: 'Raw record',
+      rawRecord: 'Record JSON',
       sectionMetadata: 'Metadata',
       requestHeaders: 'Request headers',
       requestBody: 'Request body',

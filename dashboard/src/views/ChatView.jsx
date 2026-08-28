@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { useAuth } from '../context/AuthContext';
 import PageHeader from '../components/PageHeader';
 import ScopePicker from '../components/ScopePicker';
@@ -453,7 +455,11 @@ function ChatView() {
                 <div key={i} className="chat-msg assistant">
                   <Thinking text={msg.thinking} />
                   <RetrievalTrace retrieval={msg.retrieval} />
-                  {msg.answer && <div className="chat-answer">{msg.answer}</div>}
+                  {msg.answer && (
+                    <div className="chat-answer chat-markdown">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.answer}</ReactMarkdown>
+                    </div>
+                  )}
                   {!msg.done && !msg.answer && (
                     <div className="chat-working" aria-live="polite">
                       <span className="chat-working-dots" aria-hidden="true"><span /><span /><span /></span>

@@ -215,7 +215,7 @@ namespace Isis.Server
             }
 
             string path = context.Request.Url.RawWithoutQuery ?? string.Empty;
-            if (path.Contains("/api/health", StringComparison.Ordinal))
+            if (path.Contains("/api/health", StringComparison.Ordinal) || path.Contains("/metrics", StringComparison.Ordinal))
             {
                 await Task.CompletedTask.ConfigureAwait(false);
                 return;

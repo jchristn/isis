@@ -46,6 +46,11 @@ namespace Isis.Server.Routes
             server.Routes.PreAuthentication.Static.Add(
                 HttpMethod.GET, "/v1.0/api/health", HealthAsync, null,
                 openApiMetadata: OpenApiRouteMetadata.Create("Server health check", "System"));
+
+            // Prometheus scrape target — anonymous so the scraper is not rejected with 401.
+            server.Routes.PreAuthentication.Static.Add(
+                HttpMethod.GET, "/metrics", MetricsAsync, null,
+                openApiMetadata: OpenApiRouteMetadata.Create("Prometheus metrics", "System"));
         }
 
         #endregion
@@ -71,6 +76,33 @@ namespace Isis.Server.Routes
                 "\"node\":\"" + _NodeId + "\"," +
                 "\"database\":" + (healthy ? "true" : "false") + "," +
                 "\"utc\":\"" + DateTime.UtcNow.ToString("o") + "\"}";
+            await context.Response.Send(body).ConfigureAwait(false);
+        }
+
+        private async Task MetricsAsync(HttpContextBase context)
+        {
+            bool healthy;
+            try
+            {
+                healthy = await _Database.PingAsync(context.Token).ConfigureAwait(false);
+            }
+            catch
+            {
+                healthy = false;
+            }
+
+            context.Response.StatusCode = 200;
+            context.Response.ContentType = "text/plain; version=0.0.4; charset=utf-8";
+            string body =
+                "# HELP isis_up Whether the Isis server process is up.\n" +
+                "# TYPE isis_up gauge\n" +
+                "isis_up 1\n" +
+                "# HELP isis_database_up Whether the Isis database is reachable.\n" +
+                "# TYPE isis_database_up gauge\n" +
+                "isis_database_up " + (healthy ? "1" : "0") + "\n" +
+                "# HELP isis_build_info Isis build information.\n" +
+                "# TYPE isis_build_info gauge\n" +
+                "isis_build_info{version=\"" + Isis.Core.Constants.ProductVersion + "\",node=\"" + _NodeId + "\"} 1\n";
             await context.Response.Send(body).ConfigureAwait(false);
         }
 
