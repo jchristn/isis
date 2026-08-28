@@ -32,7 +32,7 @@ export const HEALTH_METHODS = ['GET', 'HEAD'];
 // External observability services surfaced on the Home page (local dev defaults).
 export const EXTERNAL_SERVICES = [
   { key: 'grafana', name: 'Grafana', url: 'http://127.0.0.1:3000', creds: 'admin / admin' },
-  { key: 'prometheus', name: 'Prometheus', url: 'http://127.0.0.1:9090', creds: '—' },
-  { key: 'tempo', name: 'Tempo', url: 'http://127.0.0.1:3200', creds: '—' },
-  { key: 'recalldb', name: 'RecallDB', url: 'http://127.0.0.1:8601', creds: '—' }
+  { key: 'prometheus', name: 'Prometheus', url: 'http://127.0.0.1:9090', creds: 'No authentication' },
+  { key: 'tempo', name: 'Tempo', url: 'http://127.0.0.1:3200', creds: 'No authentication' },
+  { key: 'recalldb', name: 'RecallDB', url: 'http://127.0.0.1:8601', creds: 'API key: recalldbadmin' }
 ];

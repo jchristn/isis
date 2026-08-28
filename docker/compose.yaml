@@ -160,6 +160,15 @@ services:
       # Hostname the seeded default Ollama endpoints point at (the bundled 'ollama' service). Inside the
       # container 'localhost' would be the container itself, so this must be a resolvable service name.
       ISIS_DEFAULT_ENDPOINT_HOST: 'ollama'
+      # Observability: the in-process OpenTelemetry MeterProvider serves a Prometheus scrape endpoint on
+      # port 9464 (Prometheus scrapes it in-network; not published to the host). Traces export to Tempo over
+      # OTLP/gRPC (best-effort — no depends_on so a missing Tempo never blocks the server).
+      ISIS_OBS_ENABLED: 'true'
+      ISIS_OTLP_ENDPOINT: 'http://tempo:4317'
+      ISIS_OTLP_PROTOCOL: 'grpc'
+      ISIS_OBS_SERVICE_NAME: 'isis-server'
+      ISIS_OBS_PROM_HOSTNAME: '*'
+      ISIS_OBS_PROM_PORT: '9464'
     volumes:
       # NOT :ro — Isis writes the settings file back on load.
       - ./isis/isis.json:/app/config/isis.json

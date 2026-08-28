@@ -1,0 +1,138 @@
+{
+  "uid": "isis-api",
+  "title": "Isis — API",
+  "tags": ["isis", "api", "http"],
+  "schemaVersion": 39,
+  "timezone": "",
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "30s",
+  "editable": true,
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": { "text": "Prometheus", "value": "prometheus" },
+        "hide": 0
+      },
+      {
+        "name": "route",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "query": "label_values(http_server_request_duration_seconds_count{service=\"isis-server\"}, http_route)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Request Rate by Route",
+      "id": 1,
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum by (http_route) (rate(http_server_request_duration_seconds_count{service=\"isis-server\",http_route=~\"$route\"}[5m]))", "legendFormat": "{{http_route}}", "refId": "A" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Request Rate by Status Code",
+      "id": 2,
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "drawStyle": "line", "fillOpacity": 20, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum by (http_response_status_code) (rate(http_server_request_duration_seconds_count{service=\"isis-server\",http_route=~\"$route\"}[5m]))", "legendFormat": "{{http_response_status_code}}", "refId": "A" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Request Latency Quantiles (p50 / p95 / p99)",
+      "id": 3,
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "histogram_quantile(0.50, sum(rate(http_server_request_duration_seconds_bucket{service=\"isis-server\",http_route=~\"$route\"}[5m])) by (le))", "legendFormat": "p50", "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "histogram_quantile(0.95, sum(rate(http_server_request_duration_seconds_bucket{service=\"isis-server\",http_route=~\"$route\"}[5m])) by (le))", "legendFormat": "p95", "refId": "B" },
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "histogram_quantile(0.99, sum(rate(http_server_request_duration_seconds_bucket{service=\"isis-server\",http_route=~\"$route\"}[5m])) by (le))", "legendFormat": "p99", "refId": "C" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "p95 Latency by Route",
+      "id": 4,
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "histogram_quantile(0.95, sum(rate(http_server_request_duration_seconds_bucket{service=\"isis-server\",http_route=~\"$route\"}[5m])) by (le, http_route))", "legendFormat": "{{http_route}}", "refId": "A" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Active Requests",
+      "id": 5,
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "purple" } }, "overrides": [] },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "textMode": "auto"
+      },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(http_server_active_requests{service=\"isis-server\"})", "refId": "A" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Route Matches vs Unmatched",
+      "id": 6,
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 6, "w": 9, "x": 6, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(rate(watson_route_matches{service=\"isis-server\"}[5m]))", "legendFormat": "matched", "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(rate(watson_route_unmatched{service=\"isis-server\"}[5m]))", "legendFormat": "unmatched", "refId": "B" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Auth Requests & Exceptions",
+      "id": 7,
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 6, "w": 9, "x": 15, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [
+        { "matcher": { "id": "byName", "options": "exceptions" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] }
+      ] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(rate(watson_auth_requests{service=\"isis-server\"}[5m]))", "legendFormat": "auth requests", "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(rate(watson_server_exceptions{service=\"isis-server\"}[5m]))", "legendFormat": "exceptions", "refId": "B" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Connections Active",
+      "id": 8,
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 22 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "watson_server_connections_active{service=\"isis-server\"}", "legendFormat": "connections", "refId": "A" }
+      ]
+    }
+  ]
+}

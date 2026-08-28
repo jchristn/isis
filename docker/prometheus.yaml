@@ -8,12 +8,13 @@ global:
   metric_name_validation_scheme: legacy
 
 scrape_configs:
-  # Isis REST server. Watson 7.1 serves its in-process Prometheus scrape endpoint at /metrics on the
-  # same listener the API uses.
+  # Isis REST server exposes its OpenTelemetry Prometheus endpoint on a dedicated in-process port (9464),
+  # separate from the API listener (8700). Watson's built-in telemetry is collected by the in-process OTel
+  # MeterProvider and served here alongside the custom Isis instruments.
   - job_name: 'isis-server'
     metrics_path: '/metrics'
     static_configs:
-      - targets: ['isis-server:8700']
+      - targets: ['isis-server:9464']
         labels:
           service: 'isis-server'
 

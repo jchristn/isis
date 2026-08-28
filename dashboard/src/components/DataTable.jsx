@@ -29,7 +29,14 @@ function DataTable({
   const [sortKey, setSortKey] = useState(null);
   const [sortDir, setSortDir] = useState('asc');
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(initialPageSize);
+  const [pageSize, setPageSize] = useState(() => {
+    try {
+      const stored = parseInt(localStorage.getItem(`isis_pagesize_${tableId}`), 10);
+      return Number.isFinite(stored) && stored > 0 ? stored : initialPageSize;
+    } catch {
+      return initialPageSize;
+    }
+  });
   const [showColumnMenu, setShowColumnMenu] = useState(false);
   const columnMenuRef = useRef(null);
 
@@ -55,6 +62,19 @@ function DataTable({
   useEffect(() => {
     setPage(1);
   }, [data.length, pageSize, sortKey, sortDir]);
+
+  // Persist the chosen page size per table so it is restored on the next visit.
+  const changePageSize = useCallback(
+    (size) => {
+      setPageSize(size);
+      try {
+        localStorage.setItem(`isis_pagesize_${tableId}`, String(size));
+      } catch {
+        /* ignore storage failures */
+      }
+    },
+    [tableId]
+  );
 
   const toggleColumn = useCallback(
     (key) => {
@@ -151,7 +171,7 @@ function DataTable({
         pageSize={pageSize}
         totalRecords={sorted.length}
         onPageChange={setPage}
-        onPageSizeChange={setPageSize}
+        onPageSizeChange={changePageSize}
         toolbarLeft={toolbarLeft}
         toolbarRight={toolbarRight}
         refresh={refreshButton}

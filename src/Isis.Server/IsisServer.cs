@@ -101,6 +101,16 @@ namespace Isis.Server
             webserverSettings.Port = settings.Rest.Port;
             webserverSettings.Ssl.Enable = settings.Rest.Ssl;
 
+            // Enable Watson's built-in OpenTelemetry instrumentation (metrics + traces). The signals are
+            // emitted into Watson's default meter/activity source ("Watson"); the in-process ObservabilityHost
+            // subscribes to them by name and exports metrics via Prometheus and traces via OTLP. Watson's own
+            // Prometheus endpoint stays off — the OTel MeterProvider owns the scrape endpoint on port 9464.
+            webserverSettings.Telemetry.Enable = true;
+            webserverSettings.Telemetry.EnableMetrics = true;
+            webserverSettings.Telemetry.EnableTraces = true;
+            webserverSettings.Telemetry.PropagateContext = true;
+            webserverSettings.Telemetry.Prometheus.Enable = false;
+
             _Server = new Webserver(webserverSettings, DefaultRouteAsync);
         }
 

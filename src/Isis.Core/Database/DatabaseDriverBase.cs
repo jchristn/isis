@@ -3,9 +3,11 @@ namespace Isis.Core.Database
     using System;
     using System.Collections.Generic;
     using System.Data;
+    using System.Diagnostics;
     using System.Threading;
     using System.Threading.Tasks;
     using Isis.Core.Database.Interfaces;
+    using Isis.Core.Observability;
 
     /// <summary>
     /// Abstract base class for Isis relational database drivers. Concrete drivers implement the raw
@@ -112,21 +114,119 @@ namespace Isis.Core.Database
         public abstract Task InitializeAsync(CancellationToken token = default);
 
         /// <summary>
-        /// Execute a single SQL statement and return the resulting rows as a table of string values.
+        /// Execute a single SQL statement and return the resulting rows as a table of string values. This is the
+        /// instrumented entry point every caller uses; it wraps the provider-specific
+        /// <see cref="ExecuteQueryCoreAsync"/> with metrics (duration, count, active gauge, rows returned) and a
+        /// client span, then delegates. Non-virtual so the instrumentation is applied uniformly across providers.
         /// </summary>
         /// <param name="query">The SQL statement.</param>
         /// <param name="isWrite">When true, the statement is executed within a transaction.</param>
         /// <param name="token">Cancellation token.</param>
         /// <returns>The result table.</returns>
-        public abstract Task<DataTable> ExecuteQueryAsync(string query, bool isWrite = false, CancellationToken token = default);
+        public async Task<DataTable> ExecuteQueryAsync(string query, bool isWrite = false, CancellationToken token = default)
+        {
+            string dbOperation = IsisTelemetry.DeriveSqlOperation(query);
+            long telemetryStart = Stopwatch.GetTimestamp();
+            string telemetryOutcome = "success";
+            int telemetryRows = -1;
+            IsisTelemetry.DbActiveQueries.Add(1, new TagList { { IsisTelemetry.TagDbOperation, dbOperation } });
+
+            using Activity? dbActivity = IsisTelemetry.ActivitySource.StartActivity("db " + dbOperation, ActivityKind.Client);
+            if (dbActivity != null)
+            {
+                dbActivity.SetTag("db.system", Settings.Type.ToString().ToLowerInvariant());
+                dbActivity.SetTag(IsisTelemetry.TagDbOperation, dbOperation);
+            }
+
+            try
+            {
+                DataTable result = await ExecuteQueryCoreAsync(query, isWrite, token).ConfigureAwait(false);
+                telemetryRows = result.Rows.Count;
+                return result;
+            }
+            catch (Exception telemetryException)
+            {
+                telemetryOutcome = "error";
+                IsisTelemetry.RecordException(dbActivity, telemetryException);
+                throw;
+            }
+            finally
+            {
+                double seconds = Stopwatch.GetElapsedTime(telemetryStart).TotalSeconds;
+                TagList tags = new TagList { { IsisTelemetry.TagDbOperation, dbOperation }, { IsisTelemetry.TagOutcome, telemetryOutcome } };
+                IsisTelemetry.DbQueryDuration.Record(seconds, tags);
+                IsisTelemetry.DbQueries.Add(1, tags);
+                IsisTelemetry.DbActiveQueries.Add(-1, new TagList { { IsisTelemetry.TagDbOperation, dbOperation } });
+                if (telemetryRows >= 0)
+                    IsisTelemetry.DbRowsReturned.Record(telemetryRows, new TagList { { IsisTelemetry.TagDbOperation, dbOperation } });
+            }
+        }
 
         /// <summary>
-        /// Execute multiple SQL statements within a single transaction.
+        /// Execute multiple SQL statements within a single transaction. Instrumented entry point wrapping the
+        /// provider-specific <see cref="ExecuteQueriesCoreAsync"/> with the same metrics and span as
+        /// <see cref="ExecuteQueryAsync"/>, tagged as a batch operation.
         /// </summary>
         /// <param name="queries">The SQL statements.</param>
         /// <param name="token">Cancellation token.</param>
         /// <returns>The result table of the final statement.</returns>
-        public abstract Task<DataTable> ExecuteQueriesAsync(IEnumerable<string> queries, CancellationToken token = default);
+        public async Task<DataTable> ExecuteQueriesAsync(IEnumerable<string> queries, CancellationToken token = default)
+        {
+            const string dbOperation = "batch";
+            long telemetryStart = Stopwatch.GetTimestamp();
+            string telemetryOutcome = "success";
+            int telemetryRows = -1;
+            IsisTelemetry.DbActiveQueries.Add(1, new TagList { { IsisTelemetry.TagDbOperation, dbOperation } });
+
+            using Activity? dbActivity = IsisTelemetry.ActivitySource.StartActivity("db " + dbOperation, ActivityKind.Client);
+            if (dbActivity != null)
+            {
+                dbActivity.SetTag("db.system", Settings.Type.ToString().ToLowerInvariant());
+                dbActivity.SetTag(IsisTelemetry.TagDbOperation, dbOperation);
+            }
+
+            try
+            {
+                DataTable result = await ExecuteQueriesCoreAsync(queries, token).ConfigureAwait(false);
+                telemetryRows = result.Rows.Count;
+                return result;
+            }
+            catch (Exception telemetryException)
+            {
+                telemetryOutcome = "error";
+                IsisTelemetry.RecordException(dbActivity, telemetryException);
+                throw;
+            }
+            finally
+            {
+                double seconds = Stopwatch.GetElapsedTime(telemetryStart).TotalSeconds;
+                TagList tags = new TagList { { IsisTelemetry.TagDbOperation, dbOperation }, { IsisTelemetry.TagOutcome, telemetryOutcome } };
+                IsisTelemetry.DbQueryDuration.Record(seconds, tags);
+                IsisTelemetry.DbQueries.Add(1, tags);
+                IsisTelemetry.DbActiveQueries.Add(-1, new TagList { { IsisTelemetry.TagDbOperation, dbOperation } });
+                if (telemetryRows >= 0)
+                    IsisTelemetry.DbRowsReturned.Record(telemetryRows, new TagList { { IsisTelemetry.TagDbOperation, dbOperation } });
+            }
+        }
+
+        /// <summary>
+        /// Provider-specific execution of a single SQL statement. Implemented by each concrete driver and called
+        /// only by the instrumented <see cref="ExecuteQueryAsync"/> template method.
+        /// </summary>
+        /// <param name="query">The SQL statement.</param>
+        /// <param name="isWrite">When true, the statement is executed within a transaction.</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>The result table.</returns>
+        public abstract Task<DataTable> ExecuteQueryCoreAsync(string query, bool isWrite = false, CancellationToken token = default);
+
+        /// <summary>
+        /// Provider-specific execution of multiple SQL statements within a single transaction. Implemented by each
+        /// concrete driver and called only by the instrumented <see cref="ExecuteQueriesAsync"/> template method.
+        /// </summary>
+        /// <param name="queries">The SQL statements.</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>The result table of the final statement.</returns>
+        public abstract Task<DataTable> ExecuteQueriesCoreAsync(IEnumerable<string> queries, CancellationToken token = default);
 
         /// <summary>
         /// Build the provider-specific pagination clause for an ordered query. The default is

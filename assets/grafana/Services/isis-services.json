@@ -1,0 +1,140 @@
+{
+  "uid": "isis-services",
+  "title": "Isis — Services",
+  "tags": ["isis", "services", "memory", "inference", "chat", "embedding"],
+  "schemaVersion": 39,
+  "timezone": "",
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "30s",
+  "editable": true,
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": { "text": "Prometheus", "value": "prometheus" },
+        "hide": 0
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Service Request Rate",
+      "id": 1,
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(rate(isis_memory_search{service=\"isis-server\"}[5m]))", "legendFormat": "memory search", "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(rate(isis_memory_upsert{service=\"isis-server\"}[5m]))", "legendFormat": "memory upsert", "refId": "B" },
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(rate(isis_chat_ask{service=\"isis-server\"}[5m]))", "legendFormat": "chat ask", "refId": "C" },
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(rate(isis_inference_requests{service=\"isis-server\"}[5m]))", "legendFormat": "inference", "refId": "D" },
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(rate(isis_embedding_requests{service=\"isis-server\"}[5m]))", "legendFormat": "embedding", "refId": "E" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Service Error Ratio",
+      "id": 2,
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit", "min": 0,
+          "custom": { "drawStyle": "line", "fillOpacity": 10 },
+          "color": { "mode": "palette-classic" }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(rate(isis_memory_search{service=\"isis-server\",isis_outcome=\"error\"}[5m])) / clamp_min(sum(rate(isis_memory_search{service=\"isis-server\"}[5m])), 1e-9)", "legendFormat": "memory search", "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(rate(isis_memory_upsert{service=\"isis-server\",isis_outcome=\"error\"}[5m])) / clamp_min(sum(rate(isis_memory_upsert{service=\"isis-server\"}[5m])), 1e-9)", "legendFormat": "memory upsert", "refId": "B" },
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(rate(isis_chat_ask{service=\"isis-server\",isis_outcome=\"error\"}[5m])) / clamp_min(sum(rate(isis_chat_ask{service=\"isis-server\"}[5m])), 1e-9)", "legendFormat": "chat ask", "refId": "C" },
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(rate(isis_inference_requests{service=\"isis-server\",isis_outcome=\"error\"}[5m])) / clamp_min(sum(rate(isis_inference_requests{service=\"isis-server\"}[5m])), 1e-9)", "legendFormat": "inference", "refId": "D" },
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(rate(isis_embedding_requests{service=\"isis-server\",isis_outcome=\"error\"}[5m])) / clamp_min(sum(rate(isis_embedding_requests{service=\"isis-server\"}[5m])), 1e-9)", "legendFormat": "embedding", "refId": "E" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory & Chat Latency (p95)",
+      "id": 3,
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "histogram_quantile(0.95, sum(rate(isis_memory_search_duration_seconds_bucket{service=\"isis-server\"}[5m])) by (le))", "legendFormat": "memory search p95", "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "histogram_quantile(0.95, sum(rate(isis_memory_upsert_duration_seconds_bucket{service=\"isis-server\"}[5m])) by (le))", "legendFormat": "memory upsert p95", "refId": "B" },
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "histogram_quantile(0.95, sum(rate(isis_chat_ask_duration_seconds_bucket{service=\"isis-server\"}[5m])) by (le))", "legendFormat": "chat ask p95", "refId": "C" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Inference & Embedding Latency (p95)",
+      "id": 4,
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "histogram_quantile(0.95, sum(rate(isis_inference_duration_seconds_bucket{service=\"isis-server\"}[5m])) by (le))", "legendFormat": "inference p95", "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "histogram_quantile(0.95, sum(rate(isis_inference_ttfb_duration_seconds_bucket{service=\"isis-server\"}[5m])) by (le))", "legendFormat": "inference TTFB p95", "refId": "B" },
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "histogram_quantile(0.95, sum(rate(isis_embedding_duration_seconds_bucket{service=\"isis-server\"}[5m])) by (le))", "legendFormat": "embedding p95", "refId": "C" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Search Result Size (quantiles)",
+      "id": 5,
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "histogram_quantile(0.50, sum(rate(isis_memory_search_results_bucket{service=\"isis-server\"}[5m])) by (le))", "legendFormat": "results p50", "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "histogram_quantile(0.95, sum(rate(isis_memory_search_results_bucket{service=\"isis-server\"}[5m])) by (le))", "legendFormat": "results p95", "refId": "B" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Chat Context Memories (quantiles)",
+      "id": 6,
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "histogram_quantile(0.50, sum(rate(isis_chat_context_memories_bucket{service=\"isis-server\"}[5m])) by (le))", "legendFormat": "context p50", "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "histogram_quantile(0.95, sum(rate(isis_chat_context_memories_bucket{service=\"isis-server\"}[5m])) by (le))", "legendFormat": "context p95", "refId": "B" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Inference Stream Chunks Rate",
+      "id": 7,
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "cps", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(rate(isis_inference_stream_chunks{service=\"isis-server\"}[5m]))", "legendFormat": "stream chunks/sec", "refId": "A" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory Delete Rate",
+      "id": 8,
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 24 },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum by (isis_outcome) (rate(isis_memory_delete{service=\"isis-server\"}[5m]))", "legendFormat": "delete {{isis_outcome}}", "refId": "A" }
+      ]
+    }
+  ]
+}

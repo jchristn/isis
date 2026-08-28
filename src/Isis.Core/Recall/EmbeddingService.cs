@@ -2,6 +2,7 @@ namespace Isis.Core.Recall
 {
     using System;
     using System.Collections.Generic;
+    using System.Diagnostics;
     using System.Net.Http;
     using System.Text;
     using System.Text.Json;
@@ -9,6 +10,7 @@ namespace Isis.Core.Recall
     using System.Threading.Tasks;
     using Isis.Core.Enums;
     using Isis.Core.Models;
+    using Isis.Core.Observability;
 
     /// <summary>
     /// Calls a configured embedding endpoint to turn text into a vector. Supports OpenAI-compatible and
@@ -57,27 +59,57 @@ namespace Isis.Core.Recall
             string path = ollama ? "/api/embeddings" : "/v1/embeddings";
             object payload = ollama ? new { model = model, prompt = text } : (object)new { model = model, input = text };
 
-            using CancellationTokenSource cts = CancellationTokenSource.CreateLinkedTokenSource(token);
-            cts.CancelAfter(endpoint.TimeoutMs > 0 ? endpoint.TimeoutMs : 60000);
+            string endpointHost = ResolveHost(endpoint.GetBaseUrl());
+            long telemetryStart = Stopwatch.GetTimestamp();
+            string telemetryOutcome = "success";
+            using Activity? activity = IsisTelemetry.ActivitySource.StartActivity("embedding", ActivityKind.Client);
+            activity?.SetTag(IsisTelemetry.TagEndpoint, endpointHost);
+            activity?.SetTag(IsisTelemetry.TagModel, model);
 
-            using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, endpoint.GetBaseUrl() + path);
-            request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-            if (!string.IsNullOrEmpty(endpoint.ApiKey))
+            try
             {
-                if (endpoint.ApiFormat == ApiFormatEnum.Gemini) request.Headers.TryAddWithoutValidation("x-goog-api-key", endpoint.ApiKey);
-                else request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + endpoint.ApiKey);
+                using CancellationTokenSource cts = CancellationTokenSource.CreateLinkedTokenSource(token);
+                cts.CancelAfter(endpoint.TimeoutMs > 0 ? endpoint.TimeoutMs : 60000);
+
+                using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, endpoint.GetBaseUrl() + path);
+                request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+                if (!string.IsNullOrEmpty(endpoint.ApiKey))
+                {
+                    if (endpoint.ApiFormat == ApiFormatEnum.Gemini) request.Headers.TryAddWithoutValidation("x-goog-api-key", endpoint.ApiKey);
+                    else request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + endpoint.ApiKey);
+                }
+
+                HttpResponseMessage response = await _HttpClient.SendAsync(request, cts.Token).ConfigureAwait(false);
+                string body = await response.Content.ReadAsStringAsync(cts.Token).ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode) throw new InvalidOperationException("Embedding endpoint returned " + (int)response.StatusCode + ": " + body);
+
+                return ParseVector(body, ollama);
             }
-
-            HttpResponseMessage response = await _HttpClient.SendAsync(request, cts.Token).ConfigureAwait(false);
-            string body = await response.Content.ReadAsStringAsync(cts.Token).ConfigureAwait(false);
-            if (!response.IsSuccessStatusCode) throw new InvalidOperationException("Embedding endpoint returned " + (int)response.StatusCode + ": " + body);
-
-            return ParseVector(body, ollama);
+            catch (Exception e)
+            {
+                telemetryOutcome = "error";
+                IsisTelemetry.RecordException(activity, e);
+                throw;
+            }
+            finally
+            {
+                double seconds = Stopwatch.GetElapsedTime(telemetryStart).TotalSeconds;
+                TagList tags = new TagList { { IsisTelemetry.TagEndpoint, endpointHost }, { IsisTelemetry.TagModel, model }, { IsisTelemetry.TagOutcome, telemetryOutcome } };
+                IsisTelemetry.EmbeddingDuration.Record(seconds, tags);
+                IsisTelemetry.EmbeddingRequests.Add(1, tags);
+            }
         }
 
         #endregion
 
         #region Private-Methods
+
+        private static string ResolveHost(string url)
+        {
+            if (string.IsNullOrEmpty(url)) return "unknown";
+            if (Uri.TryCreate(url, UriKind.Absolute, out Uri? uri)) return uri.Host;
+            return "unknown";
+        }
 
         private static float[] ParseVector(string json, bool ollama)
         {

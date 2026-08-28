@@ -2,12 +2,14 @@ namespace Isis.Core.Recall
 {
     using System;
     using System.Collections.Generic;
+    using System.Diagnostics;
     using System.Net.Http;
     using System.Runtime.CompilerServices;
     using System.Threading;
     using System.Threading.Tasks;
     using Isis.Core.Enums;
     using Isis.Core.Models;
+    using Isis.Core.Observability;
     using PolyPrompt.Clients;
     using PolyPrompt.Models;
 
@@ -55,10 +57,35 @@ namespace Isis.Core.Recall
         {
             if (endpoint == null) throw new ArgumentNullException(nameof(endpoint));
 
-            using CompletionClientBase client = CreateClient(endpoint);
-            ChatResponse response = await client.ChatAsync(userPrompt, CreateOptions(systemPrompt), token).ConfigureAwait(false);
-            if (!response.Success) throw new InvalidOperationException(response.Error ?? "Inference request failed.");
-            return response.Text ?? string.Empty;
+            string endpointHost = ResolveHost(endpoint.GetBaseUrl());
+            string model = string.IsNullOrEmpty(endpoint.Model) ? "default" : endpoint.Model!;
+            long telemetryStart = Stopwatch.GetTimestamp();
+            string telemetryOutcome = "success";
+            using Activity? activity = IsisTelemetry.ActivitySource.StartActivity("inference", ActivityKind.Client);
+            activity?.SetTag(IsisTelemetry.TagEndpoint, endpointHost);
+            activity?.SetTag(IsisTelemetry.TagModel, model);
+            activity?.SetTag(IsisTelemetry.TagStreaming, false);
+
+            try
+            {
+                using CompletionClientBase client = CreateClient(endpoint);
+                ChatResponse response = await client.ChatAsync(userPrompt, CreateOptions(systemPrompt), token).ConfigureAwait(false);
+                if (!response.Success) throw new InvalidOperationException(response.Error ?? "Inference request failed.");
+                return response.Text ?? string.Empty;
+            }
+            catch (Exception e)
+            {
+                telemetryOutcome = "error";
+                IsisTelemetry.RecordException(activity, e);
+                throw;
+            }
+            finally
+            {
+                double seconds = Stopwatch.GetElapsedTime(telemetryStart).TotalSeconds;
+                TagList tags = new TagList { { IsisTelemetry.TagEndpoint, endpointHost }, { IsisTelemetry.TagModel, model }, { IsisTelemetry.TagStreaming, false }, { IsisTelemetry.TagOutcome, telemetryOutcome } };
+                IsisTelemetry.InferenceDuration.Record(seconds, tags);
+                IsisTelemetry.InferenceRequests.Add(1, tags);
+            }
         }
 
         /// <summary>
@@ -77,54 +104,92 @@ namespace Isis.Core.Recall
         {
             if (endpoint == null) throw new ArgumentNullException(nameof(endpoint));
 
-            using CompletionClientBase client = CreateClient(endpoint);
-            ChatStreamingResponse response = await client.ChatStreamingAsync(userPrompt, CreateOptions(systemPrompt), token).ConfigureAwait(false);
-            if (!response.Success) throw new InvalidOperationException(response.Error ?? "Streaming inference request failed.");
+            string endpointHost = ResolveHost(endpoint.GetBaseUrl());
+            string model = string.IsNullOrEmpty(endpoint.Model) ? "default" : endpoint.Model!;
+            long telemetryStart = Stopwatch.GetTimestamp();
+            string telemetryOutcome = "error";
+            bool ttfbRecorded = false;
+            TagList idTags = new TagList { { IsisTelemetry.TagEndpoint, endpointHost }, { IsisTelemetry.TagModel, model } };
 
-            int promptTokens = 0;
-            int completionTokens = 0;
+            using Activity? activity = IsisTelemetry.ActivitySource.StartActivity("inference", ActivityKind.Client);
+            activity?.SetTag(IsisTelemetry.TagEndpoint, endpointHost);
+            activity?.SetTag(IsisTelemetry.TagModel, model);
+            activity?.SetTag(IsisTelemetry.TagStreaming, true);
 
-            if (response.Chunks != null)
+            try
             {
-                await foreach (ChatStreamingChunk chunk in response.Chunks.WithCancellation(token).ConfigureAwait(false))
-                {
-                    if (chunk.Usage != null)
-                    {
-                        if (chunk.Usage.PromptTokens > 0) promptTokens = chunk.Usage.PromptTokens.Value;
-                        if (chunk.Usage.CompletionTokens > 0) completionTokens = chunk.Usage.CompletionTokens.Value;
-                    }
+                using CompletionClientBase client = CreateClient(endpoint);
+                ChatStreamingResponse response = await client.ChatStreamingAsync(userPrompt, CreateOptions(systemPrompt), token).ConfigureAwait(false);
+                if (!response.Success) throw new InvalidOperationException(response.Error ?? "Streaming inference request failed.");
 
-                    if (!string.IsNullOrEmpty(chunk.Text) || !string.IsNullOrEmpty(chunk.ReasoningText))
+                int promptTokens = 0;
+                int completionTokens = 0;
+
+                if (response.Chunks != null)
+                {
+                    await foreach (ChatStreamingChunk chunk in response.Chunks.WithCancellation(token).ConfigureAwait(false))
                     {
-                        yield return new InferenceChunk { Content = chunk.Text, Reasoning = chunk.ReasoningText };
+                        if (chunk.Usage != null)
+                        {
+                            if (chunk.Usage.PromptTokens > 0) promptTokens = chunk.Usage.PromptTokens.Value;
+                            if (chunk.Usage.CompletionTokens > 0) completionTokens = chunk.Usage.CompletionTokens.Value;
+                        }
+
+                        if (!string.IsNullOrEmpty(chunk.Text) || !string.IsNullOrEmpty(chunk.ReasoningText))
+                        {
+                            if (!ttfbRecorded && !string.IsNullOrEmpty(chunk.Text))
+                            {
+                                IsisTelemetry.InferenceTtfbDuration.Record(Stopwatch.GetElapsedTime(telemetryStart).TotalSeconds, idTags);
+                                ttfbRecorded = true;
+                            }
+
+                            IsisTelemetry.InferenceStreamChunks.Add(1, idTags);
+                            yield return new InferenceChunk { Content = chunk.Text, Reasoning = chunk.ReasoningText };
+                        }
                     }
                 }
+
+                if (response.Usage != null)
+                {
+                    if (response.Usage.PromptTokens > 0) promptTokens = response.Usage.PromptTokens.Value;
+                    if (response.Usage.CompletionTokens > 0) completionTokens = response.Usage.CompletionTokens.Value;
+                }
+
+                double ttft = response.TimeToFirstTokenMs;
+                double lastToken = response.TimeToLastTokenMs;
+                double generation = lastToken > ttft ? lastToken - ttft : Math.Max(0.0, response.OverallRuntimeMs - ttft);
+
+                yield return new InferenceChunk
+                {
+                    Done = true,
+                    PromptTokens = promptTokens,
+                    CompletionTokens = completionTokens,
+                    TimeToFirstTokenMs = ttft,
+                    GenerationMs = generation,
+                    TokensPerSecond = response.OverallTokensPerSecond
+                };
+
+                telemetryOutcome = "success";
             }
-
-            if (response.Usage != null)
+            finally
             {
-                if (response.Usage.PromptTokens > 0) promptTokens = response.Usage.PromptTokens.Value;
-                if (response.Usage.CompletionTokens > 0) completionTokens = response.Usage.CompletionTokens.Value;
+                double seconds = Stopwatch.GetElapsedTime(telemetryStart).TotalSeconds;
+                TagList tags = new TagList { { IsisTelemetry.TagEndpoint, endpointHost }, { IsisTelemetry.TagModel, model }, { IsisTelemetry.TagStreaming, true }, { IsisTelemetry.TagOutcome, telemetryOutcome } };
+                IsisTelemetry.InferenceDuration.Record(seconds, tags);
+                IsisTelemetry.InferenceRequests.Add(1, tags);
             }
-
-            double ttft = response.TimeToFirstTokenMs;
-            double lastToken = response.TimeToLastTokenMs;
-            double generation = lastToken > ttft ? lastToken - ttft : Math.Max(0.0, response.OverallRuntimeMs - ttft);
-
-            yield return new InferenceChunk
-            {
-                Done = true,
-                PromptTokens = promptTokens,
-                CompletionTokens = completionTokens,
-                TimeToFirstTokenMs = ttft,
-                GenerationMs = generation,
-                TokensPerSecond = response.OverallTokensPerSecond
-            };
         }
 
         #endregion
 
         #region Private-Methods
+
+        private static string ResolveHost(string url)
+        {
+            if (string.IsNullOrEmpty(url)) return "unknown";
+            if (Uri.TryCreate(url, UriKind.Absolute, out Uri? uri)) return uri.Host;
+            return "unknown";
+        }
 
         private CompletionClientBase CreateClient(ModelEndpoint endpoint)
         {

@@ -39,5 +39,19 @@
     "captureHeaders": true,
     "captureBodies": true,
     "maxBodyBytes": 16384
+  },
+  "observability": {
+    "enabled": true,
+    "serviceName": "isis-server",
+    "prometheusEnabled": true,
+    "prometheusHostname": "*",
+    "prometheusPort": 9464,
+    "prometheusPath": "/metrics",
+    "tracingEnabled": true,
+    "otlpEndpoint": "http://tempo:4317",
+    "otlpProtocol": "grpc",
+    "samplingRatio": 1,
+    "includeRuntimeMetrics": true,
+    "includeProcessMetrics": true
   }
 }

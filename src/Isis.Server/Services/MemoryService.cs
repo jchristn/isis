@@ -2,11 +2,13 @@ namespace Isis.Server.Services
 {
     using System;
     using System.Collections.Generic;
+    using System.Diagnostics;
     using System.Linq;
     using System.Threading;
     using System.Threading.Tasks;
     using Isis.Core.Database;
     using Isis.Core.Models;
+    using Isis.Core.Observability;
     using Isis.Core.Recall;
     using Isis.Core.Stores;
 
@@ -60,44 +62,65 @@ namespace Isis.Server.Services
             if (category == null) throw new ArgumentNullException(nameof(category));
             if (incoming == null) throw new ArgumentNullException(nameof(incoming));
 
-            IMemoryStore store = MemoryStoreFactory.Create(scope, _StoreOptions);
-            await EnsureScopeAsync(store, scope, token).ConfigureAwait(false);
+            long telemetryStart = Stopwatch.GetTimestamp();
+            string telemetryOutcome = "success";
+            using Activity? activity = IsisTelemetry.ActivitySource.StartActivity("memory upsert", ActivityKind.Internal);
+            activity?.SetTag(IsisTelemetry.TagScope, scope.Id);
 
-            Memory? existing = await _Database.Memories.ReadBySlugAsync(scope.TenantId, scope.Id, category.Id, incoming.Slug, token).ConfigureAwait(false);
-            Memory target = existing ?? incoming;
-
-            if (existing != null)
+            try
             {
-                existing.Title = incoming.Title;
-                existing.Summary = incoming.Summary;
-                existing.Body = incoming.Body;
-                existing.Type = incoming.Type;
-                existing.Tags = incoming.Tags;
-                existing.Links = incoming.Links;
-                existing.Metadata = incoming.Metadata;
-                existing.Author = incoming.Author;
-                existing.SessionId = incoming.SessionId;
-                existing.Model = incoming.Model;
-                existing.Version = existing.Version + 1;
+                IMemoryStore store = MemoryStoreFactory.Create(scope, _StoreOptions);
+                await EnsureScopeAsync(store, scope, token).ConfigureAwait(false);
+
+                Memory? existing = await _Database.Memories.ReadBySlugAsync(scope.TenantId, scope.Id, category.Id, incoming.Slug, token).ConfigureAwait(false);
+                Memory target = existing ?? incoming;
+
+                if (existing != null)
+                {
+                    existing.Title = incoming.Title;
+                    existing.Summary = incoming.Summary;
+                    existing.Body = incoming.Body;
+                    existing.Type = incoming.Type;
+                    existing.Tags = incoming.Tags;
+                    existing.Links = incoming.Links;
+                    existing.Metadata = incoming.Metadata;
+                    existing.Author = incoming.Author;
+                    existing.SessionId = incoming.SessionId;
+                    existing.Model = incoming.Model;
+                    existing.Version = existing.Version + 1;
+                }
+                else
+                {
+                    incoming.TenantId = scope.TenantId;
+                    incoming.ScopeId = scope.Id;
+                    incoming.CategoryId = category.Id;
+                }
+
+                float[]? embedding = null;
+                if (store.Capabilities.RequiresEmbedding)
+                {
+                    embedding = await EmbedAsync(scope, target.Body, token).ConfigureAwait(false);
+                }
+
+                target.StoreKey = await store.UpsertAsync(scope, target, embedding, token).ConfigureAwait(false);
+
+                return existing != null
+                    ? await _Database.Memories.UpdateAsync(target, token).ConfigureAwait(false)
+                    : await _Database.Memories.CreateAsync(target, token).ConfigureAwait(false);
             }
-            else
+            catch (Exception e)
             {
-                incoming.TenantId = scope.TenantId;
-                incoming.ScopeId = scope.Id;
-                incoming.CategoryId = category.Id;
+                telemetryOutcome = "error";
+                IsisTelemetry.RecordException(activity, e);
+                throw;
             }
-
-            float[]? embedding = null;
-            if (store.Capabilities.RequiresEmbedding)
+            finally
             {
-                embedding = await EmbedAsync(scope, target.Body, token).ConfigureAwait(false);
+                double seconds = Stopwatch.GetElapsedTime(telemetryStart).TotalSeconds;
+                TagList tags = new TagList { { IsisTelemetry.TagOutcome, telemetryOutcome } };
+                IsisTelemetry.MemoryUpsertDuration.Record(seconds, tags);
+                IsisTelemetry.MemoryUpserts.Add(1, tags);
             }
-
-            target.StoreKey = await store.UpsertAsync(scope, target, embedding, token).ConfigureAwait(false);
-
-            return existing != null
-                ? await _Database.Memories.UpdateAsync(target, token).ConfigureAwait(false)
-                : await _Database.Memories.CreateAsync(target, token).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -112,9 +135,28 @@ namespace Isis.Server.Services
             if (scope == null) throw new ArgumentNullException(nameof(scope));
             if (memory == null) throw new ArgumentNullException(nameof(memory));
 
-            IMemoryStore store = MemoryStoreFactory.Create(scope, _StoreOptions);
-            await store.DeleteAsync(scope, memory, token).ConfigureAwait(false);
-            return await _Database.Memories.DeleteAsync(scope.TenantId, memory.Id, token).ConfigureAwait(false);
+            long telemetryStart = Stopwatch.GetTimestamp();
+            string telemetryOutcome = "success";
+            using Activity? activity = IsisTelemetry.ActivitySource.StartActivity("memory delete", ActivityKind.Internal);
+            activity?.SetTag(IsisTelemetry.TagScope, scope.Id);
+            activity?.SetTag(IsisTelemetry.TagOperation, "memory");
+
+            try
+            {
+                IMemoryStore store = MemoryStoreFactory.Create(scope, _StoreOptions);
+                await store.DeleteAsync(scope, memory, token).ConfigureAwait(false);
+                return await _Database.Memories.DeleteAsync(scope.TenantId, memory.Id, token).ConfigureAwait(false);
+            }
+            catch (Exception e)
+            {
+                telemetryOutcome = "error";
+                IsisTelemetry.RecordException(activity, e);
+                throw;
+            }
+            finally
+            {
+                RecordMemoryDelete("memory", telemetryStart, telemetryOutcome);
+            }
         }
 
         /// <summary>
@@ -128,24 +170,43 @@ namespace Isis.Server.Services
         {
             if (scope == null) throw new ArgumentNullException(nameof(scope));
 
-            IMemoryStore store = MemoryStoreFactory.Create(scope, _StoreOptions);
-            await store.DeleteScopeAsync(scope, token).ConfigureAwait(false);
+            long telemetryStart = Stopwatch.GetTimestamp();
+            string telemetryOutcome = "success";
+            using Activity? activity = IsisTelemetry.ActivitySource.StartActivity("memory delete_scope", ActivityKind.Internal);
+            activity?.SetTag(IsisTelemetry.TagScope, scope.Id);
+            activity?.SetTag(IsisTelemetry.TagOperation, "scope");
 
-            while (true)
+            try
             {
-                EnumerationResult<Memory> page = await _Database.Memories.EnumerateAsync(scope.TenantId, scope.Id, null, new EnumerationQuery { MaxResults = 500 }, token).ConfigureAwait(false);
-                if (page.Objects.Count == 0) break;
-                await _Database.Memories.DeleteManyAsync(scope.TenantId, page.Objects.Select(m => m.Id).ToList(), token).ConfigureAwait(false);
-            }
+                IMemoryStore store = MemoryStoreFactory.Create(scope, _StoreOptions);
+                await store.DeleteScopeAsync(scope, token).ConfigureAwait(false);
 
-            while (true)
+                while (true)
+                {
+                    EnumerationResult<Memory> page = await _Database.Memories.EnumerateAsync(scope.TenantId, scope.Id, null, new EnumerationQuery { MaxResults = 500 }, token).ConfigureAwait(false);
+                    if (page.Objects.Count == 0) break;
+                    await _Database.Memories.DeleteManyAsync(scope.TenantId, page.Objects.Select(m => m.Id).ToList(), token).ConfigureAwait(false);
+                }
+
+                while (true)
+                {
+                    EnumerationResult<Category> page = await _Database.Categories.EnumerateAsync(scope.TenantId, scope.Id, new EnumerationQuery { MaxResults = 500 }, token).ConfigureAwait(false);
+                    if (page.Objects.Count == 0) break;
+                    await _Database.Categories.DeleteManyAsync(scope.TenantId, page.Objects.Select(c => c.Id).ToList(), token).ConfigureAwait(false);
+                }
+
+                await _Database.Scopes.DeleteAsync(scope.TenantId, scope.Id, token).ConfigureAwait(false);
+            }
+            catch (Exception e)
             {
-                EnumerationResult<Category> page = await _Database.Categories.EnumerateAsync(scope.TenantId, scope.Id, new EnumerationQuery { MaxResults = 500 }, token).ConfigureAwait(false);
-                if (page.Objects.Count == 0) break;
-                await _Database.Categories.DeleteManyAsync(scope.TenantId, page.Objects.Select(c => c.Id).ToList(), token).ConfigureAwait(false);
+                telemetryOutcome = "error";
+                IsisTelemetry.RecordException(activity, e);
+                throw;
             }
-
-            await _Database.Scopes.DeleteAsync(scope.TenantId, scope.Id, token).ConfigureAwait(false);
+            finally
+            {
+                RecordMemoryDelete("scope", telemetryStart, telemetryOutcome);
+            }
         }
 
         /// <summary>
@@ -161,26 +222,45 @@ namespace Isis.Server.Services
             if (scope == null) throw new ArgumentNullException(nameof(scope));
             if (string.IsNullOrEmpty(categoryId)) throw new ArgumentNullException(nameof(categoryId));
 
-            IMemoryStore store = MemoryStoreFactory.Create(scope, _StoreOptions);
+            long telemetryStart = Stopwatch.GetTimestamp();
+            string telemetryOutcome = "success";
+            using Activity? activity = IsisTelemetry.ActivitySource.StartActivity("memory delete_category", ActivityKind.Internal);
+            activity?.SetTag(IsisTelemetry.TagScope, scope.Id);
+            activity?.SetTag(IsisTelemetry.TagOperation, "category");
 
-            while (true)
+            try
             {
-                EnumerationResult<Memory> page = await _Database.Memories.EnumerateAsync(scope.TenantId, scope.Id, categoryId, new EnumerationQuery { MaxResults = 500 }, token).ConfigureAwait(false);
-                if (page.Objects.Count == 0) break;
+                IMemoryStore store = MemoryStoreFactory.Create(scope, _StoreOptions);
 
-                foreach (Memory memory in page.Objects)
+                while (true)
                 {
-                    try
-                    {
-                        await store.DeleteAsync(scope, memory, token).ConfigureAwait(false);
-                    }
-                    catch (NotSupportedException)
-                    {
-                        // Best-effort store cleanup during cascade (e.g. Verbex not wired).
-                    }
-                }
+                    EnumerationResult<Memory> page = await _Database.Memories.EnumerateAsync(scope.TenantId, scope.Id, categoryId, new EnumerationQuery { MaxResults = 500 }, token).ConfigureAwait(false);
+                    if (page.Objects.Count == 0) break;
 
-                await _Database.Memories.DeleteManyAsync(scope.TenantId, page.Objects.Select(m => m.Id).ToList(), token).ConfigureAwait(false);
+                    foreach (Memory memory in page.Objects)
+                    {
+                        try
+                        {
+                            await store.DeleteAsync(scope, memory, token).ConfigureAwait(false);
+                        }
+                        catch (NotSupportedException)
+                        {
+                            // Best-effort store cleanup during cascade (e.g. Verbex not wired).
+                        }
+                    }
+
+                    await _Database.Memories.DeleteManyAsync(scope.TenantId, page.Objects.Select(m => m.Id).ToList(), token).ConfigureAwait(false);
+                }
+            }
+            catch (Exception e)
+            {
+                telemetryOutcome = "error";
+                IsisTelemetry.RecordException(activity, e);
+                throw;
+            }
+            finally
+            {
+                RecordMemoryDelete("category", telemetryStart, telemetryOutcome);
             }
         }
 
@@ -196,20 +276,56 @@ namespace Isis.Server.Services
             if (scope == null) throw new ArgumentNullException(nameof(scope));
             if (query == null) throw new ArgumentNullException(nameof(query));
 
-            IMemoryStore store = MemoryStoreFactory.Create(scope, _StoreOptions);
+            string mode = query.Mode.ToString();
+            long telemetryStart = Stopwatch.GetTimestamp();
+            string telemetryOutcome = "success";
+            int telemetryHits = -1;
+            using Activity? activity = IsisTelemetry.ActivitySource.StartActivity("memory search", ActivityKind.Internal);
+            activity?.SetTag(IsisTelemetry.TagScope, scope.Id);
+            activity?.SetTag(IsisTelemetry.TagSearchMode, mode);
 
-            float[]? queryEmbedding = null;
-            if (store.Capabilities.RequiresEmbedding && query.Mode != Isis.Core.Enums.SearchModeEnum.Keyword)
+            try
             {
-                queryEmbedding = await EmbedAsync(scope, query.QueryText, token).ConfigureAwait(false);
-            }
+                IMemoryStore store = MemoryStoreFactory.Create(scope, _StoreOptions);
 
-            return await store.SearchAsync(scope, query, queryEmbedding, token).ConfigureAwait(false);
+                float[]? queryEmbedding = null;
+                if (store.Capabilities.RequiresEmbedding && query.Mode != Isis.Core.Enums.SearchModeEnum.Keyword)
+                {
+                    queryEmbedding = await EmbedAsync(scope, query.QueryText, token).ConfigureAwait(false);
+                }
+
+                MemorySearchResult result = await store.SearchAsync(scope, query, queryEmbedding, token).ConfigureAwait(false);
+                telemetryHits = result.Hits != null ? result.Hits.Count : 0;
+                return result;
+            }
+            catch (Exception e)
+            {
+                telemetryOutcome = "error";
+                IsisTelemetry.RecordException(activity, e);
+                throw;
+            }
+            finally
+            {
+                double seconds = Stopwatch.GetElapsedTime(telemetryStart).TotalSeconds;
+                TagList tags = new TagList { { IsisTelemetry.TagSearchMode, mode }, { IsisTelemetry.TagOutcome, telemetryOutcome } };
+                IsisTelemetry.MemorySearchDuration.Record(seconds, tags);
+                IsisTelemetry.MemorySearches.Add(1, tags);
+                if (telemetryHits >= 0)
+                    IsisTelemetry.MemorySearchResults.Record(telemetryHits, new TagList { { IsisTelemetry.TagSearchMode, mode } });
+            }
         }
 
         #endregion
 
         #region Private-Methods
+
+        private static void RecordMemoryDelete(string operation, long startTimestamp, string outcome)
+        {
+            double seconds = Stopwatch.GetElapsedTime(startTimestamp).TotalSeconds;
+            TagList tags = new TagList { { IsisTelemetry.TagOperation, operation }, { IsisTelemetry.TagOutcome, outcome } };
+            IsisTelemetry.MemoryDeleteDuration.Record(seconds, tags);
+            IsisTelemetry.MemoryDeletes.Add(1, tags);
+        }
 
         private async Task EnsureScopeAsync(IMemoryStore store, Scope scope, CancellationToken token)
         {

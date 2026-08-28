@@ -8,6 +8,7 @@ namespace Isis.Server.Services
     using System.Threading.Tasks;
     using Isis.Core.Enums;
     using Isis.Core.Models;
+    using Isis.Core.Observability;
     using Isis.Core.Recall;
     using Isis.Core.Stores;
 
@@ -59,35 +60,58 @@ namespace Isis.Server.Services
             if (inferenceEndpoint == null) throw new ArgumentNullException(nameof(inferenceEndpoint));
             if (string.IsNullOrWhiteSpace(question)) throw new ArgumentException("A question is required.", nameof(question));
 
-            MemorySearchQuery query = new MemorySearchQuery { QueryText = question, Mode = SearchModeEnum.Hybrid, TopK = topK < 1 ? 5 : topK };
-            MemorySearchResult retrieval = await _MemoryService.SearchAsync(scope, query, token).ConfigureAwait(false);
+            long telemetryStart = Stopwatch.GetTimestamp();
+            string telemetryOutcome = "success";
+            using Activity? activity = IsisTelemetry.ActivitySource.StartActivity("chat ask", ActivityKind.Internal);
+            activity?.SetTag(IsisTelemetry.TagScope, scope.Id);
+            activity?.SetTag(IsisTelemetry.TagStreaming, false);
 
-            ChatAnswer answer = new ChatAnswer();
-            answer.RetrievalMode = retrieval.EffectiveMode;
-            answer.Notice = retrieval.Notice;
-
-            StringBuilder context = new StringBuilder();
-            foreach (MemorySearchHit hit in retrieval.Hits)
+            try
             {
-                context.Append("- [").Append(hit.Slug ?? "memory").Append("] ");
-                if (!string.IsNullOrEmpty(hit.Title)) context.Append(hit.Title).Append(": ");
-                context.Append(hit.Snippet).Append('\n');
+                MemorySearchQuery query = new MemorySearchQuery { QueryText = question, Mode = SearchModeEnum.Hybrid, TopK = topK < 1 ? 5 : topK };
+                MemorySearchResult retrieval = await _MemoryService.SearchAsync(scope, query, token).ConfigureAwait(false);
+                IsisTelemetry.ChatContextMemories.Record(retrieval.Hits.Count, new TagList { { IsisTelemetry.TagStreaming, false } });
 
-                answer.Citations.Add(new ChatCitation { Slug = hit.Slug, Title = hit.Title, Score = hit.Score });
+                ChatAnswer answer = new ChatAnswer();
+                answer.RetrievalMode = retrieval.EffectiveMode;
+                answer.Notice = retrieval.Notice;
+
+                StringBuilder context = new StringBuilder();
+                foreach (MemorySearchHit hit in retrieval.Hits)
+                {
+                    context.Append("- [").Append(hit.Slug ?? "memory").Append("] ");
+                    if (!string.IsNullOrEmpty(hit.Title)) context.Append(hit.Title).Append(": ");
+                    context.Append(hit.Snippet).Append('\n');
+
+                    answer.Citations.Add(new ChatCitation { Slug = hit.Slug, Title = hit.Title, Score = hit.Score });
+                }
+
+                if (retrieval.Hits.Count == 0)
+                {
+                    answer.Notice = string.IsNullOrEmpty(answer.Notice) ? "No memories matched the question." : answer.Notice;
+                }
+
+                string systemPrompt =
+                    "You are a memory assistant. Answer the user's question using only the provided memories. " +
+                    "Cite the memories you use by their slug in square brackets. If the memories do not contain the answer, say so plainly.";
+                string userPrompt = "Question: " + question + "\n\nMemories:\n" + (context.Length > 0 ? context.ToString() : "(none)");
+
+                answer.Answer = await _InferenceService.CompleteAsync(inferenceEndpoint, systemPrompt, userPrompt, token).ConfigureAwait(false);
+                return answer;
             }
-
-            if (retrieval.Hits.Count == 0)
+            catch (Exception e)
             {
-                answer.Notice = string.IsNullOrEmpty(answer.Notice) ? "No memories matched the question." : answer.Notice;
+                telemetryOutcome = "error";
+                IsisTelemetry.RecordException(activity, e);
+                throw;
             }
-
-            string systemPrompt =
-                "You are a memory assistant. Answer the user's question using only the provided memories. " +
-                "Cite the memories you use by their slug in square brackets. If the memories do not contain the answer, say so plainly.";
-            string userPrompt = "Question: " + question + "\n\nMemories:\n" + (context.Length > 0 ? context.ToString() : "(none)");
-
-            answer.Answer = await _InferenceService.CompleteAsync(inferenceEndpoint, systemPrompt, userPrompt, token).ConfigureAwait(false);
-            return answer;
+            finally
+            {
+                double seconds = Stopwatch.GetElapsedTime(telemetryStart).TotalSeconds;
+                TagList tags = new TagList { { IsisTelemetry.TagStreaming, false }, { IsisTelemetry.TagOutcome, telemetryOutcome } };
+                IsisTelemetry.ChatAskDuration.Record(seconds, tags);
+                IsisTelemetry.ChatAsks.Add(1, tags);
+            }
         }
 
         /// <summary>
@@ -109,8 +133,17 @@ namespace Isis.Server.Services
             if (string.IsNullOrWhiteSpace(question)) throw new ArgumentException("A question is required.", nameof(question));
             if (emit == null) throw new ArgumentNullException(nameof(emit));
 
+            long telemetryStart = Stopwatch.GetTimestamp();
+            string telemetryOutcome = "success";
+            using Activity? chatActivity = IsisTelemetry.ActivitySource.StartActivity("chat ask", ActivityKind.Internal);
+            chatActivity?.SetTag(IsisTelemetry.TagScope, scope.Id);
+            chatActivity?.SetTag(IsisTelemetry.TagStreaming, true);
+
+            try
+            {
             MemorySearchQuery query = new MemorySearchQuery { QueryText = question, Mode = SearchModeEnum.Hybrid, TopK = topK < 1 ? 5 : topK };
             MemorySearchResult retrieval = await _MemoryService.SearchAsync(scope, query, token).ConfigureAwait(false);
+            IsisTelemetry.ChatContextMemories.Record(retrieval.Hits.Count, new TagList { { IsisTelemetry.TagStreaming, true } });
 
             List<ChatCitation> citations = new List<ChatCitation>();
             List<object> hitPayloads = new List<object>();
@@ -229,6 +262,20 @@ namespace Isis.Server.Services
                 generationMs = generationMs,
                 tokensPerSecond = tokensPerSecond
             }, token).ConfigureAwait(false);
+            }
+            catch (Exception e)
+            {
+                telemetryOutcome = "error";
+                IsisTelemetry.RecordException(chatActivity, e);
+                throw;
+            }
+            finally
+            {
+                double seconds = Stopwatch.GetElapsedTime(telemetryStart).TotalSeconds;
+                TagList tags = new TagList { { IsisTelemetry.TagStreaming, true }, { IsisTelemetry.TagOutcome, telemetryOutcome } };
+                IsisTelemetry.ChatAskDuration.Record(seconds, tags);
+                IsisTelemetry.ChatAsks.Add(1, tags);
+            }
         }
 
         #endregion

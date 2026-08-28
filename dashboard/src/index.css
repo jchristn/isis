@@ -566,6 +566,16 @@ button:disabled {
   cursor: pointer;
   text-align: left;
   align-items: flex-start;
+  text-decoration: none;
+  color: inherit;
+}
+.action-tile .tile-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-top: 0.25rem;
+  color: var(--color-primary);
+  font-size: var(--font-size-xs);
 }
 .action-tile:hover {
   border-color: var(--color-primary);

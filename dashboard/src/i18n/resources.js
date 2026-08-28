@@ -130,6 +130,7 @@ export const en = {
       externalServices: 'External services',
       externalServicesHint: 'Bundled observability + storage consoles (local development defaults).',
       openService: 'Open',
+      credentials: 'Credentials',
       memoriesPerScope: 'Memories per scope',
       noScopes: 'No scopes yet. Create one to start storing memories.'
     },

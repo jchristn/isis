@@ -157,14 +157,14 @@ function HomeView() {
             </p>
             <div className="tile-grid">
               {EXTERNAL_SERVICES.map((svc) => (
-                <div className="action-tile" key={svc.key}>
+                <a className="action-tile" key={svc.key} href={svc.url} target="_blank" rel="noopener noreferrer">
                   <span className="tile-title">{svc.name}</span>
                   <span className="tile-desc cell-mono">{svc.url}</span>
-                  <span className="tile-desc">Credentials: {svc.creds}</span>
-                  <a href={svc.url} target="_blank" rel="noopener noreferrer" className="btn-sm btn-ghost" style={{ margintop: 4 }}>
+                  <span className="tile-desc">{t('home.credentials')}: {svc.creds}</span>
+                  <span className="tile-open">
                     <IconExternal /> {t('home.openService')}
-                  </a>
-                </div>
+                  </span>
+                </a>
               ))}
             </div>
           </div>

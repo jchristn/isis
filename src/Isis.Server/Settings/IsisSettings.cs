@@ -53,6 +53,11 @@ namespace Isis.Server.Settings
         /// </summary>
         public RequestHistorySettings RequestHistory { get; set; } = new RequestHistorySettings();
 
+        /// <summary>
+        /// Observability (metrics and tracing) settings.
+        /// </summary>
+        public ObservabilitySettings Observability { get; set; } = new ObservabilitySettings();
+
         #endregion
 
         #region Private-Members

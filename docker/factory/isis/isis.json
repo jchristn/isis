@@ -30,5 +30,19 @@
     "FileLogging": true,
     "LogDirectory": "logs",
     "LogFilename": "isis.log"
+  },
+  "Observability": {
+    "Enabled": true,
+    "ServiceName": "isis-server",
+    "PrometheusEnabled": true,
+    "PrometheusHostname": "*",
+    "PrometheusPort": 9464,
+    "PrometheusPath": "/metrics",
+    "TracingEnabled": true,
+    "OtlpEndpoint": "http://tempo:4317",
+    "OtlpProtocol": "grpc",
+    "SamplingRatio": 1.0,
+    "IncludeRuntimeMetrics": true,
+    "IncludeProcessMetrics": true
   }
 }

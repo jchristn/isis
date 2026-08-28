@@ -7,6 +7,7 @@ namespace Isis.Server
     using Isis.Core.Enums;
     using Isis.Core.Recall;
     using Isis.Core.Stores;
+    using Isis.Server.Observability;
     using Isis.Server.Services;
     using Isis.Server.Settings;
 
@@ -67,6 +68,10 @@ namespace Isis.Server
             };
             MemoryService memoryService = new MemoryService(database, embeddingService, storeOptions);
 
+            // Start the observability pipeline before the server so Watson's instrumentation is collected from
+            // the first request. A telemetry failure never prevents startup (Start returns null and logs).
+            ObservabilityHost? observability = ObservabilityHost.Start(settings.Observability, log);
+
             IsisServer server = new IsisServer(settings, database, authenticationService, authorizationService, memoryService, log, storeOptions, settingsFile);
             server.Start();
             log("node '" + settings.NodeId + "' listening on " + settings.Rest.Hostname + ":" + settings.Rest.Port);
@@ -84,6 +89,7 @@ namespace Isis.Server
             log("node '" + settings.NodeId + "' stopping");
             server.Stop();
             server.Dispose();
+            observability?.Dispose();
             database.Dispose();
         }
 
@@ -148,6 +154,24 @@ namespace Isis.Server
 
             string? secretKey = Environment.GetEnvironmentVariable("ISIS_AUTH_DEFAULT_SECRET_KEY");
             if (!String.IsNullOrEmpty(secretKey)) settings.Auth.DefaultSecretKey = secretKey;
+
+            string? obsEnabled = Environment.GetEnvironmentVariable("ISIS_OBS_ENABLED");
+            if (!String.IsNullOrEmpty(obsEnabled) && Boolean.TryParse(obsEnabled, out bool obsEnabledValue)) settings.Observability.Enabled = obsEnabledValue;
+
+            string? otlpEndpoint = Environment.GetEnvironmentVariable("ISIS_OTLP_ENDPOINT");
+            if (!String.IsNullOrEmpty(otlpEndpoint)) settings.Observability.OtlpEndpoint = otlpEndpoint;
+
+            string? otlpProtocol = Environment.GetEnvironmentVariable("ISIS_OTLP_PROTOCOL");
+            if (!String.IsNullOrEmpty(otlpProtocol)) settings.Observability.OtlpProtocol = otlpProtocol;
+
+            string? obsServiceName = Environment.GetEnvironmentVariable("ISIS_OBS_SERVICE_NAME");
+            if (!String.IsNullOrEmpty(obsServiceName)) settings.Observability.ServiceName = obsServiceName;
+
+            string? obsPromHostname = Environment.GetEnvironmentVariable("ISIS_OBS_PROM_HOSTNAME");
+            if (!String.IsNullOrEmpty(obsPromHostname)) settings.Observability.PrometheusHostname = obsPromHostname;
+
+            string? obsPromPort = Environment.GetEnvironmentVariable("ISIS_OBS_PROM_PORT");
+            if (!String.IsNullOrEmpty(obsPromPort) && Int32.TryParse(obsPromPort, out int obsPromPortValue)) settings.Observability.PrometheusPort = obsPromPortValue;
         }
 
         #endregion

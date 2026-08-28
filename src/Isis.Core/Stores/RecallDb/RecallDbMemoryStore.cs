@@ -2,6 +2,7 @@ namespace Isis.Core.Stores.RecallDb
 {
     using System;
     using System.Collections.Generic;
+    using System.Diagnostics;
     using System.Linq;
     using System.Threading;
     using System.Threading.Tasks;
@@ -9,6 +10,7 @@ namespace Isis.Core.Stores.RecallDb
     using global::RecallDb.Sdk.Models;
     using Isis.Core.Enums;
     using Isis.Core.Models;
+    using Isis.Core.Observability;
     using Isis.Core.Stores;
 
     /// <summary>
@@ -71,6 +73,13 @@ namespace Isis.Core.Stores.RecallDb
             RecallDbClient client = RequireClient();
             if (scope.Dimensionality <= 0) throw new InvalidOperationException("A RecallDB scope requires a positive embedding dimensionality (configure the scope's embedding endpoint).");
 
+            long telemetryStart = Stopwatch.GetTimestamp();
+            string telemetryOutcome = "success";
+            using Activity? activity = IsisTelemetry.ActivitySource.StartActivity("store ensure_scope", ActivityKind.Client);
+            activity?.SetTag(IsisTelemetry.TagStore, "recalldb");
+            activity?.SetTag(IsisTelemetry.TagOperation, "ensure_scope");
+            activity?.SetTag(IsisTelemetry.TagScope, scope.Id);
+
             try
             {
                 bool tenantExists = await client.TenantExistsAsync(scope.TenantId, token).ConfigureAwait(false);
@@ -94,7 +103,20 @@ namespace Isis.Core.Stores.RecallDb
             }
             catch (RecallDbException e)
             {
-                throw new InvalidOperationException("RecallDB scope provisioning failed: " + e.Message, e);
+                telemetryOutcome = "error";
+                InvalidOperationException wrapped = new InvalidOperationException("RecallDB scope provisioning failed: " + e.Message, e);
+                IsisTelemetry.RecordException(activity, wrapped);
+                throw wrapped;
+            }
+            catch (Exception e)
+            {
+                telemetryOutcome = "error";
+                IsisTelemetry.RecordException(activity, e);
+                throw;
+            }
+            finally
+            {
+                RecordStoreOp("ensure_scope", telemetryStart, telemetryOutcome);
             }
         }
 
@@ -117,16 +139,38 @@ namespace Isis.Core.Stores.RecallDb
             document.Tags = new Dictionary<string, string>(memory.Metadata);
             if (!string.IsNullOrEmpty(memory.Title)) document.Tags["title"] = memory.Title!;
 
+            long telemetryStart = Stopwatch.GetTimestamp();
+            string telemetryOutcome = "success";
+            using Activity? activity = IsisTelemetry.ActivitySource.StartActivity("store upsert", ActivityKind.Client);
+            activity?.SetTag(IsisTelemetry.TagStore, "recalldb");
+            activity?.SetTag(IsisTelemetry.TagOperation, "upsert");
+            activity?.SetTag(IsisTelemetry.TagScope, scope.Id);
+
             try
             {
                 await client.CreateDocumentAsync(scope.TenantId, scope.RecallCollectionId, document, token).ConfigureAwait(false);
+                return memory.Id;
             }
             catch (RecallDbException e)
             {
-                throw new InvalidOperationException("RecallDB document upsert failed: " + e.Message, e);
+                telemetryOutcome = "error";
+                InvalidOperationException wrapped = new InvalidOperationException("RecallDB document upsert failed: " + e.Message, e);
+                IsisTelemetry.RecordException(activity, wrapped);
+                throw wrapped;
             }
-
-            return memory.Id;
+            catch (Exception e)
+            {
+                telemetryOutcome = "error";
+                IsisTelemetry.RecordException(activity, e);
+                throw;
+            }
+            finally
+            {
+                double seconds = Stopwatch.GetElapsedTime(telemetryStart).TotalSeconds;
+                TagList tags = new TagList { { IsisTelemetry.TagStore, "recalldb" }, { IsisTelemetry.TagOperation, "upsert" }, { IsisTelemetry.TagOutcome, telemetryOutcome } };
+                IsisTelemetry.StoreUpsertDuration.Record(seconds, tags);
+                IsisTelemetry.StoreUpserts.Add(1, tags);
+            }
         }
 
         /// <inheritdoc />
@@ -137,13 +181,33 @@ namespace Isis.Core.Stores.RecallDb
             RecallDbClient client = RequireClient();
             if (string.IsNullOrEmpty(scope.RecallCollectionId)) return;
 
+            long telemetryStart = Stopwatch.GetTimestamp();
+            string telemetryOutcome = "success";
+            using Activity? activity = IsisTelemetry.ActivitySource.StartActivity("store delete", ActivityKind.Client);
+            activity?.SetTag(IsisTelemetry.TagStore, "recalldb");
+            activity?.SetTag(IsisTelemetry.TagOperation, "delete");
+            activity?.SetTag(IsisTelemetry.TagScope, scope.Id);
+
             try
             {
                 await client.DeleteDocumentAsync(scope.TenantId, scope.RecallCollectionId, memory.Id, token).ConfigureAwait(false);
             }
             catch (RecallDbException e)
             {
-                throw new InvalidOperationException("RecallDB document delete failed: " + e.Message, e);
+                telemetryOutcome = "error";
+                InvalidOperationException wrapped = new InvalidOperationException("RecallDB document delete failed: " + e.Message, e);
+                IsisTelemetry.RecordException(activity, wrapped);
+                throw wrapped;
+            }
+            catch (Exception e)
+            {
+                telemetryOutcome = "error";
+                IsisTelemetry.RecordException(activity, e);
+                throw;
+            }
+            finally
+            {
+                RecordStoreOp("delete", telemetryStart, telemetryOutcome);
             }
         }
 
@@ -153,6 +217,13 @@ namespace Isis.Core.Stores.RecallDb
             if (scope == null) throw new ArgumentNullException(nameof(scope));
             if (_Client == null || string.IsNullOrEmpty(scope.RecallCollectionId)) return;
 
+            long telemetryStart = Stopwatch.GetTimestamp();
+            string telemetryOutcome = "success";
+            using Activity? activity = IsisTelemetry.ActivitySource.StartActivity("store delete_scope", ActivityKind.Client);
+            activity?.SetTag(IsisTelemetry.TagStore, "recalldb");
+            activity?.SetTag(IsisTelemetry.TagOperation, "delete_scope");
+            activity?.SetTag(IsisTelemetry.TagScope, scope.Id);
+
             try
             {
                 await _Client.DeleteCollectionAsync(scope.TenantId, scope.RecallCollectionId, token).ConfigureAwait(false);
@@ -160,6 +231,16 @@ namespace Isis.Core.Stores.RecallDb
             catch (RecallDbException)
             {
                 // Best-effort teardown during cascade; ignore a missing/failed collection drop.
+            }
+            catch (Exception e)
+            {
+                telemetryOutcome = "error";
+                IsisTelemetry.RecordException(activity, e);
+                throw;
+            }
+            finally
+            {
+                RecordStoreOp("delete_scope", telemetryStart, telemetryOutcome);
             }
         }
 
@@ -171,6 +252,17 @@ namespace Isis.Core.Stores.RecallDb
             RecallDbClient client = RequireClient();
             if (string.IsNullOrEmpty(scope.RecallCollectionId)) throw new InvalidOperationException("The scope has no RecallDB collection; call EnsureScopeAsync first.");
 
+            long telemetryStart = Stopwatch.GetTimestamp();
+            string telemetryOutcome = "success";
+            int telemetryHits = -1;
+            using Activity? activity = IsisTelemetry.ActivitySource.StartActivity("store search", ActivityKind.Client);
+            activity?.SetTag(IsisTelemetry.TagStore, "recalldb");
+            activity?.SetTag(IsisTelemetry.TagOperation, "search");
+            activity?.SetTag(IsisTelemetry.TagScope, scope.Id);
+            activity?.SetTag(IsisTelemetry.TagSearchMode, query.Mode.ToString());
+
+            try
+            {
             int topK = query.TopK < 1 ? 5 : query.TopK;
             int fetch = Math.Max(topK, 10);
             bool wantSemantic = queryEmbedding != null && query.Mode != SearchModeEnum.Keyword;
@@ -246,12 +338,36 @@ namespace Isis.Core.Stores.RecallDb
                 });
             }
 
+            telemetryHits = output.Hits.Count;
+            activity?.SetTag("isis.hits", telemetryHits);
             return output;
+            }
+            catch (Exception e)
+            {
+                telemetryOutcome = "error";
+                IsisTelemetry.RecordException(activity, e);
+                throw;
+            }
+            finally
+            {
+                double seconds = Stopwatch.GetElapsedTime(telemetryStart).TotalSeconds;
+                TagList tags = new TagList { { IsisTelemetry.TagStore, "recalldb" }, { IsisTelemetry.TagOperation, "search" }, { IsisTelemetry.TagOutcome, telemetryOutcome } };
+                IsisTelemetry.StoreSearchDuration.Record(seconds, tags);
+                IsisTelemetry.StoreSearches.Add(1, tags);
+            }
         }
 
         #endregion
 
         #region Private-Methods
+
+        private static void RecordStoreOp(string operation, long startTimestamp, string outcome)
+        {
+            double seconds = Stopwatch.GetElapsedTime(startTimestamp).TotalSeconds;
+            TagList tags = new TagList { { IsisTelemetry.TagStore, "recalldb" }, { IsisTelemetry.TagOperation, operation }, { IsisTelemetry.TagOutcome, outcome } };
+            IsisTelemetry.StoreOpDuration.Record(seconds, tags);
+            IsisTelemetry.StoreOps.Add(1, tags);
+        }
 
         private static async Task<SearchResult> ExecuteSearchAsync(RecallDbClient client, Scope scope, SearchQuery search, CancellationToken token)
         {

@@ -73,7 +73,7 @@ namespace Isis.Core.Database.Sqlite
         }
 
         /// <inheritdoc />
-        public override async Task<DataTable> ExecuteQueryAsync(string query, bool isWrite = false, CancellationToken token = default)
+        public override async Task<DataTable> ExecuteQueryCoreAsync(string query, bool isWrite = false, CancellationToken token = default)
         {
             if (String.IsNullOrEmpty(query)) throw new ArgumentNullException(nameof(query));
 
@@ -134,7 +134,7 @@ namespace Isis.Core.Database.Sqlite
         }
 
         /// <inheritdoc />
-        public override async Task<DataTable> ExecuteQueriesAsync(IEnumerable<string> queries, CancellationToken token = default)
+        public override async Task<DataTable> ExecuteQueriesCoreAsync(IEnumerable<string> queries, CancellationToken token = default)
         {
             if (queries == null) throw new ArgumentNullException(nameof(queries));
 

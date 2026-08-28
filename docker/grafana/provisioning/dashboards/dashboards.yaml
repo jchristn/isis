@@ -1,8 +1,9 @@
 apiVersion: 1
 
-# Load the Isis dashboard JSON (mounted from assets/grafana) into a single "Isis" folder in Grafana.
-# Dashboards are split by domain (Overview, HTTP, Memory Ops, Inference, Integrations) rather than
-# piled into one mega-dashboard.
+# Load the Isis dashboard JSON (mounted from assets/grafana) into categorized Grafana folders.
+# Each subdirectory of the dashboards path (Overview, API, Services, Storage, Runtime) becomes its
+# own Grafana folder via foldersFromFilesStructure, rather than piling everything into one folder
+# or one mega-dashboard.
 providers:
   - name: 'Isis'
     orgId: 1
@@ -12,3 +13,4 @@ providers:
     editable: true
     options:
       path: /var/lib/grafana/dashboards/isis
+      foldersFromFilesStructure: true
