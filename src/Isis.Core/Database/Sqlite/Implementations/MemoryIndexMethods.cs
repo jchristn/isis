@@ -42,7 +42,7 @@ namespace Isis.Core.Database.Sqlite.Implementations
             memory.LastUpdateUtc = DateTime.UtcNow;
 
             string query =
-                "INSERT INTO memories (id, tenantid, scopeid, categoryid, slug, storekey, title, type, summary, body, tags, links, metadata, salience, author, sessionid, model, version, createdutc, lastupdateutc, lastaccessedutc) VALUES (" +
+                "INSERT INTO memories (id, tenantid, scopeid, categoryid, slug, storekey, title, type, summary, resource, body, tags, links, metadata, salience, author, sessionid, model, version, createdutc, lastupdateutc, lastaccessedutc) VALUES (" +
                 SqliteHelpers.ToSqlRequired(memory.Id) + ", " +
                 SqliteHelpers.ToSqlRequired(memory.TenantId) + ", " +
                 SqliteHelpers.ToSqlRequired(memory.ScopeId) + ", " +
@@ -52,6 +52,7 @@ namespace Isis.Core.Database.Sqlite.Implementations
                 SqliteHelpers.ToSql(memory.Title) + ", " +
                 SqliteHelpers.ToSqlRequired(memory.Type.ToString()) + ", " +
                 SqliteHelpers.ToSql(memory.Summary) + ", " +
+                SqliteHelpers.ToSql(memory.Resource) + ", " +
                 SqliteHelpers.ToSqlRequired(memory.Body) + ", " +
                 SqliteHelpers.ToSqlRequired(SqliteHelpers.SerializeList(memory.Tags)) + ", " +
                 SqliteHelpers.ToSqlRequired(SqliteHelpers.SerializeList(memory.Links)) + ", " +
@@ -149,6 +150,7 @@ namespace Isis.Core.Database.Sqlite.Implementations
                 "title = " + SqliteHelpers.ToSql(memory.Title) + ", " +
                 "type = " + SqliteHelpers.ToSqlRequired(memory.Type.ToString()) + ", " +
                 "summary = " + SqliteHelpers.ToSql(memory.Summary) + ", " +
+                "resource = " + SqliteHelpers.ToSql(memory.Resource) + ", " +
                 "body = " + SqliteHelpers.ToSqlRequired(memory.Body) + ", " +
                 "tags = " + SqliteHelpers.ToSqlRequired(SqliteHelpers.SerializeList(memory.Tags)) + ", " +
                 "links = " + SqliteHelpers.ToSqlRequired(SqliteHelpers.SerializeList(memory.Links)) + ", " +
@@ -235,6 +237,7 @@ namespace Isis.Core.Database.Sqlite.Implementations
             memory.Title = SqliteHelpers.NullIfEmpty(SqliteHelpers.GetString(row["title"]));
             memory.Type = Enum.TryParse(SqliteHelpers.GetString(row["type"]), out MemoryTypeEnum type) ? type : MemoryTypeEnum.Project;
             memory.Summary = SqliteHelpers.NullIfEmpty(SqliteHelpers.GetString(row["summary"]));
+            if (row.Table.Columns.Contains("resource")) memory.Resource = SqliteHelpers.NullIfEmpty(SqliteHelpers.GetString(row["resource"]));
             memory.Body = SqliteHelpers.GetString(row["body"]);
             memory.Tags = SqliteHelpers.DeserializeList(row["tags"]);
             memory.Links = SqliteHelpers.DeserializeList(row["links"]);

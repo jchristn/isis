@@ -114,6 +114,12 @@ namespace Isis.Core.Models
         public string? Summary { get; set; } = null;
 
         /// <summary>
+        /// Optional URI reference to the underlying resource this memory describes (for example a
+        /// console link, document URL, or repository path). Maps to the OKF <c>resource</c> field.
+        /// </summary>
+        public string? Resource { get; set; } = null;
+
+        /// <summary>
         /// The full memory body. Stored as the memory store document content.
         /// </summary>
         public string Body

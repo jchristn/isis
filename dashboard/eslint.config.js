@@ -20,6 +20,7 @@ export default [
         ...globals.browser,
         __DEFAULT_SERVER_URL__: 'readonly',
         __DEFAULT_ADMIN_KEY__: 'readonly',
+        __DEFAULT_ADMIN_EMAIL__: 'readonly',
         __DEFAULT_ACCESS_KEY__: 'readonly',
         __DEFAULT_TENANT_ID__: 'readonly'
       },

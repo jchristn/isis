@@ -131,6 +131,7 @@ CREATE TABLE IF NOT EXISTS memories (
     title VARCHAR(512),
     type VARCHAR(32) NOT NULL DEFAULT 'Project',
     summary TEXT,
+    resource VARCHAR(1024),
     body LONGTEXT NOT NULL,
     tags LONGTEXT NOT NULL,
     links LONGTEXT NOT NULL,

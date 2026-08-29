@@ -25,7 +25,7 @@ namespace Isis.Core.Stores.Filesystem
             SupportsSemantic = false,
             SupportsHybrid = false,
             RequiresEmbedding = false,
-            Description = "Flat-file store (single file or hierarchy). Keyword search only; git-trackable."
+            Description = "Flat-file store (single file, hierarchy, or OKF bundle). Keyword search only; git-trackable."
         };
 
         #endregion
@@ -34,6 +34,7 @@ namespace Isis.Core.Stores.Filesystem
 
         private static readonly string _BlockOpenPrefix = "<!-- isis:memory ";
         private static readonly string _BlockClose = "<!-- /isis:memory -->";
+        private static readonly string _OkfIndexDelimiter = "---";
 
         #endregion
 
@@ -70,6 +71,11 @@ namespace Isis.Core.Stores.Filesystem
                 return await UpsertSingleFileAsync(scope, memory, token).ConfigureAwait(false);
             }
 
+            if (scope.FilesystemLayout == FilesystemLayoutEnum.OkfBundle)
+            {
+                return await UpsertOkfAsync(scope, memory, token).ConfigureAwait(false);
+            }
+
             return await UpsertHierarchyAsync(scope, memory, token).ConfigureAwait(false);
         }
 
@@ -93,6 +99,12 @@ namespace Isis.Core.Stores.Filesystem
 
             string path = HierarchyPath(scope, memory);
             if (File.Exists(path)) File.Delete(path);
+
+            if (scope.FilesystemLayout == FilesystemLayoutEnum.OkfBundle)
+            {
+                await RegenerateOkfIndexAsync(scope, token).ConfigureAwait(false);
+            }
+
             await Task.CompletedTask.ConfigureAwait(false);
         }
 
@@ -198,6 +210,73 @@ namespace Isis.Core.Stores.Filesystem
             return path;
         }
 
+        private async Task<string> UpsertOkfAsync(Scope scope, Memory memory, CancellationToken token)
+        {
+            string path = HierarchyPath(scope, memory);
+            string? dir = Path.GetDirectoryName(path);
+            if (!String.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
+
+            memory.StoreKey = path;
+            await File.WriteAllTextAsync(path, OkfDocument.Serialize(memory), token).ConfigureAwait(false);
+            await RegenerateOkfIndexAsync(scope, token).ConfigureAwait(false);
+            return path;
+        }
+
+        private async Task RegenerateOkfIndexAsync(Scope scope, CancellationToken token)
+        {
+            string root = ResolveRoot(scope);
+            if (!Directory.Exists(root)) return;
+
+            SortedDictionary<string, List<KeyValuePair<string, string>>> byCategory =
+                new SortedDictionary<string, List<KeyValuePair<string, string>>>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (string path in Directory.EnumerateFiles(root, "*.md", SearchOption.AllDirectories))
+            {
+                token.ThrowIfCancellationRequested();
+                if (OkfDocument.IsReservedFileName(Path.GetFileName(path))) continue;
+
+                Memory memory = OkfDocument.Parse(await File.ReadAllTextAsync(path, token).ConfigureAwait(false),
+                    Path.GetFileNameWithoutExtension(path), CategoryFromPath(root, path));
+                string relative = Path.GetRelativePath(root, path).Replace('\\', '/');
+                string label = String.IsNullOrEmpty(memory.Title) ? memory.Slug : memory.Title!;
+                if (!byCategory.TryGetValue(memory.CategoryId, out List<KeyValuePair<string, string>>? entries))
+                {
+                    entries = new List<KeyValuePair<string, string>>();
+                    byCategory[memory.CategoryId] = entries;
+                }
+
+                entries.Add(new KeyValuePair<string, string>(label, relative));
+            }
+
+            StringBuilder sb = new StringBuilder();
+            sb.Append(_OkfIndexDelimiter).Append('\n');
+            sb.Append("type: Index\n");
+            sb.Append("title: \"").Append((scope.Name ?? "Memory Index").Replace("\"", "\\\"")).Append("\"\n");
+            sb.Append("timestamp: ").Append(DateTime.UtcNow.ToString("O", System.Globalization.CultureInfo.InvariantCulture)).Append('\n');
+            sb.Append(_OkfIndexDelimiter).Append('\n');
+            sb.Append("# ").Append(scope.Name ?? "Memory Index").Append("\n\n");
+
+            if (byCategory.Count == 0)
+            {
+                sb.Append("_No memories yet._\n");
+            }
+            else
+            {
+                foreach (KeyValuePair<string, List<KeyValuePair<string, string>>> category in byCategory)
+                {
+                    sb.Append("## ").Append(category.Key).Append("\n\n");
+                    foreach (KeyValuePair<string, string> entry in category.Value.OrderBy(e => e.Value, StringComparer.OrdinalIgnoreCase))
+                    {
+                        sb.Append("- [").Append(entry.Key).Append("](").Append(entry.Value).Append(")\n");
+                    }
+
+                    sb.Append('\n');
+                }
+            }
+
+            await File.WriteAllTextAsync(Path.Combine(root, OkfDocument.IndexFileName), sb.ToString(), token).ConfigureAwait(false);
+        }
+
         private async Task<string> UpsertSingleFileAsync(Scope scope, Memory memory, CancellationToken token)
         {
             string file = SingleFilePath(scope);
@@ -228,9 +307,18 @@ namespace Isis.Core.Stores.Filesystem
                 return blocks;
             }
 
+            bool okf = scope.FilesystemLayout == FilesystemLayoutEnum.OkfBundle;
             foreach (string path in Directory.EnumerateFiles(root, "*.md", SearchOption.AllDirectories))
             {
                 token.ThrowIfCancellationRequested();
+
+                if (okf)
+                {
+                    if (OkfDocument.IsReservedFileName(Path.GetFileName(path))) continue;
+                    blocks.Add(OkfBlockFromFile(root, path, await File.ReadAllTextAsync(path, token).ConfigureAwait(false)));
+                    continue;
+                }
+
                 List<MemoryBlock> parsed = ParseBlocks(await File.ReadAllTextAsync(path, token).ConfigureAwait(false));
                 foreach (MemoryBlock block in parsed)
                 {
@@ -240,6 +328,30 @@ namespace Isis.Core.Stores.Filesystem
             }
 
             return blocks;
+        }
+
+        private static MemoryBlock OkfBlockFromFile(string root, string path, string content)
+        {
+            string slugFallback = Path.GetFileNameWithoutExtension(path);
+            string categoryFallback = CategoryFromPath(root, path);
+            Memory memory = OkfDocument.Parse(content, slugFallback, categoryFallback);
+            return new MemoryBlock
+            {
+                Slug = memory.Slug,
+                CategoryId = memory.CategoryId,
+                Title = memory.Title,
+                Body = memory.Body,
+                StoreKey = path
+            };
+        }
+
+        private static string CategoryFromPath(string root, string path)
+        {
+            string? dir = Path.GetDirectoryName(path);
+            if (String.IsNullOrEmpty(dir)) return "_";
+            if (String.Equals(Path.GetFullPath(dir), Path.GetFullPath(root), StringComparison.OrdinalIgnoreCase)) return "_";
+            string name = new DirectoryInfo(dir).Name;
+            return String.IsNullOrEmpty(name) ? "_" : name;
         }
 
         private static MemoryBlock ToBlock(Memory memory)

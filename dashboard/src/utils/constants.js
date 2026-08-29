@@ -22,7 +22,14 @@ export const PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 250, 500, 1000];
 export const DEFAULT_PAGE_SIZE = 25;
 
 export const STORE_PROVIDERS = ['RecallDb', 'Verbex', 'Filesystem'];
-export const FILESYSTEM_LAYOUTS = ['SingleFile', 'Hierarchy'];
+export const FILESYSTEM_LAYOUTS = ['SingleFile', 'Hierarchy', 'OkfBundle'];
+
+// Friendly labels for the filesystem layout options.
+export const FILESYSTEM_LAYOUT_LABELS = {
+  SingleFile: 'Single file',
+  Hierarchy: 'Hierarchy (one file per memory)',
+  OkfBundle: 'OKF bundle (keyword search only; git-trackable)'
+};
 export const MEMORY_TYPES = ['User', 'Feedback', 'Project', 'Reference'];
 export const SEARCH_MODES = ['Keyword', 'Semantic', 'Hybrid'];
 export const ENDPOINT_KINDS = ['Embedding', 'Inference'];

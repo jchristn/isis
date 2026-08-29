@@ -12,7 +12,7 @@ import CopyableId from '../components/CopyableId';
 import CodeViewer from '../components/CodeViewer';
 import StatusBadge from '../components/StatusBadge';
 import { ErrorBanner } from '../components/States';
-import { STORE_PROVIDERS, FILESYSTEM_LAYOUTS } from '../utils/constants';
+import { STORE_PROVIDERS, FILESYSTEM_LAYOUTS, FILESYSTEM_LAYOUT_LABELS } from '../utils/constants';
 
 const EMPTY = {
   name: '',
@@ -109,7 +109,7 @@ function ScopeForm({ initial, onSubmit, onClose, endpoints, t }) {
               <select value={form.filesystemLayout} onChange={(e) => set('filesystemLayout', e.target.value)}>
                 {FILESYSTEM_LAYOUTS.map((l) => (
                   <option key={l} value={l}>
-                    {l}
+                    {FILESYSTEM_LAYOUT_LABELS[l] || l}
                   </option>
                 ))}
               </select>

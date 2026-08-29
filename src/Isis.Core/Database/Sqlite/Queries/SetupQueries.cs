@@ -128,6 +128,7 @@ CREATE TABLE IF NOT EXISTS memories (
     title TEXT,
     type TEXT NOT NULL DEFAULT 'Project',
     summary TEXT,
+    resource TEXT,
     body TEXT NOT NULL DEFAULT '',
     tags TEXT NOT NULL DEFAULT '[]',
     links TEXT NOT NULL DEFAULT '[]',

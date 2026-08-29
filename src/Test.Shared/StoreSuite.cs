@@ -57,6 +57,23 @@ namespace Test.Shared
                     TestCase.Async("store", "fs-null-target-ensure-throws", "Filesystem EnsureScope without a target path throws", FsNullTargetEnsureThrowsAsync),
                     TestCase.Async("store", "fs-null-target-upsert-throws", "Filesystem Upsert without a target path throws", FsNullTargetUpsertThrowsAsync),
 
+                    // Filesystem: OKF bundle layout (positive).
+                    TestCase.Async("store", "okf-upsert-writes-frontmatter", "OKF upsert writes a category/slug.md file with YAML frontmatter", OkfUpsertWritesFrontmatterAsync),
+                    TestCase.Async("store", "okf-upsert-generates-index", "OKF upsert generates a root index.md linking the memory", OkfUpsertGeneratesIndexAsync),
+                    TestCase.Async("store", "okf-roundtrip-fidelity", "OKF Serialize then Parse preserves every memory field", OkfRoundtripFidelityAsync),
+                    TestCase.Async("store", "okf-search-keyword-hit", "OKF keyword search returns a scored hit via the frontmatter read path", OkfSearchKeywordHitAsync),
+                    TestCase.Async("store", "okf-index-not-a-memory", "OKF search does not return the generated index.md as a memory", OkfIndexNotAMemoryAsync),
+                    TestCase.Async("store", "okf-reupsert-single-file", "OKF re-upsert of a slug keeps a single file", OkfReupsertSingleFileAsync),
+                    TestCase.Async("store", "okf-delete-removes-and-reindexes", "OKF delete removes the file and drops it from the index", OkfDeleteRemovesAndReindexesAsync),
+                    TestCase.Async("store", "okf-foreign-bundle-import", "OKF reads a foreign bundle (bare scalars, unknown type, flow tags)", OkfForeignBundleImportAsync),
+
+                    // Filesystem: OKF bundle layout (negative / tolerance).
+                    TestCase.Async("store", "okf-null-target-upsert-throws", "OKF Upsert without a target path throws", OkfNullTargetUpsertThrowsAsync),
+                    TestCase.Async("store", "okf-parse-no-frontmatter", "OKF Parse of a file with no frontmatter falls back without throwing", OkfParseNoFrontmatterAsync),
+                    TestCase.Async("store", "okf-parse-malformed-metadata", "OKF Parse ignores a malformed metadata block", OkfParseMalformedMetadataAsync),
+                    TestCase.Async("store", "okf-parse-unterminated-frontmatter", "OKF Parse tolerates an unterminated frontmatter block", OkfParseUnterminatedFrontmatterAsync),
+                    TestCase.Async("store", "okf-parse-empty-content", "OKF Parse of empty content yields fallbacks and does not throw", OkfParseEmptyContentAsync),
+
                     // Factory.
                     TestCase.Async("store", "factory-filesystem-type", "Factory creates a FilesystemMemoryStore for Filesystem", FactoryFilesystemTypeAsync),
                     TestCase.Async("store", "factory-recalldb-type", "Factory creates a RecallDbMemoryStore for RecallDb", FactoryRecallDbTypeAsync),
@@ -424,6 +441,294 @@ namespace Test.Shared
 
         #endregion
 
+        #region Private-Methods-Filesystem-Okf
+
+        private static async Task OkfUpsertWritesFrontmatterAsync()
+        {
+            string work = WorkDir();
+            try
+            {
+                Scope scope = OkfScope(work);
+                IMemoryStore store = MemoryStoreFactory.Create(scope);
+                await store.EnsureScopeAsync(scope).ConfigureAwait(false);
+
+                string key = await store.UpsertAsync(scope, Mem(scope, "orders", "Orders", "One row per completed order."), null).ConfigureAwait(false);
+                TestCase.Require(File.Exists(key), "OKF upsert should write the memory file.");
+                TestCase.Require(key.Replace('\\', '/').EndsWith("cat_1/orders.md", StringComparison.OrdinalIgnoreCase), "The file should live under <category>/<slug>.md, got '" + key + "'.");
+
+                string text = await File.ReadAllTextAsync(key).ConfigureAwait(false);
+                TestCase.Require(text.StartsWith("---", StringComparison.Ordinal), "An OKF document should open with a YAML frontmatter delimiter.");
+                TestCase.Require(text.Contains("type: \"Project\""), "Frontmatter should carry the type field.");
+                TestCase.Require(text.Contains("title: \"Orders\""), "Frontmatter should carry the title field.");
+                TestCase.Require(text.Contains("slug: \"orders\""), "Frontmatter should carry the slug field.");
+                TestCase.Require(text.Contains("category: \"cat_1\""), "Frontmatter should carry the category field.");
+                TestCase.Require(text.Contains("One row per completed order."), "The body should be preserved.");
+            }
+            finally
+            {
+                TryDeleteDir(work);
+            }
+        }
+
+        private static async Task OkfUpsertGeneratesIndexAsync()
+        {
+            string work = WorkDir();
+            try
+            {
+                Scope scope = OkfScope(work);
+                IMemoryStore store = MemoryStoreFactory.Create(scope);
+                await store.EnsureScopeAsync(scope).ConfigureAwait(false);
+                await store.UpsertAsync(scope, Mem(scope, "orders", "Orders", "One row per completed order."), null).ConfigureAwait(false);
+
+                string indexPath = Path.Combine(work, "index.md");
+                TestCase.Require(File.Exists(indexPath), "OKF upsert should generate a root index.md.");
+                string index = await File.ReadAllTextAsync(indexPath).ConfigureAwait(false);
+                TestCase.Require(index.Contains("type: Index"), "The index should declare the reserved Index type.");
+                TestCase.Require(index.Contains("](cat_1/orders.md)"), "The index should link the memory by its relative path.");
+            }
+            finally
+            {
+                TryDeleteDir(work);
+            }
+        }
+
+        private static Task OkfRoundtripFidelityAsync()
+        {
+            Memory original = new Memory
+            {
+                TenantId = "ten_x",
+                ScopeId = "scp_x",
+                CategoryId = "tables",
+                Slug = "orders",
+                Title = "Orders",
+                Type = MemoryTypeEnum.Feedback,
+                Summary = "One row per completed order.",
+                Resource = "https://console.example.com/t/orders",
+                Body = "# Schema\n| col | type |\n|-----|------|\n| id | STRING |",
+                Tags = new List<string> { "sales", "revenue" },
+                Links = new List<string> { "customers", "line-items" },
+                Metadata = new Dictionary<string, string> { { "confidence", "high" }, { "owner", "data-team" } },
+                Author = "agent-42",
+                SessionId = "sess_9",
+                Model = "gpt-oss:20b",
+                Version = 3,
+                Salience = 0.42,
+                CreatedUtc = new DateTime(2026, 5, 28, 14, 30, 0, DateTimeKind.Utc),
+                LastUpdateUtc = new DateTime(2026, 6, 1, 9, 15, 30, DateTimeKind.Utc)
+            };
+
+            string doc = OkfDocument.Serialize(original);
+            Memory parsed = OkfDocument.Parse(doc, "fallback-slug", "fallback-cat");
+
+            TestCase.Require(parsed.Slug == original.Slug, "Slug should round-trip.");
+            TestCase.Require(parsed.CategoryId == original.CategoryId, "Category should round-trip.");
+            TestCase.Require(parsed.Title == original.Title, "Title should round-trip.");
+            TestCase.Require(parsed.Type == original.Type, "Type should round-trip, got '" + parsed.Type + "'.");
+            TestCase.Require(parsed.Summary == original.Summary, "Summary/description should round-trip.");
+            TestCase.Require(parsed.Resource == original.Resource, "Resource should round-trip.");
+            TestCase.Require(parsed.Body.TrimEnd('\n') == original.Body.TrimEnd('\n'), "Body should round-trip.");
+            TestCase.Require(string.Join(",", parsed.Tags) == "sales,revenue", "Tags should round-trip, got '" + string.Join(",", parsed.Tags) + "'.");
+            TestCase.Require(string.Join(",", parsed.Links) == "customers,line-items", "Links should round-trip, got '" + string.Join(",", parsed.Links) + "'.");
+            TestCase.Require(parsed.Author == original.Author, "Author should round-trip.");
+            TestCase.Require(parsed.SessionId == original.SessionId, "SessionId should round-trip.");
+            TestCase.Require(parsed.Model == original.Model, "Model should round-trip.");
+            TestCase.Require(parsed.Version == original.Version, "Version should round-trip, got " + parsed.Version + ".");
+            TestCase.Require(Math.Abs(parsed.Salience - original.Salience) < 0.0001, "Salience should round-trip, got " + parsed.Salience + ".");
+            TestCase.Require(parsed.Metadata.Count == 2 && parsed.Metadata["confidence"] == "high" && parsed.Metadata["owner"] == "data-team", "Metadata should round-trip.");
+            TestCase.Require(parsed.CreatedUtc == original.CreatedUtc, "CreatedUtc should round-trip, got " + parsed.CreatedUtc.ToString("O") + ".");
+            TestCase.Require(parsed.LastUpdateUtc == original.LastUpdateUtc, "LastUpdateUtc should round-trip, got " + parsed.LastUpdateUtc.ToString("O") + ".");
+            return Task.CompletedTask;
+        }
+
+        private static async Task OkfSearchKeywordHitAsync()
+        {
+            string work = WorkDir();
+            try
+            {
+                Scope scope = OkfScope(work);
+                IMemoryStore store = MemoryStoreFactory.Create(scope);
+                await store.EnsureScopeAsync(scope).ConfigureAwait(false);
+                await store.UpsertAsync(scope, Mem(scope, "orders", "Orders", "One row per completed customer order."), null).ConfigureAwait(false);
+
+                MemorySearchResult result = await store.SearchAsync(scope, new MemorySearchQuery { QueryText = "completed order", Mode = SearchModeEnum.Keyword, TopK = 5 }, null).ConfigureAwait(false);
+                TestCase.Require(result.Hits.Count >= 1, "Expected at least one hit reading OKF frontmatter files.");
+                TestCase.Require(result.Hits[0].Slug == "orders", "Expected the hit slug to be 'orders', got '" + result.Hits[0].Slug + "'.");
+                TestCase.Require(!string.IsNullOrEmpty(result.Hits[0].Snippet), "Expected a non-empty snippet.");
+            }
+            finally
+            {
+                TryDeleteDir(work);
+            }
+        }
+
+        private static async Task OkfIndexNotAMemoryAsync()
+        {
+            string work = WorkDir();
+            try
+            {
+                Scope scope = OkfScope(work);
+                IMemoryStore store = MemoryStoreFactory.Create(scope);
+                await store.EnsureScopeAsync(scope).ConfigureAwait(false);
+                // "Orders" appears both in the memory (title) AND in the generated index.md (as a link label),
+                // so a single hit proves the reserved index.md is excluded from search.
+                await store.UpsertAsync(scope, Mem(scope, "orders", "Orders", "One row per completed order."), null).ConfigureAwait(false);
+                string indexText = await File.ReadAllTextAsync(Path.Combine(work, "index.md")).ConfigureAwait(false);
+                TestCase.Require(indexText.Contains("Orders"), "The index.md should mention 'Orders' for this test to be meaningful.");
+
+                MemorySearchResult result = await store.SearchAsync(scope, new MemorySearchQuery { QueryText = "Orders", Mode = SearchModeEnum.Keyword, TopK = 10 }, null).ConfigureAwait(false);
+                TestCase.Require(result.Hits.All(h => h.Slug != "index"), "The reserved index.md must never be returned as a memory.");
+                TestCase.Require(result.Hits.Count == 1, "Only the real memory should match, not the index.md, got " + result.Hits.Count + " hits.");
+            }
+            finally
+            {
+                TryDeleteDir(work);
+            }
+        }
+
+        private static async Task OkfReupsertSingleFileAsync()
+        {
+            string work = WorkDir();
+            try
+            {
+                Scope scope = OkfScope(work);
+                IMemoryStore store = MemoryStoreFactory.Create(scope);
+                await store.EnsureScopeAsync(scope).ConfigureAwait(false);
+
+                await store.UpsertAsync(scope, Mem(scope, "orders", "Orders", "Original body."), null).ConfigureAwait(false);
+                await store.UpsertAsync(scope, Mem(scope, "orders", "Orders", "Revised body with more detail."), null).ConfigureAwait(false);
+
+                string categoryDir = Path.Combine(work, "cat_1");
+                string[] files = Directory.GetFiles(categoryDir, "*.md", SearchOption.AllDirectories);
+                TestCase.Require(files.Length == 1, "Re-upserting the same slug must keep a single file, found " + files.Length + ".");
+
+                MemorySearchResult result = await store.SearchAsync(scope, new MemorySearchQuery { QueryText = "revised detail", Mode = SearchModeEnum.Keyword, TopK = 5 }, null).ConfigureAwait(false);
+                TestCase.Require(result.Hits.Count == 1, "The re-upserted memory should be the single searchable copy, got " + result.Hits.Count + ".");
+            }
+            finally
+            {
+                TryDeleteDir(work);
+            }
+        }
+
+        private static async Task OkfDeleteRemovesAndReindexesAsync()
+        {
+            string work = WorkDir();
+            try
+            {
+                Scope scope = OkfScope(work);
+                IMemoryStore store = MemoryStoreFactory.Create(scope);
+                await store.EnsureScopeAsync(scope).ConfigureAwait(false);
+
+                Memory keep = Mem(scope, "orders", "Orders", "One row per order.");
+                Memory drop = Mem(scope, "customers", "Customers", "One row per customer.");
+                await store.UpsertAsync(scope, keep, null).ConfigureAwait(false);
+                string dropKey = await store.UpsertAsync(scope, drop, null).ConfigureAwait(false);
+
+                await store.DeleteAsync(scope, drop).ConfigureAwait(false);
+                TestCase.Require(!File.Exists(dropKey), "Delete should remove the memory file.");
+
+                string index = await File.ReadAllTextAsync(Path.Combine(work, "index.md")).ConfigureAwait(false);
+                TestCase.Require(!index.Contains("customers.md"), "The deleted memory should be dropped from the index.");
+                TestCase.Require(index.Contains("orders.md"), "The surviving memory should remain in the index.");
+            }
+            finally
+            {
+                TryDeleteDir(work);
+            }
+        }
+
+        private static async Task OkfForeignBundleImportAsync()
+        {
+            string work = WorkDir();
+            try
+            {
+                Scope scope = OkfScope(work);
+                IMemoryStore store = MemoryStoreFactory.Create(scope);
+                await store.EnsureScopeAsync(scope).ConfigureAwait(false);
+
+                // A foreign OKF document: bare (unquoted) scalars, a flow-style tag list, an unknown type,
+                // and no Isis provenance extras — the shape a non-Isis producer (e.g. an enrichment agent) emits.
+                string foreign =
+                    "---\n" +
+                    "type: BigQuery Table\n" +
+                    "title: Orders\n" +
+                    "description: One row per completed customer order.\n" +
+                    "resource: https://console.cloud.google.com/bigquery\n" +
+                    "tags: [sales, revenue]\n" +
+                    "timestamp: 2026-05-28T14:30:00Z\n" +
+                    "---\n" +
+                    "# Schema\n| order_id | STRING |\n";
+                string dir = Path.Combine(work, "datasets");
+                Directory.CreateDirectory(dir);
+                await File.WriteAllTextAsync(Path.Combine(dir, "orders.md"), foreign).ConfigureAwait(false);
+
+                // Parsed directly: unknown type maps to Reference with the original preserved; fields survive.
+                Memory parsed = OkfDocument.Parse(foreign, "orders", "datasets");
+                TestCase.Require(parsed.Type == MemoryTypeEnum.Reference, "An unknown foreign type should map to Reference, got '" + parsed.Type + "'.");
+                TestCase.Require(parsed.Metadata.TryGetValue("sourceType", out string? src) && src == "BigQuery Table", "The original foreign type should be preserved in metadata.");
+                TestCase.Require(parsed.Title == "Orders", "A bare scalar title should parse.");
+                TestCase.Require(parsed.Resource == "https://console.cloud.google.com/bigquery", "A bare URI resource should parse.");
+                TestCase.Require(string.Join(",", parsed.Tags) == "sales,revenue", "A flow-style tag list should parse, got '" + string.Join(",", parsed.Tags) + "'.");
+                TestCase.Require(parsed.CategoryId == "datasets", "The category should fall back to the parent directory.");
+
+                // And the store picks it up through its own read path.
+                MemorySearchResult result = await store.SearchAsync(scope, new MemorySearchQuery { QueryText = "customer order", Mode = SearchModeEnum.Keyword, TopK = 5 }, null).ConfigureAwait(false);
+                TestCase.Require(result.Hits.Any(h => h.Slug == "orders"), "The foreign bundle document should be searchable.");
+            }
+            finally
+            {
+                TryDeleteDir(work);
+            }
+        }
+
+        private static async Task OkfNullTargetUpsertThrowsAsync()
+        {
+            Scope scope = new Scope { TenantId = "ten_x", Name = "s", StoreProvider = StoreProviderEnum.Filesystem, FilesystemLayout = FilesystemLayoutEnum.OkfBundle, TargetPath = null };
+            IMemoryStore store = MemoryStoreFactory.Create(scope);
+            Memory memory = Mem(scope, "orders", "Orders", "One row per order.");
+            await TestCase.ThrowsAsync<InvalidOperationException>(
+                () => store.UpsertAsync(scope, memory, null),
+                "OKF upsert on a filesystem scope with no target path should throw InvalidOperationException.").ConfigureAwait(false);
+        }
+
+        private static Task OkfParseNoFrontmatterAsync()
+        {
+            Memory parsed = OkfDocument.Parse("Just a plain markdown body, no frontmatter.", "my-slug", "my-cat");
+            TestCase.Require(parsed.Slug == "my-slug", "Slug should fall back to the filename when frontmatter is absent.");
+            TestCase.Require(parsed.CategoryId == "my-cat", "Category should fall back to the directory when frontmatter is absent.");
+            TestCase.Require(parsed.Body.Contains("plain markdown body"), "The whole content should be treated as the body.");
+            return Task.CompletedTask;
+        }
+
+        private static Task OkfParseMalformedMetadataAsync()
+        {
+            string doc = "---\ntype: \"Project\"\nslug: \"x\"\ncategory: \"c\"\nmetadata: {not valid json]\n---\nBody.";
+            Memory parsed = OkfDocument.Parse(doc, "x", "c");
+            TestCase.Require(parsed.Metadata.Count == 0, "A malformed metadata block should be ignored, not throw, leaving metadata empty.");
+            TestCase.Require(parsed.Body.TrimEnd('\n') == "Body.", "The body should still parse around a malformed metadata block.");
+            return Task.CompletedTask;
+        }
+
+        private static Task OkfParseUnterminatedFrontmatterAsync()
+        {
+            string doc = "---\ntype: \"Project\"\ntitle: \"Orphan\"\nno closing delimiter and then body text";
+            Memory parsed = OkfDocument.Parse(doc, "x", "c");
+            // Tolerant: no exception; content after the opener becomes the body.
+            TestCase.Require(parsed.Body.Contains("body text"), "An unterminated frontmatter should be treated tolerantly as body.");
+            return Task.CompletedTask;
+        }
+
+        private static Task OkfParseEmptyContentAsync()
+        {
+            Memory parsed = OkfDocument.Parse(string.Empty, "fallback", "cat");
+            TestCase.Require(parsed.Slug == "fallback", "Empty content should still yield the fallback slug.");
+            TestCase.Require(parsed.CategoryId == "cat", "Empty content should still yield the fallback category.");
+            TestCase.Require(parsed.Body == string.Empty, "Empty content should yield an empty body.");
+            return Task.CompletedTask;
+        }
+
+        #endregion
+
         #region Private-Methods-Filesystem-NoTarget
 
         private static async Task FsNullTargetEnsureThrowsAsync()
@@ -622,6 +927,11 @@ namespace Test.Shared
         private static Scope SingleFileScope(string dir)
         {
             return new Scope { TenantId = "ten_x", Name = "s", StoreProvider = StoreProviderEnum.Filesystem, FilesystemLayout = FilesystemLayoutEnum.SingleFile, TargetPath = dir };
+        }
+
+        private static Scope OkfScope(string dir)
+        {
+            return new Scope { TenantId = "ten_x", Name = "Memory Index", StoreProvider = StoreProviderEnum.Filesystem, FilesystemLayout = FilesystemLayoutEnum.OkfBundle, TargetPath = dir };
         }
 
         private static Scope RecallScope()

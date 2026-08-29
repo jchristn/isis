@@ -131,6 +131,7 @@ IF OBJECT_ID(N'dbo.memories', N'U') IS NULL CREATE TABLE memories (
     title NVARCHAR(512),
     type NVARCHAR(32) NOT NULL DEFAULT 'Project',
     summary NVARCHAR(MAX),
+    resource NVARCHAR(1024),
     body NVARCHAR(MAX) NOT NULL,
     tags NVARCHAR(MAX) NOT NULL,
     links NVARCHAR(MAX) NOT NULL,
