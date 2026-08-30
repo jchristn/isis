@@ -4,6 +4,11 @@ This guide connects an AI agent to Isis's memory platform through MCP. It covers
 endpoint and headers, ready-to-paste configuration for common clients, a first-calls
 walkthrough, and troubleshooting.
 
+> **Naming.** The product is **Isis** (proper noun — `Isis` or `isis`), never the all-caps
+> `ISIS`. Tools have no `isis_` prefix; your client namespaces them under the server key
+> (e.g. `isis.whoami`). Every tool except `whoami` takes a `tenantId` — call `whoami` first to
+> obtain it.
+
 For the full tool contract, response schemas, and per-tool guidance, see
 [MCP_API.md](MCP_API.md).
 
@@ -148,7 +153,7 @@ access-key header (or send the access key as a bearer token):
 ```
 
 The MCP `initialize` handshake succeeds over streamable HTTP + SSE, after which
-`tools/list` returns the ten `isis_*` tools. Clients that only support the classic
+`tools/list` returns the ten `*` tools. Clients that only support the classic
 JSON-RPC path can use `http://localhost:8720/rpc`, but `/mcp` is preferred.
 
 You can verify the endpoint is reachable and correctly authenticated with a raw MCP
@@ -173,7 +178,7 @@ you write, and prefer summaries before full bodies.
 
 ### 1. Discover your tenant
 
-Call `isis_whoami` with no arguments. It returns the `tenantId` your credential maps to.
+Call `whoami` with no arguments. It returns the `tenantId` your credential maps to.
 
 ```json
 {}
@@ -190,13 +195,13 @@ Response `data`:
 List scopes, then read the guide for the one you want. The guide returns the scope's
 categories, their usage instructions, and active policies.
 
-`isis_scope_enumerate`:
+`scope_enumerate`:
 
 ```json
 { "tenantId": "ten_a1b2c3" }
 ```
 
-`isis_guide`:
+`guide`:
 
 ```json
 { "tenantId": "ten_a1b2c3", "scopeId": "scp_repo" }
@@ -204,7 +209,7 @@ categories, their usage instructions, and active policies.
 
 ### 3. Write a memory
 
-Use `isis_memory_upsert` with a stable slug so future writes update the same memory
+Use `memory_upsert` with a stable slug so future writes update the same memory
 instead of duplicating it.
 
 ```json
@@ -222,7 +227,7 @@ instead of duplicating it.
 
 ### 4. Recall it
 
-Search the scope with `isis_memory_search`. Use `Hybrid` on a RecallDB-backed scope;
+Search the scope with `memory_search`. Use `Hybrid` on a RecallDB-backed scope;
 `Keyword` works everywhere.
 
 ```json
@@ -235,7 +240,7 @@ Search the scope with `isis_memory_search`. Use `Hybrid` on a RecallDB-backed sc
 }
 ```
 
-The result carries summaries and ids; call `isis_memory_read` with an id to pull the full
+The result carries summaries and ids; call `memory_read` with an id to pull the full
 body when you need it.
 
 ## Troubleshooting
@@ -249,7 +254,7 @@ header under a `headers` object (see the snippets above) rather than as a URL pa
 
 ### `403` on a tenant call
 
-Your credential is not authorized for the `tenantId` you passed. Call `isis_whoami` and use
+Your credential is not authorized for the `tenantId` you passed. Call `whoami` and use
 the `tenantId` it returns. A credential can only operate on its own tenant unless its user
 holds the `IsAdmin` flag for cross-tenant work.
 

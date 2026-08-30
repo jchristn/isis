@@ -1,7 +1,7 @@
 # Isis — Agent Memory Platform — Product Plan
 
 > **Status:** Actionable product plan. Supersedes `docs/SCAFFOLD_PLAN.md` (early hypothesis under the placeholder name "Mnemosyne").
-> **Product name:** `Isis`. Server prefix `isis`, MCP tool prefix `isis_`, PrettyId prefixes below.
+> **Product name:** `Isis`. Server prefix `isis`, MCP tool prefix ``, PrettyId prefixes below.
 > **Governing requirements:** everything here complies with `C:\code\agents\requirements` — `BACKEND_ARCHITECTURE.md`, `AUTHENTICATION.md`, `FRONTEND_ARCHITECTURE.md`, `DASHBOARD_STYLE_AND_USABILITY.md`, `TELEMETRY_REQUIREMENTS.md`, `BACKEND_TEST_ARCHITECTURE.md`, `REPOSITORY_REQUIREMENTS.md`, `CODE_STYLE.md`, `I18N.md`. Where a requirement doc conflicts with a reference implementation, the requirement doc wins.
 > **Primary reference implementations (all local):** RecallDB (`C:\Code\RecallDB`), Verbex (`C:\Code\Verbex`), Voltaic (`C:\Code\Voltaic`), Conductor (`C:\Code\Conductor`), Partio (`C:\Code\Partio`), Pneuma-Old (`C:\Code\Pneuma-Old`), AssistantHub (`C:\Code\AssistantHub`), LiteGraph, Lattice, Armada, Tempo.
 > **Target framework:** **.NET 10** (`net10.0`). RecallDB SDK (`RecallDb.Sdk` 0.2.1) and Voltaic 0.6.1 both require it; libraries multi-target `net8.0;net10.0` where practical, servers target `net10.0`.
@@ -39,7 +39,7 @@ Isis gives a model durable, structured, queryable **memory** that survives acros
 
 Two surfaces:
 
-- **MCP** (`Isis.McpServer`) — the agent-facing surface. A small, self-describing tool set (`isis_guide`, category CRUD/enumerate, memory CRUD/enumerate/**search**, policy enumerate). The agent calls `isis_guide` first to learn the categories and their usage instructions.
+- **MCP** (`Isis.McpServer`) — the agent-facing surface. A small, self-describing tool set (`guide`, category CRUD/enumerate, memory CRUD/enumerate/**search**, policy enumerate). The agent calls `guide` first to learn the categories and their usage instructions.
 - **REST** (`Isis.Server`) — the human/dashboard-facing management surface. Full CRUD over tenants, scopes, categories, memories, policies, seed packs, model endpoints, plus request history, health, and OpenAPI.
 
 The problem it removes is **re-acquisition of context**: today an agent re-scans a filesystem or re-learns conventions every session, burning tokens on work already done. Isis turns that recurring cost into a one-time write plus cheap recall.
@@ -98,7 +98,7 @@ Design decisions:
 | **Category** | A named bucket with a **description** and **usage instructions** — the contract the model reads to know when/how to write. Maps to a RecallDB label. | Isis DB (+ label) | `cat_` |
 | **Memory** | One atomic note: title, body, summary, tags, type, metadata, links, provenance, salience. | RecallDB document (body+vector) + Isis DB index row | `mem_` |
 | **Link** | Typed edge between memories (`[[slug]]` graph). | Isis DB | `lnk_` |
-| **Policy** | Always-on cross-cutting guidance (writing style, commit rules). Surfaced proactively via `isis_guide`, not searched. | Isis DB | `pol_` |
+| **Policy** | Always-on cross-cutting guidance (writing style, commit rules). Surfaced proactively via `guide`, not searched. | Isis DB | `pol_` |
 | **SeedPack (Profile)** | A user-supplied bundle of categories + instructions + policies that initializes a scope. | Isis DB | `seed_` |
 | **EmbeddingEndpoint** | Configured, health-checked embedding model endpoint. | Isis DB | `eep_` |
 | **InferenceEndpoint** | Configured, health-checked completion/inference endpoint (memory hygiene + chat). | Isis DB | `iep_` |
@@ -130,7 +130,7 @@ Design decisions:
 }
 ```
 
-`isis_memory_create` is **idempotent on `(scopeId, categoryId, slug)`** — re-writing "filesystem-layout" updates in place rather than duplicating.
+`memory_create` is **idempotent on `(scopeId, categoryId, slug)`** — re-writing "filesystem-layout" updates in place rather than duplicating.
 
 ---
 
@@ -301,20 +301,20 @@ Route registrars: `HealthRoutes, AuthRoutes, TenantRoutes, UserRoutes, Credentia
 
 **REST proxy:** one `HttpClient` with `BaseAddress = http://127.0.0.1:{Rest.Port}` (normalize wildcard host to `127.0.0.1` — avoids the Windows `localhost`→`::1` stall). `InvokeRestToolAsync(tool, method, route, args, includeBody, ct)` forwards the caller's credentials downstream and wraps responses in `{ success, statusCode, tool, data|error }`.
 
-**Tools (`isis_` prefix, ~15), one class per group in `Tools/`:**
+**Tools (`` prefix, ~15), one class per group in `Tools/`:**
 
 | Tool | Purpose | Proxies |
 |---|---|---|
-| `isis_guide` | **Call first.** Returns categories + instructions + active policies + worked examples. | GET `/guide` |
-| `isis_health` | Liveness. | GET `/health` |
-| `isis_policy_enumerate` | Always-on guidance. | GET `/policies` |
-| `isis_category_enumerate` | Scope categories incl. instructions. | GET `/categories` |
-| `isis_category_read` / `_create` / `_update` / `_delete` | Category CRUD. | `/categories[/{id}]` |
-| `isis_memory_enumerate` | **Summaries only** (token-cheap), filter by category/tag. | GET `/memories` |
-| `isis_memory_search` | Keyword+semantic; ranked snippets under `token_budget`. | POST `/memories/search` |
-| `isis_memory_read` | Full body by id/slug (only call returning full text). | GET `/memories/{id}` |
-| `isis_memory_create` | Idempotent upsert by `(scope,category,slug)`; returns slug. | POST `/memories` |
-| `isis_memory_update` / `_delete` | Edit / remove. | `/memories/{id}` |
+| `guide` | **Call first.** Returns categories + instructions + active policies + worked examples. | GET `/guide` |
+| `health` | Liveness. | GET `/health` |
+| `policy_enumerate` | Always-on guidance. | GET `/policies` |
+| `category_enumerate` | Scope categories incl. instructions. | GET `/categories` |
+| `category_read` / `_create` / `_update` / `_delete` | Category CRUD. | `/categories[/{id}]` |
+| `memory_enumerate` | **Summaries only** (token-cheap), filter by category/tag. | GET `/memories` |
+| `memory_search` | Keyword+semantic; ranked snippets under `token_budget`. | POST `/memories/search` |
+| `memory_read` | Full body by id/slug (only call returning full text). | GET `/memories/{id}` |
+| `memory_create` | Idempotent upsert by `(scope,category,slug)`; returns slug. | POST `/memories` |
+| `memory_update` / `_delete` | Edit / remove. | `/memories/{id}` |
 
 Schemas built with a copied `CreateSchema(bool additionalProperties, params McpSchemaProperty[])` + `RequiredString/OptionalString/OptionalBoolean/OptionalInteger/OptionalStringArray` helpers (Pneuma `Infrastructure.cs`). `tenantId`/`scopeId` come from the request context, not tool args, so a model cannot spoof another tenant. An `install` verb writes the caller's `~/.claude.json` `mcpServers` entry pointing at `http://host:port/mcp` (AssistantHub pattern).
 
@@ -476,6 +476,6 @@ The dominant saved cost is **context re-acquisition**. Let `S` = tokens to under
 - **RecallDB SDK publication** — confirm `RecallDb.Sdk` 0.2.1 is on nuget.org or vendor via `ProjectReference`.
 - **`.NET 10` floor** — all projects target net10.0 (libs multi-target); confirm CI runners have the SDK.
 - **MCP auth bridge under SSE** — the `AsyncLocal` + `RequestReceived` correlation is subtle; port Pneuma's implementation verbatim and cover it with the MCP test suite.
-- **Policy surfacing** — policies surface via `isis_guide` (pull), not silent injection; confirm this matches operator expectation.
+- **Policy surfacing** — policies surface via `guide` (pull), not silent injection; confirm this matches operator expectation.
 - **Voltaic version pin** — stay on 0.6.1; ≥1.0 renames `RpcParameters`/`McpHttpServer`/`ClientConnection`.
 ```

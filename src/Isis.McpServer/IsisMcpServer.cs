@@ -211,33 +211,35 @@ namespace Isis.McpServer
         private void RegisterTools()
         {
             _Server.RegisterTool(
-                "isis_whoami",
-                "Resolve the tenant and principal the caller's credential maps to. Call this FIRST to discover your tenantId, then call isis_instructions for this tenant's standing guidance. "
+                "whoami",
+                "The product is named Isis (proper noun; write it 'Isis' or 'isis' — NEVER the all-caps 'ISIS', which is a different thing entirely and must not be used). "
+                + "Resolve the tenant and principal the caller's credential maps to. Call this FIRST to discover your tenantId, then call instructions for this tenant's standing guidance. "
+                + "IMPORTANT — tenantId is required on EVERY other Isis tool call (scope, category, memory, guide, endpoint, and instructions tools all take a tenantId argument): this whoami call is the ONLY one that does not need it, and its response gives you the tenantId to pass to all the others. If you omit tenantId elsewhere the call fails; always thread the tenantId from this response into subsequent calls. "
                 + "Authentication: every call to this Isis MCP server is authenticated with a tenant credential ACCESS KEY, presented as a bearer token — your MCP client sends 'Authorization: Bearer <accessKey>' (the 'x-access-key' header is also accepted). The access key is the public, transferable material; the secret key is NEVER sent to the MCP server and stays client-side. Obtain an access key from an Isis administrator; the local-dev default is 'isisdefaultkey'. Requests without an access key are rejected with HTTP 401. Because the access key alone authenticates an MCP caller, treat it as a capability token and scope it least-privilege.",
                 new { type = "object", properties = new { } },
                 async (RpcParameters? p, CancellationToken ct) =>
-                    await ProxyAsync(HttpMethod.Get, "/v1.0/api/whoami", null, "isis_whoami", CurrentCredentials(), ct).ConfigureAwait(false));
+                    await ProxyAsync(HttpMethod.Get, "/v1.0/api/whoami", null, "whoami", CurrentCredentials(), ct).ConfigureAwait(false));
 
             _Server.RegisterTool(
-                "isis_instructions",
-                "Get this tenant's standing instructions for how to use its memory — conventions, house rules, and guidance authored by the tenant. Call this after isis_whoami. Required: tenantId.",
+                "instructions",
+                "Get this tenant's standing instructions for how to use its memory — conventions, house rules, and guidance authored by the tenant. Call this after whoami. Required: tenantId.",
                 new { type = "object", properties = new { tenantId = new { type = "string", description = "Tenant identifier." } }, required = new[] { "tenantId" } },
                 async (RpcParameters? p, CancellationToken ct) =>
-                    await ProxyAsync(HttpMethod.Get, "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/instructions", null, "isis_instructions", CurrentCredentials(), ct).ConfigureAwait(false));
+                    await ProxyAsync(HttpMethod.Get, "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/instructions", null, "instructions", CurrentCredentials(), ct).ConfigureAwait(false));
 
             _Server.RegisterTool(
-                "isis_scope_enumerate",
+                "scope_enumerate",
                 "List the memory scopes in a tenant. Required: tenantId.",
                 new { type = "object", properties = new { tenantId = new { type = "string", description = "Tenant identifier." } }, required = new[] { "tenantId" } },
                 async (RpcParameters? p, CancellationToken ct) =>
-                    await ProxyAsync(HttpMethod.Get, "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/scopes", null, "isis_scope_enumerate", CurrentCredentials(), ct).ConfigureAwait(false));
+                    await ProxyAsync(HttpMethod.Get, "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/scopes", null, "scope_enumerate", CurrentCredentials(), ct).ConfigureAwait(false));
 
             _Server.RegisterTool(
-                "isis_scope_create",
-                "Create a memory scope for a project when one does not already exist (check first with isis_scope_enumerate). "
+                "scope_create",
+                "Create a memory scope for a project when one does not already exist (check first with scope_enumerate). "
                 + "Required: tenantId, name. Optional: description; storeProvider — RecallDb (default: semantic + keyword, needs an embedding endpoint), Verbex (keyword-only), or Filesystem (keyword-only, git-trackable files). "
-                + "For RecallDb you may pass embeddingEndpointId and dimensionality, but if you omit them the tenant's embedding endpoint and its dimensionality are selected AUTOMATICALLY (list options with isis_endpoint_enumerate). "
-                + "If the tenant has NO embedding endpoint, RecallDb is rejected with guidance — use storeProvider Filesystem or Verbex instead. Filesystem also accepts filesystemLayout (SingleFile|Hierarchy) and targetPath.",
+                + "For RecallDb you may pass embeddingEndpointId and dimensionality, but if you omit them the tenant's embedding endpoint and its dimensionality are selected AUTOMATICALLY (list options with endpoint_enumerate). "
+                + "If the tenant has NO embedding endpoint, RecallDb is rejected with guidance — use storeProvider Filesystem or Verbex instead. Filesystem also accepts filesystemLayout (SingleFile|Hierarchy|OkfBundle — OkfBundle writes a git-trackable Open Knowledge Format bundle: one markdown file per memory with YAML frontmatter plus a generated index.md) and targetPath.",
                 new
                 {
                     type = "object",
@@ -249,7 +251,7 @@ namespace Isis.McpServer
                         storeProvider = new { type = "string", description = "RecallDb, Verbex, or Filesystem. Defaults to RecallDb." },
                         embeddingEndpointId = new { type = "string", description = "Embedding endpoint id for RecallDb semantic scopes." },
                         dimensionality = new { type = "integer", description = "Embedding vector dimension for RecallDb scopes." },
-                        filesystemLayout = new { type = "string", description = "SingleFile or Hierarchy, for Filesystem scopes." },
+                        filesystemLayout = new { type = "string", description = "SingleFile, Hierarchy, or OkfBundle (Open Knowledge Format), for Filesystem scopes." },
                         targetPath = new { type = "string", description = "Directory or file path, for Filesystem scopes." }
                     },
                     required = new[] { "tenantId", "name" }
@@ -266,11 +268,11 @@ namespace Isis.McpServer
                     if (p?.GetString("filesystemLayout") != null) body["filesystemLayout"] = p.GetString("filesystemLayout");
                     if (p?.GetString("targetPath") != null) body["targetPath"] = p.GetString("targetPath");
                     string path = "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/scopes";
-                    return await ProxyAsync(HttpMethod.Post, path, JsonSerializer.Serialize(body), "isis_scope_create", CurrentCredentials(), ct).ConfigureAwait(false);
+                    return await ProxyAsync(HttpMethod.Post, path, JsonSerializer.Serialize(body), "scope_create", CurrentCredentials(), ct).ConfigureAwait(false);
                 });
 
             _Server.RegisterTool(
-                "isis_endpoint_enumerate",
+                "endpoint_enumerate",
                 "List the tenant's configured model endpoints (embedding and inference), each with its id, kind, model, and embedding dimensionality. Use this to find an embeddingEndpointId (and its dimensionality) BEFORE creating a RecallDb semantic scope. If no embedding endpoint is listed, create Filesystem or Verbex (keyword-only) scopes instead. Required: tenantId. Optional: kind (Embedding or Inference).",
                 new { type = "object", properties = new { tenantId = new { type = "string" }, kind = new { type = "string", description = "Optional filter: Embedding or Inference." } }, required = new[] { "tenantId" } },
                 async (RpcParameters? p, CancellationToken ct) =>
@@ -278,25 +280,25 @@ namespace Isis.McpServer
                     string path = "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/endpoints";
                     string? kind = p?.GetString("kind");
                     if (!string.IsNullOrEmpty(kind)) path += "?kind=" + Encode(kind);
-                    return await ProxyAsync(HttpMethod.Get, path, null, "isis_endpoint_enumerate", CurrentCredentials(), ct).ConfigureAwait(false);
+                    return await ProxyAsync(HttpMethod.Get, path, null, "endpoint_enumerate", CurrentCredentials(), ct).ConfigureAwait(false);
                 });
 
             _Server.RegisterTool(
-                "isis_guide",
+                "guide",
                 "Get the operating guide for a scope: its categories, their usage instructions, and store capabilities. Call this first. Required: tenantId, scopeId.",
                 new { type = "object", properties = new { tenantId = new { type = "string" }, scopeId = new { type = "string" } }, required = new[] { "tenantId", "scopeId" } },
                 async (RpcParameters? p, CancellationToken ct) =>
-                    await ProxyAsync(HttpMethod.Get, "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/scopes/" + Encode(Require(p, "scopeId")) + "/guide", null, "isis_guide", CurrentCredentials(), ct).ConfigureAwait(false));
+                    await ProxyAsync(HttpMethod.Get, "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/scopes/" + Encode(Require(p, "scopeId")) + "/guide", null, "guide", CurrentCredentials(), ct).ConfigureAwait(false));
 
             _Server.RegisterTool(
-                "isis_category_enumerate",
+                "category_enumerate",
                 "List categories in a scope, including their usage instructions. Required: tenantId, scopeId.",
                 new { type = "object", properties = new { tenantId = new { type = "string" }, scopeId = new { type = "string" } }, required = new[] { "tenantId", "scopeId" } },
                 async (RpcParameters? p, CancellationToken ct) =>
-                    await ProxyAsync(HttpMethod.Get, "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/scopes/" + Encode(Require(p, "scopeId")) + "/categories", null, "isis_category_enumerate", CurrentCredentials(), ct).ConfigureAwait(false));
+                    await ProxyAsync(HttpMethod.Get, "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/scopes/" + Encode(Require(p, "scopeId")) + "/categories", null, "category_enumerate", CurrentCredentials(), ct).ConfigureAwait(false));
 
             _Server.RegisterTool(
-                "isis_category_create",
+                "category_create",
                 "Create a category in a scope. Required: tenantId, scopeId, name. Optional: description, instructions.",
                 new
                 {
@@ -318,11 +320,11 @@ namespace Isis.McpServer
                     if (p?.GetString("description") != null) body["description"] = p.GetString("description");
                     if (p?.GetString("instructions") != null) body["instructions"] = p.GetString("instructions");
                     string path = "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/scopes/" + Encode(Require(p, "scopeId")) + "/categories";
-                    return await ProxyAsync(HttpMethod.Post, path, JsonSerializer.Serialize(body), "isis_category_create", CurrentCredentials(), ct).ConfigureAwait(false);
+                    return await ProxyAsync(HttpMethod.Post, path, JsonSerializer.Serialize(body), "category_create", CurrentCredentials(), ct).ConfigureAwait(false);
                 });
 
             _Server.RegisterTool(
-                "isis_memory_enumerate",
+                "memory_enumerate",
                 "List memory summaries in a scope. Required: tenantId, scopeId. Optional: category (categoryId filter), maxResults.",
                 new
                 {
@@ -345,18 +347,18 @@ namespace Isis.McpServer
                     long? maxResults = p?.GetInt64("maxResults");
                     if (maxResults.HasValue) queryParts.Add("maxResults=" + maxResults.Value);
                     if (queryParts.Count > 0) path += "?" + string.Join("&", queryParts);
-                    return await ProxyAsync(HttpMethod.Get, path, null, "isis_memory_enumerate", CurrentCredentials(), ct).ConfigureAwait(false);
+                    return await ProxyAsync(HttpMethod.Get, path, null, "memory_enumerate", CurrentCredentials(), ct).ConfigureAwait(false);
                 });
 
             _Server.RegisterTool(
-                "isis_memory_read",
+                "memory_read",
                 "Read a single memory by id. Required: tenantId, scopeId, memoryId.",
                 new { type = "object", properties = new { tenantId = new { type = "string" }, scopeId = new { type = "string" }, memoryId = new { type = "string" } }, required = new[] { "tenantId", "scopeId", "memoryId" } },
                 async (RpcParameters? p, CancellationToken ct) =>
-                    await ProxyAsync(HttpMethod.Get, "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/scopes/" + Encode(Require(p, "scopeId")) + "/memories/" + Encode(Require(p, "memoryId")), null, "isis_memory_read", CurrentCredentials(), ct).ConfigureAwait(false));
+                    await ProxyAsync(HttpMethod.Get, "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/scopes/" + Encode(Require(p, "scopeId")) + "/memories/" + Encode(Require(p, "memoryId")), null, "memory_read", CurrentCredentials(), ct).ConfigureAwait(false));
 
             _Server.RegisterTool(
-                "isis_memory_upsert",
+                "memory_upsert",
                 "Create or update a memory. Idempotent on (scope, category, slug). Required: tenantId, scopeId, categoryId, slug, body. Optional: title, summary, type.",
                 new
                 {
@@ -384,11 +386,11 @@ namespace Isis.McpServer
                     if (p?.GetString("summary") != null) body["summary"] = p.GetString("summary");
                     if (p?.GetString("type") != null) body["type"] = p.GetString("type");
                     string path = "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/scopes/" + Encode(Require(p, "scopeId")) + "/memories";
-                    return await ProxyAsync(HttpMethod.Post, path, JsonSerializer.Serialize(body), "isis_memory_upsert", CurrentCredentials(), ct).ConfigureAwait(false);
+                    return await ProxyAsync(HttpMethod.Post, path, JsonSerializer.Serialize(body), "memory_upsert", CurrentCredentials(), ct).ConfigureAwait(false);
                 });
 
             _Server.RegisterTool(
-                "isis_memory_search",
+                "memory_search",
                 "Search a scope's memory. Required: tenantId, scopeId, queryText. Optional: mode (Keyword|Semantic|Hybrid), topK, category.",
                 new
                 {
@@ -413,15 +415,15 @@ namespace Isis.McpServer
                     if (topK.HasValue) body["topK"] = topK.Value;
                     if (p?.GetString("categoryName") != null) body["categoryFilter"] = p.GetString("categoryName");
                     string path = "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/scopes/" + Encode(Require(p, "scopeId")) + "/memories/search";
-                    return await ProxyAsync(HttpMethod.Post, path, JsonSerializer.Serialize(body), "isis_memory_search", CurrentCredentials(), ct).ConfigureAwait(false);
+                    return await ProxyAsync(HttpMethod.Post, path, JsonSerializer.Serialize(body), "memory_search", CurrentCredentials(), ct).ConfigureAwait(false);
                 });
 
             _Server.RegisterTool(
-                "isis_memory_delete",
+                "memory_delete",
                 "Delete a memory by id. Required: tenantId, scopeId, memoryId.",
                 new { type = "object", properties = new { tenantId = new { type = "string" }, scopeId = new { type = "string" }, memoryId = new { type = "string" } }, required = new[] { "tenantId", "scopeId", "memoryId" } },
                 async (RpcParameters? p, CancellationToken ct) =>
-                    await ProxyAsync(HttpMethod.Delete, "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/scopes/" + Encode(Require(p, "scopeId")) + "/memories/" + Encode(Require(p, "memoryId")), null, "isis_memory_delete", CurrentCredentials(), ct).ConfigureAwait(false));
+                    await ProxyAsync(HttpMethod.Delete, "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/scopes/" + Encode(Require(p, "scopeId")) + "/memories/" + Encode(Require(p, "memoryId")), null, "memory_delete", CurrentCredentials(), ct).ConfigureAwait(false));
         }
 
         #endregion

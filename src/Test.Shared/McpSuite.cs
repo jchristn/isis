@@ -36,20 +36,20 @@ namespace Test.Shared
                 "Isis MCP Suite",
                 new List<TestCaseDescriptor>
                 {
-                    TestCase.Async("mcp2", "whoami", "isis_whoami resolves the default tenant", WhoamiAsync),
-                    TestCase.Async("mcp2", "scope-create", "isis_scope_create creates a filesystem scope", ScopeCreateAsync),
-                    TestCase.Async("mcp2", "category-create", "isis_category_create creates a category", CategoryCreateAsync),
-                    TestCase.Async("mcp2", "memory-upsert", "isis_memory_upsert writes a memory", MemoryUpsertAsync),
-                    TestCase.Async("mcp2", "memory-upsert-idempotent", "isis_memory_upsert is idempotent by slug", MemoryUpsertIdempotentAsync),
-                    TestCase.Async("mcp2", "memory-upsert-tolerant-type", "isis_memory_upsert defaults an unknown 'type' instead of failing", MemoryUpsertTolerantTypeAsync),
-                    TestCase.Async("mcp2", "memory-search", "isis_memory_search returns hits", MemorySearchAsync),
-                    TestCase.Async("mcp2", "memory-read", "isis_memory_read reads a memory by id", MemoryReadAsync),
-                    TestCase.Async("mcp2", "memory-enumerate", "isis_memory_enumerate lists memories", MemoryEnumerateAsync),
-                    TestCase.Async("mcp2", "category-enumerate", "isis_category_enumerate lists categories", CategoryEnumerateAsync),
-                    TestCase.Async("mcp2", "scope-enumerate", "isis_scope_enumerate lists scopes", ScopeEnumerateAsync),
-                    TestCase.Async("mcp2", "guide", "isis_guide returns categories", GuideAsync),
-                    TestCase.Async("mcp2", "memory-delete", "isis_memory_delete removes a memory", MemoryDeleteAsync),
-                    TestCase.Async("mcp2", "guide-not-found", "isis_guide reports 404 for a missing scope", GuideNotFoundAsync),
+                    TestCase.Async("mcp2", "whoami", "whoami resolves the default tenant", WhoamiAsync),
+                    TestCase.Async("mcp2", "scope-create", "scope_create creates a filesystem scope", ScopeCreateAsync),
+                    TestCase.Async("mcp2", "category-create", "category_create creates a category", CategoryCreateAsync),
+                    TestCase.Async("mcp2", "memory-upsert", "memory_upsert writes a memory", MemoryUpsertAsync),
+                    TestCase.Async("mcp2", "memory-upsert-idempotent", "memory_upsert is idempotent by slug", MemoryUpsertIdempotentAsync),
+                    TestCase.Async("mcp2", "memory-upsert-tolerant-type", "memory_upsert defaults an unknown 'type' instead of failing", MemoryUpsertTolerantTypeAsync),
+                    TestCase.Async("mcp2", "memory-search", "memory_search returns hits", MemorySearchAsync),
+                    TestCase.Async("mcp2", "memory-read", "memory_read reads a memory by id", MemoryReadAsync),
+                    TestCase.Async("mcp2", "memory-enumerate", "memory_enumerate lists memories", MemoryEnumerateAsync),
+                    TestCase.Async("mcp2", "category-enumerate", "category_enumerate lists categories", CategoryEnumerateAsync),
+                    TestCase.Async("mcp2", "scope-enumerate", "scope_enumerate lists scopes", ScopeEnumerateAsync),
+                    TestCase.Async("mcp2", "guide", "guide returns categories", GuideAsync),
+                    TestCase.Async("mcp2", "memory-delete", "memory_delete removes a memory", MemoryDeleteAsync),
+                    TestCase.Async("mcp2", "guide-not-found", "guide reports 404 for a missing scope", GuideNotFoundAsync),
                     TestCase.Async("mcp2", "anonymous-unauthorized", "anonymous credentials are rejected with 401", AnonymousUnauthorizedAsync),
                     TestCase.Async("mcp2", "access-key-only", "the access key alone (no secret) authorizes", AccessKeyOnlyAuthorizesAsync),
                     TestCase.Async("mcp2", "wrong-secret-rejected", "a present but wrong secret is rejected with 401", WrongSecretRejectedAsync),
@@ -66,7 +66,7 @@ namespace Test.Shared
         {
             using McpContext ctx = await McpContext.StartAsync().ConfigureAwait(false);
 
-            JsonElement who = Data(await ctx.Mcp.ProxyAsync(HttpMethod.Get, "/v1.0/api/whoami", null, "isis_whoami", ctx.Access).ConfigureAwait(false), "whoami");
+            JsonElement who = Data(await ctx.Mcp.ProxyAsync(HttpMethod.Get, "/v1.0/api/whoami", null, "whoami", ctx.Access).ConfigureAwait(false), "whoami");
             if (who.GetProperty("tenantId").GetString() != "ten_default") throw new InvalidOperationException("Expected whoami to resolve tenant 'ten_default'.");
         }
 
@@ -110,7 +110,7 @@ namespace Test.Shared
             if (first.GetProperty("id").GetString() != second.GetProperty("id").GetString()) throw new InvalidOperationException("Upsert by slug must reuse the same id.");
 
             string path = "/v1.0/api/tenants/ten_default/scopes/" + scopeId + "/memories";
-            JsonElement list = Data(await ctx.Mcp.ProxyAsync(HttpMethod.Get, path, null, "isis_memory_enumerate", ctx.Admin).ConfigureAwait(false), "enumerate");
+            JsonElement list = Data(await ctx.Mcp.ProxyAsync(HttpMethod.Get, path, null, "memory_enumerate", ctx.Admin).ConfigureAwait(false), "enumerate");
             if (list.GetProperty("totalRecords").GetInt64() != 1) throw new InvalidOperationException("Expected exactly one memory after two upserts of the same slug.");
         }
 
@@ -125,7 +125,7 @@ namespace Test.Shared
             // "General"). The write must still succeed — the unknown type defaults to Project — rather than
             // failing the whole body and reporting the misleading "requires a slug and a categoryId".
             string memoryBody = JsonSerializer.Serialize(new { categoryId, slug = "arch", title = "Arch", body = "overview", type = "General" });
-            JsonElement saved = Data(await ctx.Mcp.ProxyAsync(HttpMethod.Post, "/v1.0/api/tenants/ten_default/scopes/" + scopeId + "/memories", memoryBody, "isis_memory_upsert", ctx.Access).ConfigureAwait(false), "upsert unknown type");
+            JsonElement saved = Data(await ctx.Mcp.ProxyAsync(HttpMethod.Post, "/v1.0/api/tenants/ten_default/scopes/" + scopeId + "/memories", memoryBody, "memory_upsert", ctx.Access).ConfigureAwait(false), "upsert unknown type");
             if (saved.GetProperty("slug").GetString() != "arch") throw new InvalidOperationException("Expected the memory to be created despite an unknown 'type'.");
             if (saved.GetProperty("type").GetString() != "Project") throw new InvalidOperationException("Expected an unknown 'type' to default to 'Project', got '" + saved.GetProperty("type").GetString() + "'.");
         }
@@ -139,7 +139,7 @@ namespace Test.Shared
             await UpsertMemoryAsync(ctx, scopeId, categoryId, "grip", "Grip fighting", "Win the grip to win the exchange; control the sleeve and collar.").ConfigureAwait(false);
 
             string searchBody = JsonSerializer.Serialize(new { queryText = "grip collar", mode = "Keyword", topK = 5 });
-            JsonElement search = Data(await ctx.Mcp.ProxyAsync(HttpMethod.Post, "/v1.0/api/tenants/ten_default/scopes/" + scopeId + "/memories/search", searchBody, "isis_memory_search", ctx.Access).ConfigureAwait(false), "search");
+            JsonElement search = Data(await ctx.Mcp.ProxyAsync(HttpMethod.Post, "/v1.0/api/tenants/ten_default/scopes/" + scopeId + "/memories/search", searchBody, "memory_search", ctx.Access).ConfigureAwait(false), "search");
             if (search.GetProperty("hits").GetArrayLength() < 1) throw new InvalidOperationException("Expected at least one search hit.");
         }
 
@@ -152,7 +152,7 @@ namespace Test.Shared
             JsonElement upserted = await UpsertMemoryAsync(ctx, scopeId, categoryId, "grip", "Grip fighting", "Win the grip to win the exchange.").ConfigureAwait(false);
             string memoryId = upserted.GetProperty("id").GetString() ?? throw new InvalidOperationException("No memory id.");
 
-            JsonElement read = Data(await ctx.Mcp.ProxyAsync(HttpMethod.Get, "/v1.0/api/tenants/ten_default/scopes/" + scopeId + "/memories/" + memoryId, null, "isis_memory_read", ctx.Access).ConfigureAwait(false), "read");
+            JsonElement read = Data(await ctx.Mcp.ProxyAsync(HttpMethod.Get, "/v1.0/api/tenants/ten_default/scopes/" + scopeId + "/memories/" + memoryId, null, "memory_read", ctx.Access).ConfigureAwait(false), "read");
             if (read.GetProperty("id").GetString() != memoryId) throw new InvalidOperationException("Read returned the wrong memory id.");
             if (read.GetProperty("slug").GetString() != "grip") throw new InvalidOperationException("Read returned the wrong slug.");
         }
@@ -165,7 +165,7 @@ namespace Test.Shared
             string categoryId = await CreateCategoryAsync(ctx, scopeId).ConfigureAwait(false);
             await UpsertMemoryAsync(ctx, scopeId, categoryId, "grip", "Grip fighting", "Win the grip to win the exchange.").ConfigureAwait(false);
 
-            JsonElement list = Data(await ctx.Mcp.ProxyAsync(HttpMethod.Get, "/v1.0/api/tenants/ten_default/scopes/" + scopeId + "/memories", null, "isis_memory_enumerate", ctx.Access).ConfigureAwait(false), "enumerate");
+            JsonElement list = Data(await ctx.Mcp.ProxyAsync(HttpMethod.Get, "/v1.0/api/tenants/ten_default/scopes/" + scopeId + "/memories", null, "memory_enumerate", ctx.Access).ConfigureAwait(false), "enumerate");
             if (list.GetProperty("objects").GetArrayLength() < 1) throw new InvalidOperationException("Expected at least one enumerated memory.");
         }
 
@@ -176,7 +176,7 @@ namespace Test.Shared
             string scopeId = await CreateScopeAsync(ctx).ConfigureAwait(false);
             await CreateCategoryAsync(ctx, scopeId).ConfigureAwait(false);
 
-            JsonElement list = Data(await ctx.Mcp.ProxyAsync(HttpMethod.Get, "/v1.0/api/tenants/ten_default/scopes/" + scopeId + "/categories", null, "isis_category_enumerate", ctx.Admin).ConfigureAwait(false), "category enumerate");
+            JsonElement list = Data(await ctx.Mcp.ProxyAsync(HttpMethod.Get, "/v1.0/api/tenants/ten_default/scopes/" + scopeId + "/categories", null, "category_enumerate", ctx.Admin).ConfigureAwait(false), "category enumerate");
             if (list.GetProperty("objects").GetArrayLength() < 1) throw new InvalidOperationException("Expected at least one category.");
         }
 
@@ -186,7 +186,7 @@ namespace Test.Shared
 
             await CreateScopeAsync(ctx).ConfigureAwait(false);
 
-            JsonElement list = Data(await ctx.Mcp.ProxyAsync(HttpMethod.Get, "/v1.0/api/tenants/ten_default/scopes", null, "isis_scope_enumerate", ctx.Admin).ConfigureAwait(false), "scope enumerate");
+            JsonElement list = Data(await ctx.Mcp.ProxyAsync(HttpMethod.Get, "/v1.0/api/tenants/ten_default/scopes", null, "scope_enumerate", ctx.Admin).ConfigureAwait(false), "scope enumerate");
             if (list.GetProperty("objects").GetArrayLength() < 1) throw new InvalidOperationException("Expected at least one scope.");
         }
 
@@ -197,7 +197,7 @@ namespace Test.Shared
             string scopeId = await CreateScopeAsync(ctx).ConfigureAwait(false);
             await CreateCategoryAsync(ctx, scopeId).ConfigureAwait(false);
 
-            JsonElement guide = Data(await ctx.Mcp.ProxyAsync(HttpMethod.Get, "/v1.0/api/tenants/ten_default/scopes/" + scopeId + "/guide", null, "isis_guide", ctx.Admin).ConfigureAwait(false), "guide");
+            JsonElement guide = Data(await ctx.Mcp.ProxyAsync(HttpMethod.Get, "/v1.0/api/tenants/ten_default/scopes/" + scopeId + "/guide", null, "guide", ctx.Admin).ConfigureAwait(false), "guide");
             JsonElement categories = guide.GetProperty("categories");
             if (categories.GetArrayLength() < 1) throw new InvalidOperationException("Expected the guide to list at least one category.");
         }
@@ -211,10 +211,10 @@ namespace Test.Shared
             JsonElement upserted = await UpsertMemoryAsync(ctx, scopeId, categoryId, "grip", "Grip fighting", "Win the grip to win the exchange.").ConfigureAwait(false);
             string memoryId = upserted.GetProperty("id").GetString() ?? throw new InvalidOperationException("No memory id.");
 
-            Envelope delete = Unpack(await ctx.Mcp.ProxyAsync(HttpMethod.Delete, "/v1.0/api/tenants/ten_default/scopes/" + scopeId + "/memories/" + memoryId, null, "isis_memory_delete", ctx.Admin).ConfigureAwait(false));
+            Envelope delete = Unpack(await ctx.Mcp.ProxyAsync(HttpMethod.Delete, "/v1.0/api/tenants/ten_default/scopes/" + scopeId + "/memories/" + memoryId, null, "memory_delete", ctx.Admin).ConfigureAwait(false));
             if (!delete.Success) throw new InvalidOperationException("Expected delete to succeed, got status " + delete.StatusCode + ".");
 
-            Envelope read = Unpack(await ctx.Mcp.ProxyAsync(HttpMethod.Get, "/v1.0/api/tenants/ten_default/scopes/" + scopeId + "/memories/" + memoryId, null, "isis_memory_read", ctx.Admin).ConfigureAwait(false));
+            Envelope read = Unpack(await ctx.Mcp.ProxyAsync(HttpMethod.Get, "/v1.0/api/tenants/ten_default/scopes/" + scopeId + "/memories/" + memoryId, null, "memory_read", ctx.Admin).ConfigureAwait(false));
             if (read.Success || read.StatusCode != 404) throw new InvalidOperationException("Expected the deleted memory to be gone (404), got status " + read.StatusCode + ".");
         }
 
@@ -222,7 +222,7 @@ namespace Test.Shared
         {
             using McpContext ctx = await McpContext.StartAsync().ConfigureAwait(false);
 
-            Envelope envelope = Unpack(await ctx.Mcp.ProxyAsync(HttpMethod.Get, "/v1.0/api/tenants/ten_default/scopes/scp_missing/guide", null, "isis_guide", ctx.Admin).ConfigureAwait(false));
+            Envelope envelope = Unpack(await ctx.Mcp.ProxyAsync(HttpMethod.Get, "/v1.0/api/tenants/ten_default/scopes/scp_missing/guide", null, "guide", ctx.Admin).ConfigureAwait(false));
             if (envelope.Success) throw new InvalidOperationException("Expected the guide for a missing scope to fail.");
             if (envelope.StatusCode != 404) throw new InvalidOperationException("Expected status 404 for a missing scope, got " + envelope.StatusCode + ".");
         }
@@ -232,7 +232,7 @@ namespace Test.Shared
             using McpContext ctx = await McpContext.StartAsync().ConfigureAwait(false);
 
             McpCallerCredentials anonymous = new McpCallerCredentials();
-            Envelope envelope = Unpack(await ctx.Mcp.ProxyAsync(HttpMethod.Get, "/v1.0/api/tenants", null, "isis_scope_enumerate", anonymous).ConfigureAwait(false));
+            Envelope envelope = Unpack(await ctx.Mcp.ProxyAsync(HttpMethod.Get, "/v1.0/api/tenants", null, "scope_enumerate", anonymous).ConfigureAwait(false));
             if (envelope.Success) throw new InvalidOperationException("Expected an anonymous call to fail.");
             if (envelope.StatusCode != 401) throw new InvalidOperationException("Expected status 401 for anonymous credentials, got " + envelope.StatusCode + ".");
         }
@@ -242,7 +242,7 @@ namespace Test.Shared
             using McpContext ctx = await McpContext.StartAsync().ConfigureAwait(false);
 
             McpCallerCredentials accessOnly = new McpCallerCredentials { AccessKey = ctx.Harness.AccessKey };
-            JsonElement who = Data(await ctx.Mcp.ProxyAsync(HttpMethod.Get, "/v1.0/api/whoami", null, "isis_whoami", accessOnly).ConfigureAwait(false), "whoami");
+            JsonElement who = Data(await ctx.Mcp.ProxyAsync(HttpMethod.Get, "/v1.0/api/whoami", null, "whoami", accessOnly).ConfigureAwait(false), "whoami");
             if (who.GetProperty("tenantId").GetString() != "ten_default") throw new InvalidOperationException("Expected access-key-only auth to resolve tenant 'ten_default'.");
         }
 
@@ -251,7 +251,7 @@ namespace Test.Shared
             using McpContext ctx = await McpContext.StartAsync().ConfigureAwait(false);
 
             McpCallerCredentials badSecret = new McpCallerCredentials { AccessKey = ctx.Harness.AccessKey, SecretKey = "not-the-secret" };
-            Envelope envelope = Unpack(await ctx.Mcp.ProxyAsync(HttpMethod.Get, "/v1.0/api/whoami", null, "isis_whoami", badSecret).ConfigureAwait(false));
+            Envelope envelope = Unpack(await ctx.Mcp.ProxyAsync(HttpMethod.Get, "/v1.0/api/whoami", null, "whoami", badSecret).ConfigureAwait(false));
             if (envelope.Success) throw new InvalidOperationException("Expected a present-but-wrong secret to be rejected.");
             if (envelope.StatusCode != 401) throw new InvalidOperationException("Expected status 401 for a wrong secret, got " + envelope.StatusCode + ".");
         }
@@ -306,21 +306,21 @@ namespace Test.Shared
         {
             string target = Path.Combine(ctx.Harness.WorkDir, "mcpmem-" + Guid.NewGuid().ToString("N").Substring(0, 8));
             string scopeBody = JsonSerializer.Serialize(new { name = "mcpproj", storeProvider = "Filesystem", filesystemLayout = "Hierarchy", targetPath = target });
-            JsonElement scope = Data(await ctx.Mcp.ProxyAsync(HttpMethod.Post, "/v1.0/api/tenants/ten_default/scopes", scopeBody, "isis_scope_create", ctx.Admin).ConfigureAwait(false), "create scope");
+            JsonElement scope = Data(await ctx.Mcp.ProxyAsync(HttpMethod.Post, "/v1.0/api/tenants/ten_default/scopes", scopeBody, "scope_create", ctx.Admin).ConfigureAwait(false), "create scope");
             return scope.GetProperty("id").GetString() ?? throw new InvalidOperationException("No scope id.");
         }
 
         private static async Task<string> CreateCategoryAsync(McpContext ctx, string scopeId)
         {
             string categoryBody = JsonSerializer.Serialize(new { name = "notes", instructions = "One idea per memory." });
-            JsonElement category = Data(await ctx.Mcp.ProxyAsync(HttpMethod.Post, "/v1.0/api/tenants/ten_default/scopes/" + scopeId + "/categories", categoryBody, "isis_category_create", ctx.Admin).ConfigureAwait(false), "create category");
+            JsonElement category = Data(await ctx.Mcp.ProxyAsync(HttpMethod.Post, "/v1.0/api/tenants/ten_default/scopes/" + scopeId + "/categories", categoryBody, "category_create", ctx.Admin).ConfigureAwait(false), "create category");
             return category.GetProperty("id").GetString() ?? throw new InvalidOperationException("No category id.");
         }
 
         private static async Task<JsonElement> UpsertMemoryAsync(McpContext ctx, string scopeId, string categoryId, string slug, string title, string body)
         {
             string memoryBody = JsonSerializer.Serialize(new { categoryId, slug, title, body });
-            return Data(await ctx.Mcp.ProxyAsync(HttpMethod.Post, "/v1.0/api/tenants/ten_default/scopes/" + scopeId + "/memories", memoryBody, "isis_memory_upsert", ctx.Access).ConfigureAwait(false), "upsert memory");
+            return Data(await ctx.Mcp.ProxyAsync(HttpMethod.Post, "/v1.0/api/tenants/ten_default/scopes/" + scopeId + "/memories", memoryBody, "memory_upsert", ctx.Access).ConfigureAwait(false), "upsert memory");
         }
 
         #endregion

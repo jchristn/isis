@@ -153,7 +153,7 @@ export const en = {
     },
     instructions: {
       title: 'Instructions',
-      subtitle: 'Tenant-wide guidance surfaced to agents over MCP (isis_instructions).',
+      subtitle: 'Tenant-wide guidance surfaced to agents over MCP (the instructions tool).',
       addInstruction: 'Add instruction',
       editInstruction: 'Edit instruction',
       content: 'Content',

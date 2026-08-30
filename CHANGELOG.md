@@ -49,13 +49,13 @@ All notable changes to Isis are documented here. This project adheres to
   with REST routes `GET/POST /v1.0/api/tenants/{tenantId}/instructions` and
   `GET/PUT/DELETE /v1.0/api/tenants/{tenantId}/instructions/{instructionId}` (reads open to the
   tenant; writes require `IsAdmin` / `IsTenantAdmin`), body `{ name, content, position, active }`,
-  returned in ascending `position` order. Surfaced through the new MCP tool `isis_instructions`
+  returned in ascending `position` order. Surfaced through the new MCP tool `instructions`
   (get the tenant's standing instructions) and a dashboard Instructions management view.
-- **MCP `isis_scope_create`** — create a memory scope for a project when none exists (params
+- **MCP `scope_create`** — create a memory scope for a project when none exists (params
   `tenantId`, `name`, optional `description` / `storeProvider` / `embeddingEndpointId` /
   `dimensionality` / `filesystemLayout` / `targetPath`), bringing the MCP tool count to twelve.
   MCP auth (`x-access-key` + `x-secret-key`, dev defaults `isisdefaultkey` / `isisdefaultsecret`)
-  is now documented in the `isis_whoami` tool description.
+  is now documented in the `whoami` tool description.
 - **Server settings management (system administrator only).** `GET /v1.0/api/settings` returns
   `{ settings, settingsFile, liveSections }`; `PUT /v1.0/api/settings` persists a full settings body
   to the settings file (request-history changes apply immediately, other sections require a restart,
@@ -117,8 +117,8 @@ All notable changes to Isis are documented here. This project adheres to
     `(scope, category, slug)`.
 - `Isis.McpServer` (Voltaic 0.6.1, standalone — runs and is tested):
   - Streamable-HTTP MCP transport that speaks the MCP `initialize` handshake and hosts 10 agent tools
-    (`isis_whoami`, `isis_scope_enumerate`, `isis_guide`, `isis_category_enumerate`/`_create`,
-    `isis_memory_enumerate`/`_read`/`_upsert`/`_search`/`_delete`).
+    (`whoami`, `scope_enumerate`, `guide`, `category_enumerate`/`_create`,
+    `memory_enumerate`/`_read`/`_upsert`/`_search`/`_delete`).
   - Authenticates the caller from transport headers (`x-access-key` + `x-secret-key`) and proxies each
     tool to the Isis REST API over loopback, forwarding the caller's credentials so REST performs the
     authoritative auth and tenant scoping.

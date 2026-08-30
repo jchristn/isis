@@ -1,5 +1,16 @@
 # Isis MCP API
 
+> **Naming.** The product is **Isis** — a proper noun, written `Isis` or `isis`. It is **not**
+> an acronym; never write it as the all-caps `ISIS`.
+>
+> **Tool names.** Tools are registered **without** an `isis_` prefix (`whoami`, `memory_upsert`,
+> `scope_create`, …). Your MCP client namespaces them under the server key you configure it with
+> (conventionally `isis`), so you will see them as e.g. `isis.whoami` / `mcp__isis__whoami` — a
+> single, clean namespace, not a doubled `isis_isis_*`.
+>
+> **tenantId.** Every tool except `whoami` requires a `tenantId` argument. Call `whoami` first; its
+> response gives you the `tenantId` to pass to all other calls.
+
 Isis exposes an HTTP MCP server for AI agents. The MCP endpoint is:
 
 ```text
@@ -60,7 +71,7 @@ under `data`.
 
 ```json
 {
-  "tool": "isis_whoami",
+  "tool": "whoami",
   "success": true,
   "statusCode": 200,
   "data": {
@@ -80,50 +91,50 @@ Isis exposes twelve MCP tools.
 
 | Tool | Purpose |
 |------|---------|
-| `isis_whoami` | Resolve the tenant and principal the caller's credential maps to |
-| `isis_scope_enumerate` | List the memory scopes in a tenant |
-| `isis_scope_create` | Create a memory scope for a project when none exists |
-| `isis_instructions` | Get the tenant's standing instructions |
-| `isis_guide` | Get the operating guide for a scope: categories, usage instructions, capabilities |
-| `isis_category_enumerate` | List categories in a scope, including usage instructions |
-| `isis_category_create` | Create a category in a scope |
-| `isis_memory_enumerate` | List memory summaries in a scope (token-cheap) |
-| `isis_memory_read` | Read a single memory by id, returning the full body |
-| `isis_memory_upsert` | Create or update a memory; idempotent on `(scope, category, slug)` |
-| `isis_memory_search` | Search a scope's memory (keyword, semantic, or hybrid) |
-| `isis_memory_delete` | Delete a memory by id |
+| `whoami` | Resolve the tenant and principal the caller's credential maps to |
+| `scope_enumerate` | List the memory scopes in a tenant |
+| `scope_create` | Create a memory scope for a project when none exists |
+| `instructions` | Get the tenant's standing instructions |
+| `guide` | Get the operating guide for a scope: categories, usage instructions, capabilities |
+| `category_enumerate` | List categories in a scope, including usage instructions |
+| `category_create` | Create a category in a scope |
+| `memory_enumerate` | List memory summaries in a scope (token-cheap) |
+| `memory_read` | Read a single memory by id, returning the full body |
+| `memory_upsert` | Create or update a memory; idempotent on `(scope, category, slug)` |
+| `memory_search` | Search a scope's memory (keyword, semantic, or hybrid) |
+| `memory_delete` | Delete a memory by id |
 
 ## Recommended Agent Workflow
 
 Isis is memory, not a filesystem. Read before you write, and prefer summaries before full
 bodies to conserve tokens.
 
-1. Call `isis_whoami` to learn your `tenantId`.
-2. Call `isis_instructions` with that `tenantId` to read the tenant's standing guidance, then
-   `isis_scope_enumerate` to find the scope you want (a project, a book, or a shared "global"
-   scope). If no scope fits your project, create one with `isis_scope_create`.
-3. Call `isis_guide` for the selected scope. This is the single most important call: it
+1. Call `whoami` to learn your `tenantId`.
+2. Call `instructions` with that `tenantId` to read the tenant's standing guidance, then
+   `scope_enumerate` to find the scope you want (a project, a book, or a shared "global"
+   scope). If no scope fits your project, create one with `scope_create`.
+3. Call `guide` for the selected scope. This is the single most important call: it
    returns the scope's categories, their usage instructions (when and how to write each
    kind of memory), and the store's search capabilities.
-4. Use `isis_memory_search` to recall existing memory before doing work. Prefer `Hybrid`
+4. Use `memory_search` to recall existing memory before doing work. Prefer `Hybrid`
    or `Semantic` mode on a RecallDB-backed scope; `Keyword` always works.
-5. Use `isis_memory_enumerate` to browse summaries by category when you want a list rather
-   than a query, then `isis_memory_read` to pull the full body of a specific memory.
-6. When you learn something durable, write it with `isis_memory_upsert`. Choose a stable
+5. Use `memory_enumerate` to browse summaries by category when you want a list rather
+   than a query, then `memory_read` to pull the full body of a specific memory.
+6. When you learn something durable, write it with `memory_upsert`. Choose a stable
    `slug` so that re-writing the same fact updates it in place instead of duplicating.
-7. Create a category with `isis_category_create` only when no existing category fits and
+7. Create a category with `category_create` only when no existing category fits and
    the guide's instructions do not already cover the content.
-8. Use `isis_memory_delete` to remove a memory that is wrong or obsolete.
+8. Use `memory_delete` to remove a memory that is wrong or obsolete.
 
 ## Common Arguments
 
-Most tools require `tenantId` and `scopeId`. Obtain `tenantId` from `isis_whoami` and
-`scopeId` from `isis_scope_enumerate`. These are validated against the caller's credential
+Most tools require `tenantId` and `scopeId`. Obtain `tenantId` from `whoami` and
+`scopeId` from `scope_enumerate`. These are validated against the caller's credential
 by the REST layer; a caller cannot act on a tenant its credential does not authorize.
 
 ## Tool Reference
 
-### `isis_whoami`
+### `whoami`
 
 Resolve the tenant and principal the caller's credential maps to. Call this first to
 discover your `tenantId`.
@@ -144,7 +155,7 @@ No arguments.
 
 ```json
 {
-  "tool": "isis_whoami",
+  "tool": "whoami",
   "success": true,
   "statusCode": 200,
   "data": {
@@ -164,7 +175,7 @@ No arguments.
   resolves to the tenant credential the access key maps to. If that credential's user is an
   admin (`IsAdmin` / `IsTenantAdmin`), the resolved principal reflects it.
 
-### `isis_scope_enumerate`
+### `scope_enumerate`
 
 List the memory scopes in a tenant.
 
@@ -174,7 +185,7 @@ Proxies `GET /v1.0/api/tenants/{tenantId}/scopes`.
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `tenantId` | string | Yes | n/a | Tenant identifier from `isis_whoami` |
+| `tenantId` | string | Yes | n/a | Tenant identifier from `whoami` |
 
 #### Example Request
 
@@ -188,7 +199,7 @@ Proxies `GET /v1.0/api/tenants/{tenantId}/scopes`.
 
 ```json
 {
-  "tool": "isis_scope_enumerate",
+  "tool": "scope_enumerate",
   "success": true,
   "statusCode": 200,
   "data": [
@@ -212,10 +223,10 @@ Proxies `GET /v1.0/api/tenants/{tenantId}/scopes`.
 - `storeProvider` tells you whether semantic search is available (`RecallDb`) or whether the
   scope is keyword-only (`Verbex`, `Filesystem`).
 
-### `isis_scope_create`
+### `scope_create`
 
 Create a memory scope for a project when none exists. Use this once, at the start of a project,
-after `isis_scope_enumerate` shows no suitable scope.
+after `scope_enumerate` shows no suitable scope.
 
 Proxies `POST /v1.0/api/tenants/{tenantId}/scopes`.
 
@@ -223,7 +234,7 @@ Proxies `POST /v1.0/api/tenants/{tenantId}/scopes`.
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `tenantId` | string | Yes | n/a | Tenant identifier from `isis_whoami` |
+| `tenantId` | string | Yes | n/a | Tenant identifier from `whoami` |
 | `name` | string | Yes | n/a | Scope name (for example the project name) |
 | `description` | string | No | null | What the scope holds |
 | `storeProvider` | string | No | server default | Backing store: `RecallDb`, `Verbex`, or `Filesystem` |
@@ -247,7 +258,7 @@ Proxies `POST /v1.0/api/tenants/{tenantId}/scopes`.
 
 ```json
 {
-  "tool": "isis_scope_create",
+  "tool": "scope_create",
   "success": true,
   "statusCode": 201,
   "data": {
@@ -264,7 +275,7 @@ Proxies `POST /v1.0/api/tenants/{tenantId}/scopes`.
 - For semantic search, provide an `embeddingEndpointId` and `dimensionality` that match the
   configured embedding endpoint.
 
-### `isis_instructions`
+### `instructions`
 
 Get the tenant's standing instructions — tenant-wide guidance the operator wants every agent to
 follow. Returned in ascending `position` order.
@@ -275,7 +286,7 @@ Proxies `GET /v1.0/api/tenants/{tenantId}/instructions`.
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `tenantId` | string | Yes | n/a | Tenant identifier from `isis_whoami` |
+| `tenantId` | string | Yes | n/a | Tenant identifier from `whoami` |
 
 #### Example Request
 
@@ -289,7 +300,7 @@ Proxies `GET /v1.0/api/tenants/{tenantId}/instructions`.
 
 ```json
 {
-  "tool": "isis_instructions",
+  "tool": "instructions",
   "success": true,
   "statusCode": 200,
   "data": [
@@ -309,7 +320,7 @@ Proxies `GET /v1.0/api/tenants/{tenantId}/instructions`.
 - Read the tenant's instructions early; they are always-on guidance to honor without being asked.
 - Instructions are tenant-wide and apply across every scope in the tenant.
 
-### `isis_guide`
+### `guide`
 
 Get the operating guide for a scope: its categories, their usage instructions, and store
 capabilities. **Call this before writing memory.**
@@ -336,7 +347,7 @@ Proxies `GET /v1.0/api/tenants/{tenantId}/scopes/{scopeId}/guide`.
 
 ```json
 {
-  "tool": "isis_guide",
+  "tool": "guide",
   "success": true,
   "statusCode": 200,
   "data": {
@@ -365,7 +376,7 @@ Proxies `GET /v1.0/api/tenants/{tenantId}/scopes/{scopeId}/guide`.
 - Treat category `instructions` as the contract for what and how to write.
 - Policies are always-on cross-cutting guidance; honor them without being asked.
 
-### `isis_category_enumerate`
+### `category_enumerate`
 
 List categories in a scope, including their usage instructions.
 
@@ -391,7 +402,7 @@ Proxies `GET /v1.0/api/tenants/{tenantId}/scopes/{scopeId}/categories`.
 
 ```json
 {
-  "tool": "isis_category_enumerate",
+  "tool": "category_enumerate",
   "success": true,
   "statusCode": 200,
   "data": [
@@ -408,9 +419,9 @@ Proxies `GET /v1.0/api/tenants/{tenantId}/scopes/{scopeId}/categories`.
 #### Guidance
 
 - Prefer an existing category over creating a new one.
-- `isis_guide` returns the same category information plus policies; use it for onboarding.
+- `guide` returns the same category information plus policies; use it for onboarding.
 
-### `isis_category_create`
+### `category_create`
 
 Create a category in a scope.
 
@@ -442,7 +453,7 @@ Proxies `POST /v1.0/api/tenants/{tenantId}/scopes/{scopeId}/categories`.
 
 ```json
 {
-  "tool": "isis_category_create",
+  "tool": "category_create",
   "success": true,
   "statusCode": 201,
   "data": {
@@ -457,7 +468,7 @@ Proxies `POST /v1.0/api/tenants/{tenantId}/scopes/{scopeId}/categories`.
 - Provide `instructions` so future agents know when and how to write into this category.
 - Create categories sparingly; too many fragments dilutes recall.
 
-### `isis_memory_enumerate`
+### `memory_enumerate`
 
 List memory summaries in a scope. Summaries are token-cheap and do not include the full body.
 
@@ -488,7 +499,7 @@ Proxies `GET /v1.0/api/tenants/{tenantId}/scopes/{scopeId}/memories` with option
 
 ```json
 {
-  "tool": "isis_memory_enumerate",
+  "tool": "memory_enumerate",
   "success": true,
   "statusCode": 200,
   "data": [
@@ -505,10 +516,10 @@ Proxies `GET /v1.0/api/tenants/{tenantId}/scopes/{scopeId}/memories` with option
 
 #### Guidance
 
-- Enumerate summaries first; call `isis_memory_read` only for the memories you actually need.
+- Enumerate summaries first; call `memory_read` only for the memories you actually need.
 - Filter by `category` to keep responses small.
 
-### `isis_memory_read`
+### `memory_read`
 
 Read a single memory by id, returning the full body.
 
@@ -536,7 +547,7 @@ Proxies `GET /v1.0/api/tenants/{tenantId}/scopes/{scopeId}/memories/{memoryId}`.
 
 ```json
 {
-  "tool": "isis_memory_read",
+  "tool": "memory_read",
   "success": true,
   "statusCode": 200,
   "data": {
@@ -556,7 +567,7 @@ Proxies `GET /v1.0/api/tenants/{tenantId}/scopes/{scopeId}/memories/{memoryId}`.
 
 - This is the only tool that returns full memory bodies; use it deliberately.
 
-### `isis_memory_upsert`
+### `memory_upsert`
 
 Create or update a memory. **Idempotent on `(scope, category, slug)`** — re-writing the
 same slug updates the memory in place rather than duplicating it.
@@ -595,7 +606,7 @@ Proxies `POST /v1.0/api/tenants/{tenantId}/scopes/{scopeId}/memories`.
 
 ```json
 {
-  "tool": "isis_memory_upsert",
+  "tool": "memory_upsert",
   "success": true,
   "statusCode": 200,
   "data": {
@@ -612,7 +623,7 @@ Proxies `POST /v1.0/api/tenants/{tenantId}/scopes/{scopeId}/memories`.
 - Provide a crisp `summary`; it is the recall hook shown in enumerate and search results.
 - Do not store secrets, credentials, tokens, or raw sensitive data as memory content.
 
-### `isis_memory_search`
+### `memory_search`
 
 Search a scope's memory. Returns ranked results.
 
@@ -646,7 +657,7 @@ Proxies `POST /v1.0/api/tenants/{tenantId}/scopes/{scopeId}/memories/search`.
 
 ```json
 {
-  "tool": "isis_memory_search",
+  "tool": "memory_search",
   "success": true,
   "statusCode": 200,
   "data": {
@@ -667,7 +678,7 @@ Proxies `POST /v1.0/api/tenants/{tenantId}/scopes/{scopeId}/memories/search`.
 - `Semantic` and `Hybrid` modes require a RecallDB-backed scope; `Keyword` works on any store.
 - Search before writing to avoid creating a duplicate memory under a new slug.
 
-### `isis_memory_delete`
+### `memory_delete`
 
 Delete a memory by id.
 
@@ -695,7 +706,7 @@ Proxies `DELETE /v1.0/api/tenants/{tenantId}/scopes/{scopeId}/memories/{memoryId
 
 ```json
 {
-  "tool": "isis_memory_delete",
+  "tool": "memory_delete",
   "success": true,
   "statusCode": 204,
   "data": null
@@ -726,7 +737,7 @@ upstream `statusCode`:
 
 ```json
 {
-  "tool": "isis_memory_read",
+  "tool": "memory_read",
   "success": false,
   "statusCode": 404,
   "data": { "error": "Memory 'mem_missing' not found." }
@@ -735,7 +746,7 @@ upstream `statusCode`:
 
 ```json
 {
-  "tool": "isis_scope_enumerate",
+  "tool": "scope_enumerate",
   "success": false,
   "statusCode": 403,
   "data": { "error": "Credential is not authorized for tenant 'ten_other'." }
