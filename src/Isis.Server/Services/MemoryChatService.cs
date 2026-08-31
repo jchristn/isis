@@ -260,41 +260,103 @@ namespace Isis.Server.Services
         }
 
         /// <summary>
-        /// Build the grounding context for a question: run relevance search, and when it matches nothing
-        /// (a broad "what memories do you have?" question, or a keyword-only store that cannot match the
-        /// phrasing) fall back to enumerating the scope's memories so the model can summarize them rather
-        /// than being handed "(none)".
+        /// Build the grounding context for a question. The strategy depends on the scope's store:
+        /// <list type="bullet">
+        /// <item>Keyword-only stores (filesystem, Verbex) have no semantic relevance ranking — lexical
+        /// scoring is a poor way to answer questions and fails outright on broad/meta questions. For those,
+        /// skip searching entirely and hand the model the scope's whole memory map, organized top-down by
+        /// category, so it can analyze it and decide what is relevant.</item>
+        /// <item>Semantic stores (RecallDB) use relevance search, which scales to large corpora; if it
+        /// matches nothing, fall back to the same top-down overview.</item>
+        /// </list>
         /// </summary>
         private async Task<ContextResult> BuildContextAsync(Scope scope, string question, int topK, CancellationToken token)
         {
+            StoreCapabilities capabilities = _MemoryService.GetCapabilities(scope);
+            if (!capabilities.SupportsSemantic)
+            {
+                return await BuildOverviewContextAsync(scope,
+                    "This scope is backed by a keyword/file store; the model is given all of its memories, organized by category, to analyze directly rather than by relevance search.",
+                    token).ConfigureAwait(false);
+            }
+
             int k = topK < 1 ? 5 : topK;
             MemorySearchQuery query = new MemorySearchQuery { QueryText = question, Mode = SearchModeEnum.Hybrid, TopK = k };
             MemorySearchResult retrieval = await _MemoryService.SearchAsync(scope, query, token).ConfigureAwait(false);
 
+            if (retrieval.Hits.Count == 0)
+            {
+                return await BuildOverviewContextAsync(scope, "No memory directly matched the question; listing the scope's memories.", token).ConfigureAwait(false);
+            }
+
             ContextResult ctx = new ContextResult { Mode = retrieval.EffectiveMode, ModeLabel = retrieval.EffectiveMode.ToString(), Notice = retrieval.Notice };
             StringBuilder sb = new StringBuilder();
-
             foreach (MemorySearchHit hit in retrieval.Hits)
             {
                 AppendContextItem(sb, ctx, hit.Slug, hit.Title, hit.Snippet, hit.Score);
             }
 
-            if (retrieval.Hits.Count == 0)
-            {
-                int cap = Math.Max(k, 25);
-                List<Memory> all = await _MemoryService.EnumerateAsync(scope, null, cap, token).ConfigureAwait(false);
-                foreach (Memory memory in all)
-                {
-                    string snippet = !string.IsNullOrEmpty(memory.Summary) ? memory.Summary! : Truncate(memory.Body, 600);
-                    AppendContextItem(sb, ctx, memory.Slug, memory.Title, snippet, null);
-                }
+            ctx.ContextText = sb.Length > 0 ? sb.ToString() : "(none)";
+            ctx.Count = ctx.Citations.Count;
+            return ctx;
+        }
 
-                ctx.Notice = all.Count > 0
-                    ? "No memory directly matched the question; listing the scope's memories."
-                    : "This scope has no memories yet.";
+        /// <summary>
+        /// Build a top-down "memory map" context: every memory in the scope, grouped under its category
+        /// (with the category name and description as headers), so the model can analyze the whole set and
+        /// pick what is relevant. Used for keyword-only stores and as the zero-hit fallback for semantic ones.
+        /// </summary>
+        private async Task<ContextResult> BuildOverviewContextAsync(Scope scope, string notice, CancellationToken token)
+        {
+            const int memoryCap = 200;
+            List<Memory> memories = await _MemoryService.EnumerateAsync(scope, null, memoryCap, token).ConfigureAwait(false);
+
+            ContextResult ctx = new ContextResult { Mode = SearchModeEnum.Keyword, ModeLabel = "Overview" };
+            if (memories.Count == 0)
+            {
+                ctx.ContextText = "(none)";
+                ctx.Notice = "This scope has no memories yet.";
+                return ctx;
             }
 
-            ctx.ContextText = sb.Length > 0 ? sb.ToString() : "(none)";
+            List<Category> categories = await _MemoryService.EnumerateCategoriesAsync(scope, 1000, token).ConfigureAwait(false);
+            Dictionary<string, Category> categoryById = new Dictionary<string, Category>();
+            foreach (Category category in categories) categoryById[category.Id] = category;
+
+            Dictionary<string, List<Memory>> byCategory = new Dictionary<string, List<Memory>>();
+            List<string> categoryOrder = new List<string>();
+            foreach (Memory memory in memories)
+            {
+                if (!byCategory.TryGetValue(memory.CategoryId, out List<Memory>? list))
+                {
+                    list = new List<Memory>();
+                    byCategory[memory.CategoryId] = list;
+                    categoryOrder.Add(memory.CategoryId);
+                }
+
+                list.Add(memory);
+            }
+
+            StringBuilder sb = new StringBuilder();
+            foreach (string categoryId in categoryOrder)
+            {
+                categoryById.TryGetValue(categoryId, out Category? category);
+                string header = category != null && !string.IsNullOrEmpty(category.Name) ? category.Name : categoryId;
+                sb.Append("## ").Append(header);
+                if (category != null && !string.IsNullOrEmpty(category.Description)) sb.Append(" — ").Append(category.Description);
+                sb.Append('\n');
+
+                foreach (Memory memory in byCategory[categoryId])
+                {
+                    string body = !string.IsNullOrEmpty(memory.Summary) ? memory.Summary! : Truncate(memory.Body, 600);
+                    AppendContextItem(sb, ctx, memory.Slug, memory.Title, body, null);
+                }
+
+                sb.Append('\n');
+            }
+
+            ctx.ContextText = sb.ToString();
+            ctx.Notice = memories.Count >= memoryCap ? notice + " (showing the first " + memoryCap + ")" : notice;
             ctx.Count = ctx.Citations.Count;
             return ctx;
         }

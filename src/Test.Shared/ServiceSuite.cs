@@ -80,7 +80,8 @@ namespace Test.Shared
                     // MemoryChatService
                     TestCase.Async("service", "chat-answer-with-citations", "Chat: grounded answer cites the memory", ChatAnswerWithCitationsAsync),
                     TestCase.Async("service", "chat-miss-lists-memories", "Chat: a search miss falls back to listing the scope's memories", ChatMissListsMemoriesAsync),
-                    TestCase.Async("service", "chat-empty-scope-says-none", "Chat: an empty scope reports it has no memories", ChatEmptyScopeSaysNoneAsync)
+                    TestCase.Async("service", "chat-empty-scope-says-none", "Chat: an empty scope reports it has no memories", ChatEmptyScopeSaysNoneAsync),
+                    TestCase.Async("service", "chat-filesystem-analyzes-all", "Chat: a filesystem scope is analyzed top-down, not keyword-searched", ChatFilesystemAnalyzesAllAsync)
                 });
         }
 
@@ -605,6 +606,36 @@ namespace Test.Shared
                 TestCase.Require(slugs.Contains("a") && slugs.Contains("b"), "The fallback must include every scope memory.");
                 TestCase.Require(!string.IsNullOrEmpty(answer.Notice), "The fallback must carry an explanatory notice.");
                 TestCase.Require(!string.IsNullOrEmpty(answer.Answer), "Inference is still invoked, so an answer must be returned.");
+            }
+            finally
+            {
+                TryDeleteDir(work);
+            }
+        }
+
+        private static async Task ChatFilesystemAnalyzesAllAsync()
+        {
+            using TempSqlite t = await TempSqlite.CreateAsync().ConfigureAwait(false);
+            string work = NewWork();
+            try
+            {
+                (Scope scope, Category category, MemoryService memoryService) = await SetupMemoryAsync(t.Db, work).ConfigureAwait(false);
+                await memoryService.UpsertAsync(scope, category, new Memory { Slug = "a", Title = "Centerline", Body = "Control the centerline; posture and framing win positions." }).ConfigureAwait(false);
+                await memoryService.UpsertAsync(scope, category, new Memory { Slug = "b", Title = "Escapes", Body = "Bridge and shrimp to recover guard from bottom." }).ConfigureAwait(false);
+
+                string chatJson = JsonSerializer.Serialize(new { choices = new[] { new { message = new { role = "assistant", content = "See [a]." } } } });
+                using HttpClient client = new HttpClient(new StubResponseHandler(chatJson));
+                InferenceService inference = new InferenceService(client);
+                ModelEndpoint endpoint = new ModelEndpoint { TenantId = scope.TenantId, Name = "chat", Kind = EndpointKindEnum.Inference, ApiFormat = ApiFormatEnum.OpenAI, Hostname = "127.0.0.1", Port = 9999 };
+
+                MemoryChatService chat = new MemoryChatService(memoryService, inference);
+                // The question lexically matches only "a" (posture). A keyword search would return just that
+                // one; the top-down filesystem strategy must instead present BOTH memories for analysis.
+                ChatAnswer answer = await chat.AskAsync(scope, endpoint, "How does posture help?", 5).ConfigureAwait(false);
+
+                TestCase.Require(answer.Citations.Count == 2, "A filesystem scope must be analyzed top-down (all memories), not keyword-filtered; got " + answer.Citations.Count + " of 2.");
+                List<string?> slugs = answer.Citations.Select(c => c.Slug).ToList();
+                TestCase.Require(slugs.Contains("a") && slugs.Contains("b"), "Both memories must be presented, including the one that does not match the question's keywords.");
             }
             finally
             {

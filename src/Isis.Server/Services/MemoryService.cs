@@ -336,6 +336,36 @@ namespace Isis.Server.Services
             return result.Objects ?? new List<Memory>();
         }
 
+        /// <summary>
+        /// Enumerate a scope's categories.
+        /// </summary>
+        /// <param name="scope">The scope.</param>
+        /// <param name="maxResults">Maximum number of categories to return (clamped to 1..1000).</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>The categories.</returns>
+        /// <exception cref="ArgumentNullException">Thrown when scope is null.</exception>
+        public async Task<List<Category>> EnumerateCategoriesAsync(Scope scope, int maxResults, CancellationToken token = default)
+        {
+            if (scope == null) throw new ArgumentNullException(nameof(scope));
+
+            EnumerationQuery query = new EnumerationQuery { MaxResults = maxResults < 1 ? 1 : maxResults };
+            EnumerationResult<Category> result = await _Database.Categories.EnumerateAsync(scope.TenantId, scope.Id, query, token).ConfigureAwait(false);
+            return result.Objects ?? new List<Category>();
+        }
+
+        /// <summary>
+        /// Get the capabilities of the store backing a scope (for example whether it supports semantic search),
+        /// without performing any I/O against the store.
+        /// </summary>
+        /// <param name="scope">The scope.</param>
+        /// <returns>The store capabilities.</returns>
+        /// <exception cref="ArgumentNullException">Thrown when scope is null.</exception>
+        public StoreCapabilities GetCapabilities(Scope scope)
+        {
+            if (scope == null) throw new ArgumentNullException(nameof(scope));
+            return MemoryStoreFactory.Create(scope, _StoreOptions).Capabilities;
+        }
+
         #endregion
 
         #region Private-Methods
