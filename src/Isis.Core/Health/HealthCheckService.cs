@@ -3,6 +3,7 @@ namespace Isis.Core.Health
     using System;
     using System.Collections.Concurrent;
     using System.Collections.Generic;
+    using System.Diagnostics;
     using System.Linq;
     using System.Net.Http;
     using System.Security.Cryptography;
@@ -137,6 +138,7 @@ namespace Isis.Core.Health
             using CancellationTokenSource cts = CancellationTokenSource.CreateLinkedTokenSource(token);
             cts.CancelAfter(timeoutMs > 0 ? timeoutMs : 5000);
 
+            long start = Stopwatch.GetTimestamp();
             try
             {
                 HttpMethod method = endpoint.HealthCheckMethod == HealthCheckMethodEnum.HEAD ? HttpMethod.Head : HttpMethod.Get;
@@ -158,29 +160,55 @@ namespace Isis.Core.Health
                 outcome.Error = e.Message;
             }
 
+            outcome.LatencyMs = (int)Stopwatch.GetElapsedTime(start).TotalMilliseconds;
             return outcome;
         }
 
         private void ApplyResult(ModelEndpoint endpoint, ProbeOutcome outcome)
         {
             EndpointHealthStatus status = _States.GetOrAdd(endpoint.Id, id => new EndpointHealthStatus { EndpointId = id });
-            status.Probed = true;
-            status.LastCheckUtc = DateTime.UtcNow;
-            status.LastStatusCode = outcome.StatusCode;
 
-            if (outcome.Success)
+            lock (status)
             {
-                status.ConsecutiveSuccesses++;
-                status.ConsecutiveFailures = 0;
-                status.LastError = null;
-                if (status.ConsecutiveSuccesses >= endpoint.HealthyThreshold) status.IsHealthy = true;
-            }
-            else
-            {
-                status.ConsecutiveFailures++;
-                status.ConsecutiveSuccesses = 0;
-                status.LastError = outcome.Error;
-                if (status.ConsecutiveFailures >= endpoint.UnhealthyThreshold) status.IsHealthy = false;
+                DateTime now = DateTime.UtcNow;
+
+                // Accumulate observed up/down time over the interval since the previous probe, attributed to the
+                // health state that held during that interval. Sampled — only as dense as probes occur.
+                if (status.LastCheckUtc.HasValue)
+                {
+                    long elapsedMs = (long)(now - status.LastCheckUtc.Value).TotalMilliseconds;
+                    if (elapsedMs > 0)
+                    {
+                        if (status.IsHealthy) status.TotalUptimeMs += elapsedMs;
+                        else status.TotalDowntimeMs += elapsedMs;
+                    }
+                }
+
+                bool wasHealthy = status.IsHealthy;
+                if (!status.FirstCheckUtc.HasValue) status.FirstCheckUtc = now;
+                status.Probed = true;
+                status.LastCheckUtc = now;
+                status.LastStatusCode = outcome.StatusCode;
+                status.LastLatencyMs = outcome.LatencyMs;
+
+                if (outcome.Success)
+                {
+                    status.ConsecutiveSuccesses++;
+                    status.ConsecutiveFailures = 0;
+                    status.LastError = null;
+                    status.LastHealthyUtc = now;
+                    if (status.ConsecutiveSuccesses >= endpoint.HealthyThreshold) status.IsHealthy = true;
+                }
+                else
+                {
+                    status.ConsecutiveFailures++;
+                    status.ConsecutiveSuccesses = 0;
+                    status.LastError = outcome.Error;
+                    status.LastUnhealthyUtc = now;
+                    if (status.ConsecutiveFailures >= endpoint.UnhealthyThreshold) status.IsHealthy = false;
+                }
+
+                if (status.IsHealthy != wasHealthy || !status.LastStateChangeUtc.HasValue) status.LastStateChangeUtc = now;
             }
         }
 

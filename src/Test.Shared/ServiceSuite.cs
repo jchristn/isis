@@ -51,6 +51,10 @@ namespace Test.Shared
                     TestCase.Async("service", "probe-failure-unhealthy", "Probe: unexpected status becomes unhealthy", ProbeFailureUnhealthyAsync),
                     TestCase.Async("service", "probe-inactive-skipped", "Probe: inactive endpoints are skipped", ProbeInactiveSkippedAsync),
                     TestCase.Async("service", "snapshot-reflects-probed", "Snapshot reflects probed endpoints", SnapshotReflectsProbedAsync),
+                    TestCase.Async("service", "probe-enriched-on-success", "Probe: success records first-check, last-healthy, latency, state change", ProbeEnrichedOnSuccessAsync),
+                    TestCase.Async("service", "probe-enriched-on-failure", "Probe: failure records last-unhealthy and no last-healthy", ProbeEnrichedOnFailureAsync),
+                    TestCase.Async("service", "probe-uptime-accumulates", "Probe: healthy interval accumulates uptime to 100%", ProbeUptimeAccumulatesAsync),
+                    TestCase.Async("service", "probe-downtime-accumulates", "Probe: unhealthy interval accumulates downtime to 0% uptime", ProbeDowntimeAccumulatesAsync),
 
                     // EmbeddingService
                     TestCase.Async("service", "embed-openai-parse", "Embedding: OpenAI response parses", EmbedOpenAiParseAsync),
@@ -208,6 +212,79 @@ namespace Test.Shared
             EndpointHealthStatus? status = service.GetStatus(a.Id);
             TestCase.Require(status != null, "Status must exist after a single probe.");
             TestCase.Require(!status!.IsHealthy, "Endpoint must not be healthy before the healthy threshold is met.");
+        }
+
+        private static async Task ProbeEnrichedOnSuccessAsync()
+        {
+            CountingHandler handler = new CountingHandler(HttpStatusCode.OK);
+            using HttpClient client = new HttpClient(handler);
+            HealthCheckService service = new HealthCheckService(client);
+
+            ModelEndpoint a = new ModelEndpoint { TenantId = "t", Name = "a", Hostname = "127.0.0.1", Port = 9100, HealthCheckUrl = "/health", HealthCheckExpectedStatusCode = 200, HealthyThreshold = 1 };
+            await service.ProbeOnceAsync(new[] { a }).ConfigureAwait(false);
+
+            EndpointHealthStatus? status = service.GetStatus(a.Id);
+            TestCase.Require(status != null, "Status must exist after probing.");
+            TestCase.Require(status!.IsHealthy, "Endpoint should be healthy at threshold 1.");
+            TestCase.Require(status.FirstCheckUtc.HasValue, "FirstCheckUtc must be set on the first probe.");
+            TestCase.Require(status.LastHealthyUtc.HasValue, "LastHealthyUtc must be set after a successful probe.");
+            TestCase.Require(!status.LastUnhealthyUtc.HasValue, "LastUnhealthyUtc must remain null when no probe has failed.");
+            TestCase.Require(status.LastStateChangeUtc.HasValue, "LastStateChangeUtc must be set when the endpoint becomes healthy.");
+            TestCase.Require(status.LastLatencyMs >= 0, "LastLatencyMs must be recorded.");
+            TestCase.Require(status.LastStatusCode == 200, "LastStatusCode must reflect the probe response, got " + status.LastStatusCode + ".");
+        }
+
+        private static async Task ProbeEnrichedOnFailureAsync()
+        {
+            CountingHandler handler = new CountingHandler(HttpStatusCode.OK);
+            using HttpClient client = new HttpClient(handler);
+            HealthCheckService service = new HealthCheckService(client);
+
+            // Expected status never matches the returned 200, so every probe fails.
+            ModelEndpoint bad = new ModelEndpoint { TenantId = "t", Name = "bad", Hostname = "127.0.0.1", Port = 9101, HealthCheckUrl = "/health", HealthCheckExpectedStatusCode = 599, UnhealthyThreshold = 1 };
+            await service.ProbeOnceAsync(new[] { bad }).ConfigureAwait(false);
+
+            EndpointHealthStatus? status = service.GetStatus(bad.Id);
+            TestCase.Require(status != null, "Status must exist after probing.");
+            TestCase.Require(status!.LastUnhealthyUtc.HasValue, "LastUnhealthyUtc must be set after a failed probe.");
+            TestCase.Require(!status.LastHealthyUtc.HasValue, "LastHealthyUtc must remain null when no probe has succeeded.");
+            TestCase.Require(!string.IsNullOrEmpty(status.LastError), "A failed probe must record a LastError.");
+        }
+
+        private static async Task ProbeUptimeAccumulatesAsync()
+        {
+            CountingHandler handler = new CountingHandler(HttpStatusCode.OK);
+            using HttpClient client = new HttpClient(handler);
+            HealthCheckService service = new HealthCheckService(client);
+
+            ModelEndpoint a = new ModelEndpoint { TenantId = "t", Name = "a", Hostname = "127.0.0.1", Port = 9102, HealthCheckUrl = "/health", HealthCheckExpectedStatusCode = 200, HealthyThreshold = 1 };
+            await service.ProbeOnceAsync(new[] { a }).ConfigureAwait(false); // becomes healthy; no interval yet
+            await Task.Delay(30).ConfigureAwait(false);
+            await service.ProbeOnceAsync(new[] { a }).ConfigureAwait(false); // healthy interval accrues to uptime
+
+            EndpointHealthStatus? status = service.GetStatus(a.Id);
+            TestCase.Require(status != null, "Status must exist after probing.");
+            TestCase.Require(status!.TotalUptimeMs > 0, "A healthy interval must accumulate uptime, got " + status.TotalUptimeMs + "ms.");
+            TestCase.Require(status.TotalDowntimeMs == 0, "No downtime should accrue while healthy, got " + status.TotalDowntimeMs + "ms.");
+            TestCase.Require(status.UptimePercentage >= 99.9, "Uptime should be ~100% when always healthy, got " + status.UptimePercentage + "%.");
+        }
+
+        private static async Task ProbeDowntimeAccumulatesAsync()
+        {
+            CountingHandler handler = new CountingHandler(HttpStatusCode.OK);
+            using HttpClient client = new HttpClient(handler);
+            HealthCheckService service = new HealthCheckService(client);
+
+            // Expected status never matches, so the endpoint is never healthy and intervals accrue to downtime.
+            ModelEndpoint bad = new ModelEndpoint { TenantId = "t", Name = "bad", Hostname = "127.0.0.1", Port = 9103, HealthCheckUrl = "/health", HealthCheckExpectedStatusCode = 599, UnhealthyThreshold = 1 };
+            await service.ProbeOnceAsync(new[] { bad }).ConfigureAwait(false);
+            await Task.Delay(30).ConfigureAwait(false);
+            await service.ProbeOnceAsync(new[] { bad }).ConfigureAwait(false);
+
+            EndpointHealthStatus? status = service.GetStatus(bad.Id);
+            TestCase.Require(status != null, "Status must exist after probing.");
+            TestCase.Require(status!.TotalDowntimeMs > 0, "An unhealthy interval must accumulate downtime, got " + status.TotalDowntimeMs + "ms.");
+            TestCase.Require(status.UptimePercentage < 0.1, "Uptime should be ~0% when never healthy, got " + status.UptimePercentage + "%.");
         }
 
         private static async Task ProbeFailureUnhealthyAsync()

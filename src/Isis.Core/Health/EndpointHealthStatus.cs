@@ -49,6 +49,54 @@ namespace Isis.Core.Health
         /// </summary>
         public string? LastError { get; set; } = null;
 
+        /// <summary>
+        /// The UTC timestamp of the very first probe, if any (when monitoring of this endpoint began).
+        /// </summary>
+        public DateTime? FirstCheckUtc { get; set; } = null;
+
+        /// <summary>
+        /// The UTC timestamp of the last successful probe, if any.
+        /// </summary>
+        public DateTime? LastHealthyUtc { get; set; } = null;
+
+        /// <summary>
+        /// The UTC timestamp of the last failed probe, if any.
+        /// </summary>
+        public DateTime? LastUnhealthyUtc { get; set; } = null;
+
+        /// <summary>
+        /// The UTC timestamp of the last change to the healthy/unhealthy state, if any.
+        /// </summary>
+        public DateTime? LastStateChangeUtc { get; set; } = null;
+
+        /// <summary>
+        /// The round-trip latency of the last probe, in milliseconds (0 when never probed).
+        /// </summary>
+        public int LastLatencyMs { get; set; } = 0;
+
+        /// <summary>
+        /// Total accumulated time (ms) the endpoint has been observed healthy, sampled across probes.
+        /// </summary>
+        public long TotalUptimeMs { get; set; } = 0;
+
+        /// <summary>
+        /// Total accumulated time (ms) the endpoint has been observed unhealthy, sampled across probes.
+        /// </summary>
+        public long TotalDowntimeMs { get; set; } = 0;
+
+        /// <summary>
+        /// The observed uptime as a percentage of total sampled time (0 when nothing sampled yet).
+        /// </summary>
+        public double UptimePercentage
+        {
+            get
+            {
+                long total = TotalUptimeMs + TotalDowntimeMs;
+                if (total <= 0) return IsHealthy ? 100.0 : 0.0;
+                return (double)TotalUptimeMs / total * 100.0;
+            }
+        }
+
         #endregion
 
         #region Constructors-and-Factories

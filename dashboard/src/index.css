@@ -1240,6 +1240,72 @@ table.data-table {
   word-break: break-word;
 }
 
+/* ---------- Health details modal ---------- */
+.health-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+.health-stats-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: var(--spacing-sm);
+}
+.health-stat-card {
+  background: var(--color-surface-alt, var(--color-surface));
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 8px);
+  padding: 0.6rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.health-stat-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+.health-stat-value {
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+.health-stat-success .health-stat-value { color: var(--color-success); }
+.health-stat-danger .health-stat-value { color: var(--color-danger); }
+.health-stat-warning .health-stat-value { color: var(--color-warning); }
+.health-stat-success { border-left: 3px solid var(--color-success); }
+.health-stat-danger { border-left: 3px solid var(--color-danger); }
+.health-stat-warning { border-left: 3px solid var(--color-warning); }
+.health-section-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  font-weight: 700;
+  margin-top: var(--spacing-sm);
+}
+.health-error-box {
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-md, 8px);
+  padding: 0.6rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.health-error-message {
+  color: var(--color-danger);
+  font-size: var(--font-size-sm);
+  word-break: break-word;
+}
+.health-history-note {
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+  margin-top: 0.25rem;
+}
+
 /* ---------- Detail modal sections (request history) ---------- */
 .detail-section {
   margin-bottom: var(--spacing-lg);

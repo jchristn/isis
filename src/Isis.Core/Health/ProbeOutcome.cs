@@ -22,6 +22,11 @@ namespace Isis.Core.Health
         /// </summary>
         internal string? Error { get; set; } = null;
 
+        /// <summary>
+        /// The round-trip latency of the probe, in milliseconds.
+        /// </summary>
+        internal int LatencyMs { get; set; } = 0;
+
         #endregion
 
         #region Constructors-and-Factories
