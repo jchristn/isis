@@ -105,22 +105,25 @@ token; the **secret key is never sent** and never leaves your machine. The local
 `isisdefaultkey`; create a real one in the dashboard under **Credentials** and use a least-privilege key.
 
 The quickest way is the ready-made installers in `scripts/` — one per harness, for `windows`, `macos`,
-and `linux`. Each takes the access key as its first argument (or reads `ISIS_ACCESS_KEY`), writes an
-`isis` entry into that client's config, backs up the existing file, and leaves everything else intact.
-Run the one for your OS; the examples below use `linux` (swap in `macos/…` or `windows\…\*.bat`).
+and `linux`. Each takes the access key as its first argument, which is **optional: omit it to use the
+local-dev default `isisdefaultkey`** (or set `ISIS_ACCESS_KEY`). The installer writes an `isis` entry
+into that client's config, backs up the existing file, and leaves everything else intact. Run the one
+for your OS; the examples below use `linux` (swap in `macos/…` or `windows\…\*.bat`). Replace
+`isisdefaultkey` with your own credential access key for anything beyond local development.
 
 | Harness | Install (Linux/macOS) | Windows | Client config it writes |
 |---|---|---|---|
-| **Claude Code** | `sh scripts/linux/install-claude.sh <accessKey>` | `scripts\windows\install-claude.bat <accessKey>` | via `claude mcp add` (`~/.claude.json`) |
-| **Codex** | `sh scripts/linux/install-codex.sh <accessKey>` | `scripts\windows\install-codex.bat <accessKey>` | `~/.codex/config.json` |
-| **Cursor** | `sh scripts/linux/install-cursor.sh <accessKey>` | `scripts\windows\install-cursor.bat <accessKey>` | `~/.cursor/mcp.json` |
-| **Gemini CLI** | `sh scripts/linux/install-gemini.sh <accessKey>` | `scripts\windows\install-gemini.bat <accessKey>` | `~/.gemini/settings.json` |
-| **Mux** | `sh scripts/linux/install-mux.sh <accessKey>` | `scripts\windows\install-mux.bat <accessKey>` | `~/.mux/mcp-servers.json` |
+| **Claude Code** | `sh scripts/linux/install-claude.sh isisdefaultkey` | `scripts\windows\install-claude.bat isisdefaultkey` | via `claude mcp add` (`~/.claude.json`) |
+| **Codex** | `sh scripts/linux/install-codex.sh isisdefaultkey` | `scripts\windows\install-codex.bat isisdefaultkey` | `~/.codex/config.json` |
+| **Cursor** | `sh scripts/linux/install-cursor.sh isisdefaultkey` | `scripts\windows\install-cursor.bat isisdefaultkey` | `~/.cursor/mcp.json` |
+| **Gemini CLI** | `sh scripts/linux/install-gemini.sh isisdefaultkey` | `scripts\windows\install-gemini.bat isisdefaultkey` | `~/.gemini/settings.json` |
+| **Mux** | `sh scripts/linux/install-mux.sh isisdefaultkey` | `scripts\windows\install-mux.bat isisdefaultkey` | `~/.mux/mcp-servers.json` |
 
-Then **restart the client** to load the server. Prefer to wire it yourself? For Claude Code:
+Then **restart the client** to load the server. Prefer to wire it yourself? For Claude Code (the
+`isisdefaultkey` below is the local-dev default — swap in your own access key otherwise):
 
 ```bash
-claude mcp add --transport http isis http://127.0.0.1:8720/mcp --header "x-access-key: <accessKey>"
+claude mcp add --transport http isis http://127.0.0.1:8720/mcp --header "x-access-key: isisdefaultkey"
 ```
 
 Each installer honors `ISIS_MCP_URL` (endpoint) and `ISIS_ACCESS_KEY`, plus a per-harness config
