@@ -24,7 +24,7 @@ Codex reads its MCP servers from `~/.codex/config.json`. Add an `isis` entry und
 }
 ```
 
-Only the access-key header is required; the secret key is never sent. Restart Codex after saving so it reconnects and discovers the ten `*` tools.
+Only the access-key header is required; the secret key is never sent. Restart Codex after saving so it reconnects and discovers the thirteen Isis memory tools (plus a few built-ins).
 
 If your Codex build only speaks the stdio MCP transport, bridge to the HTTP endpoint with a generic remote-MCP shim:
 
@@ -57,7 +57,9 @@ You have access to the Isis agent-memory platform via MCP tools. Isis is **not**
 | **Memory** | One atomic note: `slug`, `title`, `body`, `summary`, `tags` | `mem_` |
 | **Credential** | The access key your connection authenticates with; maps to a tenant | `crd_` |
 
-**Chat-with-Memory** is retrieval-augmented reasoning over a whole scope: rather than reading memories one by one, a scope's memory can answer a natural-language question by searching and synthesizing across its notes. Under the hood it is the same `memory_search` recall you drive directly with the tools below.
+**Tenant instructions** are the tenant's standing "memory manual" -- always-on guidance the operator wants every agent to honor. Read them with the `instructions` tool early in a session; they apply across every scope in the tenant.
+
+**Chat-with-Memory** is retrieval-augmented reasoning over a whole scope. It is a separate REST surface (**not** one of the MCP tools below): it uses the same retrieval as `memory_search`, then adds an inference step to synthesize a grounded, cited answer.
 
 The store behind a scope determines search power: `RecallDb` supports `Semantic` and `Hybrid` search; `Verbex` and `Filesystem` are `Keyword`-only.
 
@@ -71,11 +73,12 @@ Learn who you are and what memory exists before doing anything else:
 
 ```
 whoami()                                   -> your tenantId (cache it for the session)
-scope_enumerate({ tenantId })              -> the scopes available in your tenant
-guide({ tenantId, scopeId })               -> the scope's categories, their usage instructions, and policies
+instructions({ tenantId })                 -> the tenant's standing memory manual (read early; re-read if it changes)
+scope_enumerate({ tenantId })              -> the scopes in your tenant (create one with scope_create if none fits)
+guide({ tenantId, scopeId })               -> the scope's categories, their usage instructions, and store capabilities
 ```
 
-`guide` is the single most important call. It returns each category's **instructions** -- the contract for when and how to write that kind of memory -- plus always-on **policies** you should honor without being asked. Read it before writing anything.
+Call `instructions` right after `whoami` to load the tenant's standing guidance. Then `guide` is the single most important per-scope call: it returns each category's **instructions** -- the contract for when and how to write that kind of memory -- alongside the store's search **capabilities**. Read both before writing anything.
 
 ### 2. Recall
 
@@ -136,23 +139,26 @@ Match every write to a category and follow that category's `instructions`. When 
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `whoami` | -- | Resolve the tenant and principal your credential maps to. Call first. |
+| `whoami` | -- | Resolve the tenant and principal your credential maps to. Call first; its response carries the `tenantId` every other tool needs. |
+| `instructions` | `tenantId` (required) | Read the tenant's standing memory manual. Call right after `whoami`. |
 | `scope_enumerate` | `tenantId` (required) | List the memory scopes in a tenant. |
-| `guide` | `tenantId`, `scopeId` (required) | The scope's categories, their usage instructions, and policies. Call before writing. |
+| `scope_create` | `tenantId`, `name` (required); `description`, `storeProvider`, `embeddingEndpointId`, `dimensionality`, `filesystemLayout`, `targetPath` | Create a scope when none fits (typically once per project). |
+| `endpoint_enumerate` | `tenantId` (required); `kind` | List model endpoints (`Embedding`/`Inference`) -- e.g. to choose an `embeddingEndpointId`, or to confirm whether semantic (RecallDb) scopes are possible. |
+| `guide` | `tenantId`, `scopeId` (required) | The scope's categories, their usage instructions, and store capabilities. Call before writing. |
 | `category_enumerate` | `tenantId`, `scopeId` (required) | List categories in a scope, including usage instructions. |
 | `category_create` | `tenantId`, `scopeId`, `name` (required); `description`, `instructions` | Create a category. Supply `instructions`. |
-| `memory_enumerate` | `tenantId`, `scopeId` (required); `category`, `maxResults` | List token-cheap memory summaries (no bodies). |
+| `memory_enumerate` | `tenantId`, `scopeId` (required); `category`, `maxResults` | List token-cheap memory summaries (no bodies). `category` filters by category **id**. |
 | `memory_read` | `tenantId`, `scopeId`, `memoryId` (required) | Read one memory's full body. |
 | `memory_upsert` | `tenantId`, `scopeId`, `categoryId`, `slug`, `body` (required); `title`, `summary`, `type` | Create or update a memory. Idempotent on `(scope, category, slug)`. |
-| `memory_search` | `tenantId`, `scopeId`, `queryText` (required); `mode`, `topK`, `category` | Search a scope. `mode` = `Keyword`/`Semantic`/`Hybrid`. |
+| `memory_search` | `tenantId`, `scopeId`, `queryText` (required); `mode`, `topK`, `categoryName` | Search a scope. `mode` = `Keyword`/`Semantic`/`Hybrid`. `categoryName` filters by category **name**. |
 | `memory_delete` | `tenantId`, `scopeId`, `memoryId` (required) | Delete a memory by id. |
 
-`type` on upsert is one of `User`, `Feedback`, `Project`, `Reference`. `Semantic` and `Hybrid` search require a RecallDb-backed scope; `Keyword` works on any store.
+`type` on upsert is one of `User`, `Feedback`, `Project`, `Reference`. `Semantic` and `Hybrid` search require a RecallDb-backed scope; `Keyword` works on any store. (The server also exposes a few framework built-ins -- `ping`, `echo`, `getTime`, `getSessions` -- but the memory tools above are the ones you use.)
 
 ## Decision-Making Guidance
 
-- **Always start with `whoami`** and cache the `tenantId` -- nearly every other tool requires it. `scopeId` comes from `scope_enumerate`.
-- **Read the guide before writing.** Category `instructions` and scope `policies` are the contract; honor them.
+- **Always start with `whoami`** and cache the `tenantId` -- nearly every other tool requires it. `scopeId` comes from `scope_enumerate` (or `scope_create` when none fits).
+- **Read the tenant `instructions` and the scope `guide` before writing.** Category `instructions` and the tenant's standing instructions are the contract; honor them.
 - **Prefer summaries to bodies.** Enumerate and search return token-cheap summaries; only `memory_read` pulls a full body. Pull bodies deliberately.
 - **Search before you write** to avoid creating a duplicate under a new slug. If a memory exists, update it by re-using its slug.
 - **Keep slugs stable and descriptive** so repeated writes converge on one memory instead of scattering.
@@ -163,7 +169,7 @@ Match every write to a category and follow that category's `instructions`. When 
 Every tool returns the same envelope; the proxied REST response is under `data`:
 
 ```json
-{ "tool": "whoami", "success": true, "statusCode": 200, "data": { "tenantId": "ten_a1b2c3", "principalType": "Credential", "principalId": "crd_9x8y7z" } }
+{ "tool": "whoami", "success": true, "statusCode": 200, "data": { "tenantId": "ten_a1b2c3", "principalType": "Credential", "principalName": "default", "credentialId": "crd_9x8y7z" } }
 ```
 
 When a call fails, `success` is `false`, `statusCode` carries the upstream code (e.g. `401`, `403`, `404`), and `data` holds the error body. A request with no access key is rejected before any tool runs with `401`. A `403` on a tenant call means your credential is not authorized for that `tenantId` -- call `whoami` and use the `tenantId` it returns.

@@ -77,7 +77,8 @@ under `data`.
   "data": {
     "tenantId": "ten_a1b2c3",
     "principalType": "Credential",
-    "principalId": "crd_9x8y7z"
+    "principalName": "default",
+    "credentialId": "crd_9x8y7z"
   }
 }
 ```
@@ -87,7 +88,7 @@ When the REST call fails, `success` is `false`, `statusCode` carries the upstrea
 
 ## Tool Inventory
 
-Isis exposes twelve MCP tools.
+Isis exposes thirteen MCP tools.
 
 | Tool | Purpose |
 |------|---------|
@@ -95,6 +96,7 @@ Isis exposes twelve MCP tools.
 | `scope_enumerate` | List the memory scopes in a tenant |
 | `scope_create` | Create a memory scope for a project when none exists |
 | `instructions` | Get the tenant's standing instructions |
+| `endpoint_enumerate` | List a tenant's model endpoints (embedding / inference) |
 | `guide` | Get the operating guide for a scope: categories, usage instructions, capabilities |
 | `category_enumerate` | List categories in a scope, including usage instructions |
 | `category_create` | Create a category in a scope |
@@ -112,7 +114,9 @@ bodies to conserve tokens.
 1. Call `whoami` to learn your `tenantId`.
 2. Call `instructions` with that `tenantId` to read the tenant's standing guidance, then
    `scope_enumerate` to find the scope you want (a project, a book, or a shared "global"
-   scope). If no scope fits your project, create one with `scope_create`.
+   scope). If no scope fits your project, create one with `scope_create` (use
+   `endpoint_enumerate` to pick an embedding endpoint for a semantic RecallDb scope, or to
+   confirm one exists).
 3. Call `guide` for the selected scope. This is the single most important call: it
    returns the scope's categories, their usage instructions (when and how to write each
    kind of memory), and the store's search capabilities.
@@ -161,7 +165,8 @@ No arguments.
   "data": {
     "tenantId": "ten_a1b2c3",
     "principalType": "Credential",
-    "principalId": "crd_9x8y7z"
+    "principalName": "default",
+    "credentialId": "crd_9x8y7z"
   }
 }
 ```
@@ -240,7 +245,7 @@ Proxies `POST /v1.0/api/tenants/{tenantId}/scopes`.
 | `storeProvider` | string | No | server default | Backing store: `RecallDb`, `Verbex`, or `Filesystem` |
 | `embeddingEndpointId` | string | No | null | Embedding endpoint id for semantic scopes |
 | `dimensionality` | integer | No | null | Embedding vector dimension |
-| `filesystemLayout` | string | No | null | Layout for a `Filesystem` scope (single-file or hierarchy) |
+| `filesystemLayout` | string | No | null | Layout for a `Filesystem` scope: `SingleFile`, `Hierarchy`, or `OkfBundle` |
 | `targetPath` | string | No | null | Root path for a `Filesystem` scope |
 
 #### Example Request
@@ -273,7 +278,27 @@ Proxies `POST /v1.0/api/tenants/{tenantId}/scopes`.
 
 - Enumerate first; create a scope only when none fits. One scope per project is the norm.
 - For semantic search, provide an `embeddingEndpointId` and `dimensionality` that match the
-  configured embedding endpoint.
+  configured embedding endpoint (list them with `endpoint_enumerate`). If you omit them, the
+  default RecallDb store auto-selects the tenant's embedding endpoint and its dimensionality.
+
+### `endpoint_enumerate`
+
+List a tenant's configured model endpoints (embedding and inference). Use it to choose an
+`embeddingEndpointId` for a semantic (`RecallDb`) scope, or to confirm whether any embedding
+endpoint exists at all.
+
+Proxies `GET /v1.0/api/tenants/{tenantId}/endpoints` (optional `kind` filter).
+
+#### Input
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `tenantId` | string | Yes | n/a | Tenant identifier from `whoami` |
+| `kind` | string | No | all | Filter by endpoint kind: `Embedding` or `Inference` |
+
+#### Guidance
+
+- If no embedding endpoint is configured, prefer a `Filesystem` or `Verbex` (keyword-only) scope.
 
 ### `instructions`
 
@@ -360,13 +385,13 @@ Proxies `GET /v1.0/api/tenants/{tenantId}/scopes/{scopeId}/guide`.
         "instructions": "Write one memory per subsystem. Use the subsystem path as the slug."
       }
     ],
-    "policies": [
-      {
-        "policyId": "pol_style",
-        "name": "commit-style",
-        "text": "Commit messages use imperative mood and reference an issue id."
-      }
-    ]
+    "capabilities": {
+      "supportsKeyword": true,
+      "supportsSemantic": true,
+      "supportsHybrid": true,
+      "requiresEmbedding": true,
+      "description": "RecallDb store: semantic + keyword + hybrid search."
+    }
   }
 }
 ```
@@ -374,7 +399,8 @@ Proxies `GET /v1.0/api/tenants/{tenantId}/scopes/{scopeId}/guide`.
 #### Guidance
 
 - Treat category `instructions` as the contract for what and how to write.
-- Policies are always-on cross-cutting guidance; honor them without being asked.
+- `capabilities` tells you which search modes the scope supports (`Semantic` / `Hybrid` require a RecallDb store).
+- Tenant-wide standing guidance is separate — fetch it with the `instructions` tool and honor it without being asked.
 
 ### `category_enumerate`
 
@@ -419,7 +445,7 @@ Proxies `GET /v1.0/api/tenants/{tenantId}/scopes/{scopeId}/categories`.
 #### Guidance
 
 - Prefer an existing category over creating a new one.
-- `guide` returns the same category information plus policies; use it for onboarding.
+- `guide` returns the same category information plus the scope's store capabilities; use it for onboarding.
 
 ### `category_create`
 
@@ -638,7 +664,7 @@ Proxies `POST /v1.0/api/tenants/{tenantId}/scopes/{scopeId}/memories/search`.
 | `queryText` | string | Yes | n/a | The search query |
 | `mode` | string | No | server default | `Keyword`, `Semantic`, or `Hybrid` |
 | `topK` | integer | No | server default | Maximum results to return |
-| `category` | string | No | null | Optional category name filter (sent as `categoryFilter`) |
+| `categoryName` | string | No | null | Optional category **name** filter (sent as `categoryFilter`) |
 
 #### Example Request
 
@@ -649,7 +675,7 @@ Proxies `POST /v1.0/api/tenants/{tenantId}/scopes/{scopeId}/memories/search`.
   "queryText": "how do I run the tests",
   "mode": "Hybrid",
   "topK": 5,
-  "category": "build-commands"
+  "categoryName": "build-commands"
 }
 ```
 

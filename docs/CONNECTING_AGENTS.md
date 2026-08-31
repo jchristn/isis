@@ -153,7 +153,7 @@ access-key header (or send the access key as a bearer token):
 ```
 
 The MCP `initialize` handshake succeeds over streamable HTTP + SSE, after which
-`tools/list` returns the ten `*` tools. Clients that only support the classic
+`tools/list` returns the thirteen Isis tools (plus a few server built-ins). Clients that only support the classic
 JSON-RPC path can use `http://localhost:8720/rpc`, but `/mcp` is preferred.
 
 You can verify the endpoint is reachable and correctly authenticated with a raw MCP
@@ -187,13 +187,14 @@ Call `whoami` with no arguments. It returns the `tenantId` your credential maps 
 Response `data`:
 
 ```json
-{ "tenantId": "ten_a1b2c3", "principalType": "Credential", "principalId": "crd_9x8y7z" }
+{ "tenantId": "ten_a1b2c3", "principalType": "Credential", "principalName": "default", "credentialId": "crd_9x8y7z" }
 ```
 
 ### 2. Find a scope and read its guide
 
-List scopes, then read the guide for the one you want. The guide returns the scope's
-categories, their usage instructions, and active policies.
+First read the tenant's standing guidance with `instructions`, then list scopes and read the
+guide for the one you want. The guide returns the scope's categories, their usage instructions,
+and store capabilities (which search modes it supports).
 
 `scope_enumerate`:
 
