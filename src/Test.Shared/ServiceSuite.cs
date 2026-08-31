@@ -3,6 +3,7 @@ namespace Test.Shared
     using System;
     using System.Collections.Generic;
     using System.IO;
+    using System.Linq;
     using System.Net;
     using System.Net.Http;
     using System.Text.Json;
@@ -78,7 +79,8 @@ namespace Test.Shared
 
                     // MemoryChatService
                     TestCase.Async("service", "chat-answer-with-citations", "Chat: grounded answer cites the memory", ChatAnswerWithCitationsAsync),
-                    TestCase.Async("service", "chat-no-match-notice", "Chat: no match still answers with a notice", ChatNoMatchNoticeAsync)
+                    TestCase.Async("service", "chat-miss-lists-memories", "Chat: a search miss falls back to listing the scope's memories", ChatMissListsMemoriesAsync),
+                    TestCase.Async("service", "chat-empty-scope-says-none", "Chat: an empty scope reports it has no memories", ChatEmptyScopeSaysNoneAsync)
                 });
         }
 
@@ -578,7 +580,7 @@ namespace Test.Shared
             }
         }
 
-        private static async Task ChatNoMatchNoticeAsync()
+        private static async Task ChatMissListsMemoriesAsync()
         {
             using TempSqlite t = await TempSqlite.CreateAsync().ConfigureAwait(false);
             string work = NewWork();
@@ -586,18 +588,49 @@ namespace Test.Shared
             {
                 (Scope scope, Category category, MemoryService memoryService) = await SetupMemoryAsync(t.Db, work).ConfigureAwait(false);
                 await memoryService.UpsertAsync(scope, category, new Memory { Slug = "a", Title = "Centerline", Body = "Control the centerline; posture and framing win positions." }).ConfigureAwait(false);
+                await memoryService.UpsertAsync(scope, category, new Memory { Slug = "b", Title = "Grip", Body = "Win the grip to control the exchange." }).ConfigureAwait(false);
 
-                string chatJson = JsonSerializer.Serialize(new { choices = new[] { new { message = new { role = "assistant", content = "Answer [a]" } } } });
+                string chatJson = JsonSerializer.Serialize(new { choices = new[] { new { message = new { role = "assistant", content = "You have two memories: [a] and [b]." } } } });
                 using HttpClient client = new HttpClient(new StubResponseHandler(chatJson));
                 InferenceService inference = new InferenceService(client);
                 ModelEndpoint endpoint = new ModelEndpoint { TenantId = scope.TenantId, Name = "chat", Kind = EndpointKindEnum.Inference, ApiFormat = ApiFormatEnum.OpenAI, Hostname = "127.0.0.1", Port = 9999 };
 
                 MemoryChatService chat = new MemoryChatService(memoryService, inference);
-                ChatAnswer answer = await chat.AskAsync(scope, endpoint, "zxqwv unrelated xylophone plumbago", 5).ConfigureAwait(false);
+                // A broad meta-question whose words match no memory content — keyword search misses, so the
+                // service must fall back to enumerating the scope's memories rather than sending "(none)".
+                ChatAnswer answer = await chat.AskAsync(scope, endpoint, "What memories do you have?", 5).ConfigureAwait(false);
 
-                TestCase.Require(answer.Citations.Count == 0, "A non-matching question must yield no citations.");
-                TestCase.Require(!string.IsNullOrEmpty(answer.Notice), "A non-matching question must carry a notice.");
+                TestCase.Require(answer.Citations.Count == 2, "A search miss with memories present must fall back to listing all of them, got " + answer.Citations.Count + ".");
+                List<string?> slugs = answer.Citations.Select(c => c.Slug).ToList();
+                TestCase.Require(slugs.Contains("a") && slugs.Contains("b"), "The fallback must include every scope memory.");
+                TestCase.Require(!string.IsNullOrEmpty(answer.Notice), "The fallback must carry an explanatory notice.");
                 TestCase.Require(!string.IsNullOrEmpty(answer.Answer), "Inference is still invoked, so an answer must be returned.");
+            }
+            finally
+            {
+                TryDeleteDir(work);
+            }
+        }
+
+        private static async Task ChatEmptyScopeSaysNoneAsync()
+        {
+            using TempSqlite t = await TempSqlite.CreateAsync().ConfigureAwait(false);
+            string work = NewWork();
+            try
+            {
+                (Scope scope, Category category, MemoryService memoryService) = await SetupMemoryAsync(t.Db, work).ConfigureAwait(false);
+                _ = category; // no memories are written — the scope is intentionally empty.
+
+                string chatJson = JsonSerializer.Serialize(new { choices = new[] { new { message = new { role = "assistant", content = "This scope has no memories yet." } } } });
+                using HttpClient client = new HttpClient(new StubResponseHandler(chatJson));
+                InferenceService inference = new InferenceService(client);
+                ModelEndpoint endpoint = new ModelEndpoint { TenantId = scope.TenantId, Name = "chat", Kind = EndpointKindEnum.Inference, ApiFormat = ApiFormatEnum.OpenAI, Hostname = "127.0.0.1", Port = 9999 };
+
+                MemoryChatService chat = new MemoryChatService(memoryService, inference);
+                ChatAnswer answer = await chat.AskAsync(scope, endpoint, "What memories do you have?", 5).ConfigureAwait(false);
+
+                TestCase.Require(answer.Citations.Count == 0, "An empty scope must yield no citations.");
+                TestCase.Require(!string.IsNullOrEmpty(answer.Notice), "An empty scope must carry a notice explaining there are no memories.");
             }
             finally
             {

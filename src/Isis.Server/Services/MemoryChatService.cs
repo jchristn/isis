@@ -68,35 +68,16 @@ namespace Isis.Server.Services
 
             try
             {
-                MemorySearchQuery query = new MemorySearchQuery { QueryText = question, Mode = SearchModeEnum.Hybrid, TopK = topK < 1 ? 5 : topK };
-                MemorySearchResult retrieval = await _MemoryService.SearchAsync(scope, query, token).ConfigureAwait(false);
-                IsisTelemetry.ChatContextMemories.Record(retrieval.Hits.Count, new TagList { { IsisTelemetry.TagStreaming, false } });
+                ContextResult ctx = await BuildContextAsync(scope, question, topK, token).ConfigureAwait(false);
+                IsisTelemetry.ChatContextMemories.Record(ctx.Count, new TagList { { IsisTelemetry.TagStreaming, false } });
 
                 ChatAnswer answer = new ChatAnswer();
-                answer.RetrievalMode = retrieval.EffectiveMode;
-                answer.Notice = retrieval.Notice;
+                answer.RetrievalMode = ctx.Mode;
+                answer.Notice = ctx.Notice;
+                answer.Citations.AddRange(ctx.Citations);
 
-                StringBuilder context = new StringBuilder();
-                foreach (MemorySearchHit hit in retrieval.Hits)
-                {
-                    context.Append("- [").Append(hit.Slug ?? "memory").Append("] ");
-                    if (!string.IsNullOrEmpty(hit.Title)) context.Append(hit.Title).Append(": ");
-                    context.Append(hit.Snippet).Append('\n');
-
-                    answer.Citations.Add(new ChatCitation { Slug = hit.Slug, Title = hit.Title, Score = hit.Score });
-                }
-
-                if (retrieval.Hits.Count == 0)
-                {
-                    answer.Notice = string.IsNullOrEmpty(answer.Notice) ? "No memories matched the question." : answer.Notice;
-                }
-
-                string systemPrompt =
-                    "You are a memory assistant. Answer the user's question using only the provided memories. " +
-                    "Cite the memories you use by their slug in square brackets. If the memories do not contain the answer, say so plainly.";
-                string userPrompt = "Question: " + question + "\n\nMemories:\n" + (context.Length > 0 ? context.ToString() : "(none)");
-
-                answer.Answer = await _InferenceService.CompleteAsync(inferenceEndpoint, systemPrompt, userPrompt, token).ConfigureAwait(false);
+                string userPrompt = BuildUserPrompt(question, ctx.ContextText);
+                answer.Answer = await _InferenceService.CompleteAsync(inferenceEndpoint, _SystemPrompt, userPrompt, token).ConfigureAwait(false);
                 return answer;
             }
             catch (Exception e)
@@ -141,31 +122,16 @@ namespace Isis.Server.Services
 
             try
             {
-            MemorySearchQuery query = new MemorySearchQuery { QueryText = question, Mode = SearchModeEnum.Hybrid, TopK = topK < 1 ? 5 : topK };
-            MemorySearchResult retrieval = await _MemoryService.SearchAsync(scope, query, token).ConfigureAwait(false);
-            IsisTelemetry.ChatContextMemories.Record(retrieval.Hits.Count, new TagList { { IsisTelemetry.TagStreaming, true } });
+            ContextResult ctx = await BuildContextAsync(scope, question, topK, token).ConfigureAwait(false);
+            IsisTelemetry.ChatContextMemories.Record(ctx.Count, new TagList { { IsisTelemetry.TagStreaming, true } });
 
-            List<ChatCitation> citations = new List<ChatCitation>();
-            List<object> hitPayloads = new List<object>();
-            StringBuilder context = new StringBuilder();
-            foreach (MemorySearchHit hit in retrieval.Hits)
-            {
-                context.Append("- [").Append(hit.Slug ?? "memory").Append("] ");
-                if (!string.IsNullOrEmpty(hit.Title)) context.Append(hit.Title).Append(": ");
-                context.Append(hit.Snippet).Append('\n');
-                citations.Add(new ChatCitation { Slug = hit.Slug, Title = hit.Title, Score = hit.Score });
-                hitPayloads.Add(new { slug = hit.Slug, title = hit.Title, score = hit.Score, snippet = hit.Snippet });
-            }
+            List<ChatCitation> citations = ctx.Citations;
+            string? notice = ctx.Notice;
 
-            string? notice = retrieval.Notice;
-            if (retrieval.Hits.Count == 0 && string.IsNullOrEmpty(notice)) notice = "No memories matched the question.";
+            await emit(new { type = "retrieval", mode = ctx.ModeLabel, hits = ctx.HitPayloads, notice = notice }, token).ConfigureAwait(false);
 
-            await emit(new { type = "retrieval", mode = retrieval.EffectiveMode.ToString(), hits = hitPayloads, notice = notice }, token).ConfigureAwait(false);
-
-            string systemPrompt =
-                "You are a memory assistant. Answer the user's question using only the provided memories. " +
-                "Cite the memories you use by their slug in square brackets. If the memories do not contain the answer, say so plainly.";
-            string userPrompt = "Question: " + question + "\n\nMemories:\n" + (context.Length > 0 ? context.ToString() : "(none)");
+            string systemPrompt = _SystemPrompt;
+            string userPrompt = BuildUserPrompt(question, ctx.ContextText);
 
             StringBuilder answerBuilder = new StringBuilder();
             Stopwatch stopwatch = Stopwatch.StartNew();
@@ -252,7 +218,7 @@ namespace Isis.Server.Services
                 type = "complete",
                 answer = answerBuilder.ToString(),
                 citations = citations,
-                retrievalMode = retrieval.EffectiveMode.ToString(),
+                retrievalMode = ctx.ModeLabel,
                 notice = notice,
                 model = inferenceEndpoint.Model,
                 promptTokens = promptTokens,
@@ -282,6 +248,72 @@ namespace Isis.Server.Services
 
         #region Private-Methods
 
+        private const string _SystemPrompt =
+            "You are a memory assistant for a specific memory scope. Answer the user's question using only the provided memories. " +
+            "Cite the memories you use by their slug in square brackets. " +
+            "If the user asks what memories exist, or asks for an overview or summary, summarize the provided memories — do NOT claim you have none when memories are listed below. " +
+            "Only if the memories genuinely do not contain the answer should you say so plainly.";
+
+        private static string BuildUserPrompt(string question, string contextText)
+        {
+            return "Question: " + question + "\n\nMemories:\n" + (string.IsNullOrEmpty(contextText) ? "(none)" : contextText);
+        }
+
+        /// <summary>
+        /// Build the grounding context for a question: run relevance search, and when it matches nothing
+        /// (a broad "what memories do you have?" question, or a keyword-only store that cannot match the
+        /// phrasing) fall back to enumerating the scope's memories so the model can summarize them rather
+        /// than being handed "(none)".
+        /// </summary>
+        private async Task<ContextResult> BuildContextAsync(Scope scope, string question, int topK, CancellationToken token)
+        {
+            int k = topK < 1 ? 5 : topK;
+            MemorySearchQuery query = new MemorySearchQuery { QueryText = question, Mode = SearchModeEnum.Hybrid, TopK = k };
+            MemorySearchResult retrieval = await _MemoryService.SearchAsync(scope, query, token).ConfigureAwait(false);
+
+            ContextResult ctx = new ContextResult { Mode = retrieval.EffectiveMode, ModeLabel = retrieval.EffectiveMode.ToString(), Notice = retrieval.Notice };
+            StringBuilder sb = new StringBuilder();
+
+            foreach (MemorySearchHit hit in retrieval.Hits)
+            {
+                AppendContextItem(sb, ctx, hit.Slug, hit.Title, hit.Snippet, hit.Score);
+            }
+
+            if (retrieval.Hits.Count == 0)
+            {
+                int cap = Math.Max(k, 25);
+                List<Memory> all = await _MemoryService.EnumerateAsync(scope, null, cap, token).ConfigureAwait(false);
+                foreach (Memory memory in all)
+                {
+                    string snippet = !string.IsNullOrEmpty(memory.Summary) ? memory.Summary! : Truncate(memory.Body, 600);
+                    AppendContextItem(sb, ctx, memory.Slug, memory.Title, snippet, null);
+                }
+
+                ctx.Notice = all.Count > 0
+                    ? "No memory directly matched the question; listing the scope's memories."
+                    : "This scope has no memories yet.";
+            }
+
+            ctx.ContextText = sb.Length > 0 ? sb.ToString() : "(none)";
+            ctx.Count = ctx.Citations.Count;
+            return ctx;
+        }
+
+        private static void AppendContextItem(StringBuilder sb, ContextResult ctx, string? slug, string? title, string? snippet, double? score)
+        {
+            sb.Append("- [").Append(slug ?? "memory").Append("] ");
+            if (!string.IsNullOrEmpty(title)) sb.Append(title).Append(": ");
+            sb.Append(snippet).Append('\n');
+            ctx.Citations.Add(new ChatCitation { Slug = slug, Title = title, Score = score ?? 0.0 });
+            ctx.HitPayloads.Add(new { slug = slug, title = title, score = score ?? 0.0, snippet = snippet });
+        }
+
+        private static string Truncate(string value, int max)
+        {
+            if (string.IsNullOrEmpty(value)) return string.Empty;
+            return value.Length <= max ? value : value.Substring(0, max) + "…";
+        }
+
         /// <summary>
         /// Return the index up to which the buffer can be emitted without splitting a marker that may continue
         /// in the next chunk: if the buffer ends with a prefix of <paramref name="marker"/>, hold that prefix
@@ -299,6 +331,17 @@ namespace Isis.Server.Services
             }
 
             return buffer.Length;
+        }
+
+        private sealed class ContextResult
+        {
+            public string ContextText { get; set; } = "(none)";
+            public List<ChatCitation> Citations { get; } = new List<ChatCitation>();
+            public List<object> HitPayloads { get; } = new List<object>();
+            public SearchModeEnum Mode { get; set; } = SearchModeEnum.Keyword;
+            public string ModeLabel { get; set; } = string.Empty;
+            public string? Notice { get; set; } = null;
+            public int Count { get; set; } = 0;
         }
 
         #endregion

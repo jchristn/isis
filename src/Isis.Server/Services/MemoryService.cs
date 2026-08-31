@@ -315,6 +315,27 @@ namespace Isis.Server.Services
             }
         }
 
+        /// <summary>
+        /// Enumerate a scope's indexed memories (optionally filtered to a category), most useful as a
+        /// fallback when relevance search matches nothing but the caller still needs the scope's contents —
+        /// for example to summarize "what memories exist?". Reads the memory index directly, so it works
+        /// for every store type (including keyword-only filesystem stores).
+        /// </summary>
+        /// <param name="scope">The scope whose memories to list.</param>
+        /// <param name="categoryId">Optional category filter.</param>
+        /// <param name="maxResults">Maximum number of memories to return (clamped to 1..1000).</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>The memories, newest indexing order as returned by the driver.</returns>
+        /// <exception cref="ArgumentNullException">Thrown when scope is null.</exception>
+        public async Task<List<Memory>> EnumerateAsync(Scope scope, string? categoryId, int maxResults, CancellationToken token = default)
+        {
+            if (scope == null) throw new ArgumentNullException(nameof(scope));
+
+            EnumerationQuery query = new EnumerationQuery { MaxResults = maxResults < 1 ? 1 : maxResults };
+            EnumerationResult<Memory> result = await _Database.Memories.EnumerateAsync(scope.TenantId, scope.Id, categoryId, query, token).ConfigureAwait(false);
+            return result.Objects ?? new List<Memory>();
+        }
+
         #endregion
 
         #region Private-Methods
