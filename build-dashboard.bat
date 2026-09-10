@@ -21,9 +21,16 @@ docker buildx build ^
     -f dashboard/Dockerfile ^
     --push ^
     dashboard
-set EXIT_CODE=%ERRORLEVEL%
+if errorlevel 1 (set EXIT_CODE=1& goto :done)
 
+echo Pulling %IMAGE%:%TAG% and %IMAGE%:latest into local registry...
+docker pull %IMAGE%:%TAG%
+if errorlevel 1 (set EXIT_CODE=1& goto :done)
+docker pull %IMAGE%:latest
+if errorlevel 1 (set EXIT_CODE=1& goto :done)
+set EXIT_CODE=0
+
+:done
 echo Done.
 popd
-endlocal
-exit /b %EXIT_CODE%
+endlocal & exit /b %EXIT_CODE%
