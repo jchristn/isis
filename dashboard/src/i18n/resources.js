@@ -104,6 +104,7 @@ export const en = {
       user: 'User',
       tenant: 'Tenant',
       github: 'View on GitHub',
+      discord: 'Join our Discord',
       toggleTheme: 'Toggle theme',
       logout: 'Logout',
       language: 'Language'

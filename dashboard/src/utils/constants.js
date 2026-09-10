@@ -17,6 +17,7 @@ export const DEFAULT_TENANT_ID =
   typeof __DEFAULT_TENANT_ID__ !== 'undefined' ? __DEFAULT_TENANT_ID__ : 'ten_default';
 
 export const GITHUB_URL = 'https://github.com/jchristn/isis';
+export const DISCORD_URL = 'https://discord.gg/tRAN8HgvK5';
 
 export const PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 250, 500, 1000];
 export const DEFAULT_PAGE_SIZE = 25;

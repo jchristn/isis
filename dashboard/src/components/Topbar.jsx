@@ -6,8 +6,8 @@ import { useTheme } from '../context/ThemeContext';
 import { useApp } from '../context/AppContext';
 import LanguageSelector from '../i18n/LanguageSelector';
 import CopyableId from './CopyableId';
-import { IconSun, IconMoon, IconGithub, IconLogout, IconMenu } from './Icons';
-import { GITHUB_URL } from '../utils/constants';
+import { IconSun, IconMoon, IconGithub, IconDiscord, IconLogout, IconMenu } from './Icons';
+import { GITHUB_URL, DISCORD_URL } from '../utils/constants';
 
 /**
  * Topbar: server context + principal/role on the left, health/live status and
@@ -95,6 +95,16 @@ function Topbar() {
           aria-label={t('topbar.github')}
         >
           <IconGithub />
+        </a>
+        <a
+          className="btn-icon"
+          href={DISCORD_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          title={t('topbar.discord')}
+          aria-label={t('topbar.discord')}
+        >
+          <IconDiscord />
         </a>
         <button className="btn-icon" onClick={toggleTheme} title={t('topbar.toggleTheme')} aria-label={t('topbar.toggleTheme')}>
           {theme === 'light' ? <IconMoon /> : <IconSun />}
