@@ -9,8 +9,20 @@ export const STORAGE_KEYS = {
   explorerHistory: 'isis_api_explorer_history'
 };
 
+// Runtime override (window.__ISIS_CONFIG__.serverUrl) wins over the Vite
+// build-time __DEFAULT_SERVER_URL__ define; the compile-time value is only a
+// fallback for local dev where /config.js is not served. This lets operators
+// pin the login default per environment without rebuilding the image.
+const runtimeServerUrl =
+  typeof window !== 'undefined' &&
+  window.__ISIS_CONFIG__ &&
+  typeof window.__ISIS_CONFIG__.serverUrl === 'string' &&
+  window.__ISIS_CONFIG__.serverUrl.length > 0
+    ? window.__ISIS_CONFIG__.serverUrl
+    : null;
 export const DEFAULT_SERVER_URL =
-  typeof __DEFAULT_SERVER_URL__ !== 'undefined' ? __DEFAULT_SERVER_URL__ : 'http://127.0.0.1:8700';
+  runtimeServerUrl ??
+  (typeof __DEFAULT_SERVER_URL__ !== 'undefined' ? __DEFAULT_SERVER_URL__ : 'http://127.0.0.1:8700');
 export const DEFAULT_ADMIN_EMAIL =
   typeof __DEFAULT_ADMIN_EMAIL__ !== 'undefined' ? __DEFAULT_ADMIN_EMAIL__ : 'admin@isis.local';
 export const DEFAULT_TENANT_ID =
