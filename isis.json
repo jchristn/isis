@@ -45,5 +45,10 @@
     "SeedAdminPassword": "override-via-env",
     "DefaultAccessKey": "isisdefaultkey",
     "DefaultSecretKey": "override-via-env"
+  },
+  "Retention": {
+    "Enabled": true,
+    "MaxAgeDays": 30,
+    "SweepIntervalMinutes": 60
   }
 }

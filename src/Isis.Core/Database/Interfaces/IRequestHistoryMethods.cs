@@ -1,5 +1,6 @@
 namespace Isis.Core.Database.Interfaces
 {
+    using System;
     using System.Threading;
     using System.Threading.Tasks;
     using Isis.Core.Models;
@@ -41,5 +42,13 @@ namespace Isis.Core.Database.Interfaces
         /// <param name="token">Cancellation token.</param>
         /// <returns>The number of entries deleted.</returns>
         Task<long> DeleteAllAsync(string? tenantId, CancellationToken token = default);
+
+        /// <summary>
+        /// Delete request history entries created strictly before the given UTC cutoff. Used by the retention pruner.
+        /// </summary>
+        /// <param name="cutoffUtc">The UTC cutoff; entries older than this are removed.</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>The number of entries deleted.</returns>
+        Task<long> DeleteOlderThanAsync(DateTime cutoffUtc, CancellationToken token = default);
     }
 }

@@ -192,6 +192,24 @@ CREATE TABLE IF NOT EXISTS request_history (
     INDEX idx_reqhistory_tenant_created (tenantid, createdutc)
 );
 
+CREATE TABLE IF NOT EXISTS operation_events (
+    id VARCHAR(64) PRIMARY KEY,
+    tenantid VARCHAR(64),
+    resourcetype VARCHAR(64) NOT NULL,
+    operation VARCHAR(32) NOT NULL,
+    resourceid VARCHAR(64),
+    scopeid VARCHAR(64),
+    method VARCHAR(16) NOT NULL,
+    path VARCHAR(2048) NOT NULL,
+    statuscode INT NOT NULL DEFAULT 0,
+    principalname VARCHAR(255),
+    sourceip VARCHAR(64),
+    durationms DOUBLE NOT NULL DEFAULT 0,
+    createdutc VARCHAR(40) NOT NULL,
+    INDEX idx_opevents_tenant_created (tenantid, createdutc),
+    INDEX idx_opevents_resource_created (resourcetype, createdutc)
+);
+
 CREATE TABLE IF NOT EXISTS permissions (
     id VARCHAR(64) PRIMARY KEY,
     tenantid VARCHAR(64) NOT NULL,

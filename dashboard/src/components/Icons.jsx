@@ -37,6 +37,9 @@ export const IconDatabase = (p) => (
 export const IconHistory = (p) => (
   <svg {...base} {...p}><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /><path d="M12 8v4l3 2" /></svg>
 );
+export const IconActivity = (p) => (
+  <svg {...base} {...p}><path d="M3 21V3" /><path d="M3 21h18" /><rect x="6" y="12" width="3" height="6" /><rect x="11" y="8" width="3" height="10" /><rect x="16" y="4" width="3" height="14" /></svg>
+);
 export const IconPlay = (p) => (
   <svg {...base} {...p}><path d="M6 4l14 8-14 8z" /></svg>
 );

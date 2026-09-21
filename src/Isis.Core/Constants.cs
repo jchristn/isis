@@ -114,5 +114,10 @@ namespace Isis.Core
         /// Request history entry identifier prefix.
         /// </summary>
         public static readonly string RequestPrefix = "req_";
+
+        /// <summary>
+        /// Operation event identifier prefix.
+        /// </summary>
+        public static readonly string OperationPrefix = "op_";
     }
 }

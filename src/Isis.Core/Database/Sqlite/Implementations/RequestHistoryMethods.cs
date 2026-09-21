@@ -112,6 +112,18 @@ namespace Isis.Core.Database.Sqlite.Implementations
             return count;
         }
 
+        /// <inheritdoc />
+        public async Task<long> DeleteOlderThanAsync(DateTime cutoffUtc, CancellationToken token = default)
+        {
+            string cutoff = SqliteHelpers.ToSqlRequired(cutoffUtc);
+
+            DataTable countTable = await _Driver.ExecuteQueryAsync("SELECT COUNT(*) AS cnt FROM request_history WHERE createdutc < " + cutoff + ";", false, token).ConfigureAwait(false);
+            long count = countTable.Rows.Count > 0 ? SqliteHelpers.GetInt(countTable.Rows[0]["cnt"]) : 0;
+
+            await _Driver.ExecuteQueryAsync("DELETE FROM request_history WHERE createdutc < " + cutoff + ";", true, token).ConfigureAwait(false);
+            return count;
+        }
+
         #endregion
 
         #region Private-Methods

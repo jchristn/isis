@@ -54,6 +54,11 @@ namespace Isis.Server.Settings
         public RequestHistorySettings RequestHistory { get; set; } = new RequestHistorySettings();
 
         /// <summary>
+        /// Retention settings for observability history tables (request history and operation events).
+        /// </summary>
+        public RetentionSettings Retention { get; set; } = new RetentionSettings();
+
+        /// <summary>
         /// Observability (metrics and tracing) settings.
         /// </summary>
         public ObservabilitySettings Observability { get; set; } = new ObservabilitySettings();

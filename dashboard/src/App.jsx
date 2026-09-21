@@ -17,6 +17,7 @@ import EmbeddingEndpointsView from './views/EmbeddingEndpointsView';
 import InferenceEndpointsView from './views/InferenceEndpointsView';
 import CollectionsView from './views/CollectionsView';
 import RequestHistoryView from './views/RequestHistoryView';
+import OperationsView from './views/OperationsView';
 import ApiExplorerView from './views/ApiExplorerView';
 import SettingsView from './views/SettingsView';
 import TenantsView from './views/TenantsView';
@@ -71,6 +72,7 @@ function AppRoutes() {
         <Route path="endpoints/inference" element={<InferenceEndpointsView />} />
         <Route path="collections" element={<CollectionsView />} />
         <Route path="request-history" element={<RequestHistoryView />} />
+        <Route path="operations" element={<OperationsView />} />
         <Route path="api-explorer" element={<ApiExplorerView />} />
         <Route path="settings" element={<SettingsView />} />
         <Route path="tenants" element={<TenantsView />} />

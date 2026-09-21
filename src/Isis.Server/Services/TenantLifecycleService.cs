@@ -131,6 +131,7 @@ namespace Isis.Server.Services
             await DrainAsync<User>((q, t) => _Database.Users.EnumerateAsync(tenantId, q, t), u => u.Id, (ids, t) => _Database.Users.DeleteManyAsync(tenantId, ids, t), token).ConfigureAwait(false);
 
             await _Database.RequestHistory.DeleteAllAsync(tenantId, token).ConfigureAwait(false);
+            await _Database.OperationEvents.DeleteAllAsync(tenantId, token).ConfigureAwait(false);
             await _Database.Tenants.DeleteAsync(tenantId, token).ConfigureAwait(false);
             return TenantDeleteOutcome.Deleted;
         }

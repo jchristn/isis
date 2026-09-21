@@ -185,6 +185,22 @@ CREATE TABLE IF NOT EXISTS request_history (
     createdutc TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS operation_events (
+    id TEXT PRIMARY KEY,
+    tenantid TEXT,
+    resourcetype TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    resourceid TEXT,
+    scopeid TEXT,
+    method TEXT NOT NULL,
+    path TEXT NOT NULL,
+    statuscode INTEGER NOT NULL DEFAULT 0,
+    principalname TEXT,
+    sourceip TEXT,
+    durationms REAL NOT NULL DEFAULT 0,
+    createdutc TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS permissions (
     id TEXT PRIMARY KEY,
     tenantid TEXT NOT NULL,
@@ -233,6 +249,8 @@ CREATE INDEX IF NOT EXISTS idx_memories_scope_category ON memories(scopeid, cate
 CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_scope_category_slug ON memories(scopeid, categoryid, slug);
 CREATE INDEX IF NOT EXISTS idx_endpoints_tenant_kind ON model_endpoints(tenantid, kind);
 CREATE INDEX IF NOT EXISTS idx_reqhistory_tenant_created ON request_history(tenantid, createdutc);
+CREATE INDEX IF NOT EXISTS idx_opevents_tenant_created ON operation_events(tenantid, createdutc);
+CREATE INDEX IF NOT EXISTS idx_opevents_resource_created ON operation_events(resourcetype, createdutc);
 CREATE INDEX IF NOT EXISTS idx_permissions_tenant_user ON permissions(tenantid, userid);
 CREATE INDEX IF NOT EXISTS idx_instructions_tenantid ON instructions(tenantid, position);
 ";

@@ -14,6 +14,7 @@ namespace Isis.Server
     using Isis.Core.Recall;
     using Isis.Core.Security;
     using Isis.Core.Stores;
+    using Isis.Server.Observability;
     using Isis.Server.Routes;
     using Isis.Server.Services;
     using Isis.Server.Settings;
@@ -47,6 +48,7 @@ namespace Isis.Server
         private readonly HealthCheckService _HealthCheck;
         private readonly InferenceService _InferenceService;
         private readonly MemoryChatService _ChatService;
+        private readonly RetentionService _RetentionService;
         private readonly Webserver _Server;
         private readonly Action<string>? _Log;
         private readonly StoreOptions? _StoreOptions;
@@ -95,6 +97,7 @@ namespace Isis.Server
             _InferenceClient = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
             _InferenceService = new InferenceService(_InferenceClient);
             _ChatService = new MemoryChatService(_MemoryService, _InferenceService);
+            _RetentionService = new RetentionService(_Database, Settings.Retention, _Log);
 
             WebserverSettings webserverSettings = new WebserverSettings();
             webserverSettings.Hostname = settings.Rest.Hostname;
@@ -126,6 +129,7 @@ namespace Isis.Server
             ConfigureServer();
             ConfigureRoutes();
             _Server.Start();
+            _RetentionService.Start();
         }
 
         /// <summary>
@@ -133,6 +137,7 @@ namespace Isis.Server
         /// </summary>
         public void Stop()
         {
+            _RetentionService.Stop();
             if (_Server.IsListening) _Server.Stop();
         }
 
@@ -178,6 +183,7 @@ namespace Isis.Server
             new ModelEndpointRoutes(_Database, _AuthorizationService, _HealthCheck).Register(_Server);
             new ChatRoutes(_Database, _AuthorizationService, _ChatService).Register(_Server);
             new RequestHistoryRoutes(_Database, _AuthorizationService).Register(_Server);
+            new OperationRoutes(_Database, _AuthorizationService).Register(_Server);
             new CollectionRoutes(_AuthorizationService, _StoreOptions).Register(_Server);
             new GuideRoutes(_Database, _AuthorizationService).Register(_Server);
             new InstructionRoutes(_Database, _AuthorizationService).Register(_Server);
@@ -257,6 +263,25 @@ namespace Isis.Server
                 }
 
                 await _Database.RequestHistory.CreateAsync(entry, CancellationToken.None).ConfigureAwait(false);
+
+                // Derive a semantic operation event from the same request, so scope/memory/agentic activity
+                // can be charted over time. Kept in a separate, identically-pruned table (operation_events).
+                if (OperationClassifier.TryClassify(entry.Method, path, out string resourceType, out string operation, out string? resourceId, out string? scopeId))
+                {
+                    OperationEvent operationEvent = new OperationEvent();
+                    operationEvent.TenantId = entry.TenantId;
+                    operationEvent.ResourceType = resourceType;
+                    operationEvent.Operation = operation;
+                    operationEvent.ResourceId = resourceId;
+                    operationEvent.ScopeId = scopeId;
+                    operationEvent.Method = entry.Method;
+                    operationEvent.Path = entry.Path;
+                    operationEvent.StatusCode = entry.StatusCode;
+                    operationEvent.PrincipalName = entry.PrincipalName;
+                    operationEvent.SourceIp = entry.SourceIp;
+                    operationEvent.DurationMs = entry.DurationMs;
+                    await _Database.OperationEvents.CreateAsync(operationEvent, CancellationToken.None).ConfigureAwait(false);
+                }
             }
             catch
             {
@@ -316,6 +341,7 @@ namespace Isis.Server
             if (_Disposed) return;
             if (disposing)
             {
+                _RetentionService.Dispose();
                 if (_Server is IDisposable disposableServer) disposableServer.Dispose();
                 _ProbeClient.Dispose();
                 _InferenceClient.Dispose();

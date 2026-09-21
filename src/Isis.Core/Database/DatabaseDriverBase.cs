@@ -63,6 +63,11 @@ namespace Isis.Core.Database
         public IRequestHistoryMethods RequestHistory { get; protected set; } = null!;
 
         /// <summary>
+        /// Operation event data access methods.
+        /// </summary>
+        public IOperationEventMethods OperationEvents { get; protected set; } = null!;
+
+        /// <summary>
         /// Permission data access methods.
         /// </summary>
         public IPermissionMethods Permissions { get; protected set; } = null!;

@@ -189,6 +189,15 @@ namespace Isis.Core.Helpers
         }
 
         /// <summary>
+        /// Generate an operation event identifier.
+        /// </summary>
+        /// <returns>Operation event identifier.</returns>
+        public static string Operation()
+        {
+            return _Generator.GenerateKSortable(Constants.OperationPrefix, Constants.IdLength);
+        }
+
+        /// <summary>
         /// Generate an opaque secret such as a bearer token or credential secret key.
         /// </summary>
         /// <returns>Opaque token string.</returns>

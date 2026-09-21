@@ -103,6 +103,13 @@ namespace Test.Shared
                     TestCase.Async("database", "request-history-read-by-id", "Request history read by id round trip", RequestHistoryReadByIdAsync),
                     TestCase.Async("database", "request-history-delete-all-tenant", "Request history delete-all by tenant removes only that tenant's rows", RequestHistoryDeleteAllTenantAsync),
                     TestCase.Async("database", "request-history-delete-all-null", "Request history delete-all with null clears every row", RequestHistoryDeleteAllNullAsync),
+                    TestCase.Async("database", "request-history-delete-older-than", "Request history retention prune removes only aged rows", RequestHistoryDeleteOlderThanAsync),
+
+                    // Operation events
+                    TestCase.Async("database", "operation-event-create-enumerate", "Operation event create + enumerate with resource/operation filters", OperationEventCreateEnumerateAsync),
+                    TestCase.Async("database", "operation-event-enumerate-by-tenant", "Operation event enumerate by tenant returns only that tenant", OperationEventEnumerateByTenantAsync),
+                    TestCase.Async("database", "operation-event-read-by-id", "Operation event read by id round trip", OperationEventReadByIdAsync),
+                    TestCase.Async("database", "operation-event-delete-older-than", "Operation event retention prune removes only aged rows", OperationEventDeleteOlderThanAsync),
 
                     // Multi-tenant isolation
                     TestCase.Async("database", "multi-tenant-isolation", "Scope enumeration isolates tenants from one another", MultiTenantIsolationAsync)
@@ -1032,6 +1039,110 @@ namespace Test.Shared
 
             EnumerationResult<RequestHistoryEntry> all = await db.RequestHistory.EnumerateAsync(null, new EnumerationQuery { MaxResults = 100 }).ConfigureAwait(false);
             TestCase.Require(all.TotalRecords == 0, "All request history should be cleared after delete-all with null.");
+        }
+
+        private static async Task RequestHistoryDeleteOlderThanAsync()
+        {
+            using TempSqlite t = await TempSqlite.CreateAsync().ConfigureAwait(false);
+            DatabaseDriverBase db = t.Db;
+
+            Tenant tenant = await db.Tenants.CreateAsync(new Tenant { Name = "Acme" }).ConfigureAwait(false);
+            await db.RequestHistory.CreateAsync(new RequestHistoryEntry { TenantId = tenant.Id, Method = "GET", Path = "/old", CreatedUtc = DateTime.UtcNow.AddDays(-40) }).ConfigureAwait(false);
+            await db.RequestHistory.CreateAsync(new RequestHistoryEntry { TenantId = tenant.Id, Method = "GET", Path = "/fresh", CreatedUtc = DateTime.UtcNow.AddDays(-1) }).ConfigureAwait(false);
+
+            long removed = await db.RequestHistory.DeleteOlderThanAsync(DateTime.UtcNow.AddDays(-30)).ConfigureAwait(false);
+            TestCase.Require(removed == 1, "Retention prune should remove only the aged row, got " + removed + ".");
+
+            EnumerationResult<RequestHistoryEntry> remaining = await db.RequestHistory.EnumerateAsync(null, new EnumerationQuery { MaxResults = 100 }).ConfigureAwait(false);
+            TestCase.Require(remaining.TotalRecords == 1, "Exactly the fresh row should remain after retention prune, got " + remaining.TotalRecords + ".");
+            TestCase.Require(remaining.Objects.Count == 1 && remaining.Objects[0].Path == "/fresh", "The surviving request history row should be the fresh one.");
+        }
+
+        #endregion
+
+        #region OperationEvents
+
+        private static async Task OperationEventCreateEnumerateAsync()
+        {
+            using TempSqlite t = await TempSqlite.CreateAsync().ConfigureAwait(false);
+            DatabaseDriverBase db = t.Db;
+
+            Tenant tenant = await db.Tenants.CreateAsync(new Tenant { Name = "Acme" }).ConfigureAwait(false);
+            await db.OperationEvents.CreateAsync(new OperationEvent { TenantId = tenant.Id, ResourceType = "scope", Operation = "create", Method = "POST", Path = "/scopes", StatusCode = 201 }).ConfigureAwait(false);
+            await db.OperationEvents.CreateAsync(new OperationEvent { TenantId = tenant.Id, ResourceType = "scope", Operation = "read", Method = "GET", Path = "/scopes", StatusCode = 200 }).ConfigureAwait(false);
+            await db.OperationEvents.CreateAsync(new OperationEvent { TenantId = tenant.Id, ResourceType = "memory", Operation = "create", Method = "POST", Path = "/memories", StatusCode = 201 }).ConfigureAwait(false);
+
+            EnumerationResult<OperationEvent> all = await db.OperationEvents.EnumerateAsync(tenant.Id, null, null, new EnumerationQuery { MaxResults = 100 }).ConfigureAwait(false);
+            TestCase.Require(all.TotalRecords == 3, "All three operation events should enumerate, got " + all.TotalRecords + ".");
+
+            EnumerationResult<OperationEvent> scopes = await db.OperationEvents.EnumerateAsync(tenant.Id, "scope", null, new EnumerationQuery { MaxResults = 100 }).ConfigureAwait(false);
+            TestCase.Require(scopes.TotalRecords == 2, "Filtering by resource type 'scope' should return 2 rows, got " + scopes.TotalRecords + ".");
+
+            EnumerationResult<OperationEvent> creates = await db.OperationEvents.EnumerateAsync(tenant.Id, "scope", "create", new EnumerationQuery { MaxResults = 100 }).ConfigureAwait(false);
+            TestCase.Require(creates.TotalRecords == 1, "Filtering by resource 'scope' + operation 'create' should return 1 row, got " + creates.TotalRecords + ".");
+            TestCase.Require(creates.Objects.Count == 1 && creates.Objects[0].Operation == "create", "The filtered operation event should be the scope create.");
+        }
+
+        private static async Task OperationEventEnumerateByTenantAsync()
+        {
+            using TempSqlite t = await TempSqlite.CreateAsync().ConfigureAwait(false);
+            DatabaseDriverBase db = t.Db;
+
+            Tenant a = await db.Tenants.CreateAsync(new Tenant { Name = "A" }).ConfigureAwait(false);
+            Tenant b = await db.Tenants.CreateAsync(new Tenant { Name = "B" }).ConfigureAwait(false);
+            await db.OperationEvents.CreateAsync(new OperationEvent { TenantId = a.Id, ResourceType = "scope", Operation = "create", Method = "POST", Path = "/a1" }).ConfigureAwait(false);
+            await db.OperationEvents.CreateAsync(new OperationEvent { TenantId = a.Id, ResourceType = "memory", Operation = "read", Method = "GET", Path = "/a2" }).ConfigureAwait(false);
+            await db.OperationEvents.CreateAsync(new OperationEvent { TenantId = b.Id, ResourceType = "scope", Operation = "delete", Method = "DELETE", Path = "/b1" }).ConfigureAwait(false);
+
+            EnumerationResult<OperationEvent> aEvents = await db.OperationEvents.EnumerateAsync(a.Id, null, null, new EnumerationQuery { MaxResults = 100 }).ConfigureAwait(false);
+            TestCase.Require(aEvents.TotalRecords == 2, "Tenant A operation events should be 2 rows, got " + aEvents.TotalRecords + ".");
+            foreach (OperationEvent entry in aEvents.Objects)
+            {
+                TestCase.Require(entry.TenantId == a.Id, "Tenant-scoped operation events returned a row for another tenant.");
+            }
+        }
+
+        private static async Task OperationEventReadByIdAsync()
+        {
+            using TempSqlite t = await TempSqlite.CreateAsync().ConfigureAwait(false);
+            DatabaseDriverBase db = t.Db;
+
+            Tenant tenant = await db.Tenants.CreateAsync(new Tenant { Name = "Acme" }).ConfigureAwait(false);
+            OperationEvent created = await db.OperationEvents.CreateAsync(new OperationEvent
+            {
+                TenantId = tenant.Id,
+                ResourceType = "memory",
+                Operation = "delete",
+                ResourceId = "mem_123",
+                ScopeId = "scp_abc",
+                Method = "DELETE",
+                Path = "/scopes/scp_abc/memories/mem_123",
+                StatusCode = 204,
+                DurationMs = 3.5
+            }).ConfigureAwait(false);
+
+            OperationEvent? read = await db.OperationEvents.ReadAsync(created.Id).ConfigureAwait(false);
+            TestCase.Require(read != null, "Operation event should round trip by id.");
+            TestCase.Require(read!.ResourceType == "memory" && read.Operation == "delete", "Operation event resource/operation did not round trip.");
+            TestCase.Require(read.ResourceId == "mem_123" && read.ScopeId == "scp_abc", "Operation event resource/scope id did not round trip.");
+            TestCase.Require(read.StatusCode == 204, "Operation event status code did not round trip.");
+        }
+
+        private static async Task OperationEventDeleteOlderThanAsync()
+        {
+            using TempSqlite t = await TempSqlite.CreateAsync().ConfigureAwait(false);
+            DatabaseDriverBase db = t.Db;
+
+            Tenant tenant = await db.Tenants.CreateAsync(new Tenant { Name = "Acme" }).ConfigureAwait(false);
+            await db.OperationEvents.CreateAsync(new OperationEvent { TenantId = tenant.Id, ResourceType = "scope", Operation = "read", Method = "GET", Path = "/old", CreatedUtc = DateTime.UtcNow.AddDays(-40) }).ConfigureAwait(false);
+            await db.OperationEvents.CreateAsync(new OperationEvent { TenantId = tenant.Id, ResourceType = "scope", Operation = "read", Method = "GET", Path = "/fresh", CreatedUtc = DateTime.UtcNow.AddDays(-1) }).ConfigureAwait(false);
+
+            long removed = await db.OperationEvents.DeleteOlderThanAsync(DateTime.UtcNow.AddDays(-30)).ConfigureAwait(false);
+            TestCase.Require(removed == 1, "Retention prune should remove only the aged operation event, got " + removed + ".");
+
+            EnumerationResult<OperationEvent> remaining = await db.OperationEvents.EnumerateAsync(null, null, null, new EnumerationQuery { MaxResults = 100 }).ConfigureAwait(false);
+            TestCase.Require(remaining.TotalRecords == 1, "Exactly the fresh operation event should remain, got " + remaining.TotalRecords + ".");
+            TestCase.Require(remaining.Objects.Count == 1 && remaining.Objects[0].Path == "/fresh", "The surviving operation event should be the fresh one.");
         }
 
         #endregion

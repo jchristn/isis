@@ -45,6 +45,7 @@ namespace Isis.Core.Database.Mysql
             Memories = new MemoryIndexMethods(this);
             ModelEndpoints = new ModelEndpointMethods(this);
             RequestHistory = new RequestHistoryMethods(this);
+            OperationEvents = new OperationEventMethods(this);
             Instructions = new InstructionMethods(this);
             Permissions = new PermissionMethods(this);
         }

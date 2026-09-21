@@ -192,6 +192,24 @@ IF OBJECT_ID(N'dbo.request_history', N'U') IS NULL CREATE TABLE request_history 
     INDEX idx_reqhistory_tenant_created (tenantid, createdutc)
 );
 
+IF OBJECT_ID(N'dbo.operation_events', N'U') IS NULL CREATE TABLE operation_events (
+    id NVARCHAR(64) NOT NULL PRIMARY KEY,
+    tenantid NVARCHAR(64),
+    resourcetype NVARCHAR(64) NOT NULL,
+    operation NVARCHAR(32) NOT NULL,
+    resourceid NVARCHAR(64),
+    scopeid NVARCHAR(64),
+    method NVARCHAR(16) NOT NULL,
+    path NVARCHAR(2048) NOT NULL,
+    statuscode INT NOT NULL DEFAULT 0,
+    principalname NVARCHAR(255),
+    sourceip NVARCHAR(64),
+    durationms FLOAT NOT NULL DEFAULT 0,
+    createdutc NVARCHAR(40) NOT NULL,
+    INDEX idx_opevents_tenant_created (tenantid, createdutc),
+    INDEX idx_opevents_resource_created (resourcetype, createdutc)
+);
+
 IF OBJECT_ID(N'dbo.permissions', N'U') IS NULL CREATE TABLE permissions (
     id NVARCHAR(64) NOT NULL PRIMARY KEY,
     tenantid NVARCHAR(64) NOT NULL,

@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { useApp } from '../context/AppContext';
 import {
   IconHome, IconLayers, IconTag, IconNote, IconSearch, IconChat,
-  IconCpu, IconDatabase, IconHistory, IconPlay, IconGear, IconUsers, IconKey
+  IconCpu, IconDatabase, IconHistory, IconActivity, IconPlay, IconGear, IconUsers, IconKey
 } from './Icons';
 
 const IconBook = IconNote;
@@ -50,6 +50,7 @@ function Sidebar() {
       label: t('nav.groups.observability'),
       items: [
         { to: '/dashboard/request-history', label: t('nav.requestHistory'), icon: IconHistory },
+        { to: '/dashboard/operations', label: t('nav.operations'), icon: IconActivity },
         { to: '/dashboard/api-explorer', label: t('nav.apiExplorer'), icon: IconPlay }
       ]
     },

@@ -521,6 +521,20 @@ class ApiClient {
   }
 
   // ------------------------------------------------------------------
+  // Operation events (scope / memory / agentic activity over time)
+  // ------------------------------------------------------------------
+
+  getOperations(query = {}) {
+    return this.get(`${API_BASE}/operations`, query).then(normalizePaged);
+  }
+  getOperationEntry(id) {
+    return this.get(`${API_BASE}/operations/${encodeURIComponent(id)}`);
+  }
+  clearOperations() {
+    return this.del(`${API_BASE}/operations`);
+  }
+
+  // ------------------------------------------------------------------
   // API Explorer raw execution — returns the raw Response so the caller
   // can inspect status, headers, and streaming bodies.
   // ------------------------------------------------------------------

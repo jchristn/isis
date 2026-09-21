@@ -14,6 +14,7 @@ namespace Test.Shared
     using Isis.Core.Models;
     using Isis.Core.Recall;
     using Isis.Core.Stores;
+    using Isis.Server.Observability;
     using Isis.Server.Services;
 
     /// <summary>
@@ -81,8 +82,88 @@ namespace Test.Shared
                     TestCase.Async("service", "chat-answer-with-citations", "Chat: grounded answer cites the memory", ChatAnswerWithCitationsAsync),
                     TestCase.Async("service", "chat-miss-lists-memories", "Chat: a search miss falls back to listing the scope's memories", ChatMissListsMemoriesAsync),
                     TestCase.Async("service", "chat-empty-scope-says-none", "Chat: an empty scope reports it has no memories", ChatEmptyScopeSaysNoneAsync),
-                    TestCase.Async("service", "chat-filesystem-analyzes-all", "Chat: a filesystem scope is analyzed top-down, not keyword-searched", ChatFilesystemAnalyzesAllAsync)
+                    TestCase.Async("service", "chat-filesystem-analyzes-all", "Chat: a filesystem scope is analyzed top-down, not keyword-searched", ChatFilesystemAnalyzesAllAsync),
+
+                    // OperationClassifier
+                    TestCase.Sync("service", "classify-scope-create", "Classify: POST /scopes is scope/create", ClassifyScopeCreate),
+                    TestCase.Sync("service", "classify-scope-item", "Classify: GET /scopes/{id} is scope/read with ids", ClassifyScopeItem),
+                    TestCase.Sync("service", "classify-memory-search", "Classify: POST memories/search is search/search", ClassifyMemorySearch),
+                    TestCase.Sync("service", "classify-memory-delete", "Classify: DELETE memory carries scope + resource id", ClassifyMemoryDelete),
+                    TestCase.Sync("service", "classify-batch-delete", "Classify: batch-delete maps to delete", ClassifyBatchDelete),
+                    TestCase.Sync("service", "classify-chat", "Classify: chat and chat/stream are chat/chat", ClassifyChat),
+                    TestCase.Sync("service", "classify-auth-token", "Classify: token login/logout by method", ClassifyAuthToken),
+                    TestCase.Sync("service", "classify-ignores-meta", "Classify: health and observability meta endpoints are ignored", ClassifyIgnoresMeta)
                 });
+        }
+
+        #endregion
+
+        #region Private-Methods-OperationClassifier
+
+        private static void ClassifyScopeCreate()
+        {
+            bool ok = OperationClassifier.TryClassify("POST", "/v1.0/api/tenants/ten_1/scopes", out string resourceType, out string operation, out string? resourceId, out string? scopeId);
+            TestCase.Require(ok, "POST /scopes should classify.");
+            TestCase.Require(resourceType == "scope" && operation == "create", "POST /scopes should be scope/create, got " + resourceType + "/" + operation + ".");
+            TestCase.Require(resourceId == null && scopeId == null, "Collection-level create should carry no resource or scope id.");
+        }
+
+        private static void ClassifyScopeItem()
+        {
+            bool ok = OperationClassifier.TryClassify("GET", "/v1.0/api/tenants/ten_1/scopes/scp_9", out string resourceType, out string operation, out string? resourceId, out string? scopeId);
+            TestCase.Require(ok, "GET /scopes/{id} should classify.");
+            TestCase.Require(resourceType == "scope" && operation == "read", "GET /scopes/{id} should be scope/read.");
+            TestCase.Require(resourceId == "scp_9" && scopeId == "scp_9", "Scope item route should set both resource and scope id to the scope.");
+        }
+
+        private static void ClassifyMemorySearch()
+        {
+            bool ok = OperationClassifier.TryClassify("POST", "/v1.0/api/tenants/ten_1/scopes/scp_9/memories/search", out string resourceType, out string operation, out string? resourceId, out string? scopeId);
+            TestCase.Require(ok, "memories/search should classify.");
+            TestCase.Require(resourceType == "search" && operation == "search", "memories/search should be search/search, got " + resourceType + "/" + operation + ".");
+            TestCase.Require(scopeId == "scp_9", "Search should carry the scope id.");
+        }
+
+        private static void ClassifyMemoryDelete()
+        {
+            bool ok = OperationClassifier.TryClassify("DELETE", "/v1.0/api/tenants/ten_1/scopes/scp_9/memories/mem_5", out string resourceType, out string operation, out string? resourceId, out string? scopeId);
+            TestCase.Require(ok, "DELETE memory should classify.");
+            TestCase.Require(resourceType == "memory" && operation == "delete", "DELETE memory should be memory/delete.");
+            TestCase.Require(resourceId == "mem_5" && scopeId == "scp_9", "Memory item delete should carry both memory id and scope id.");
+        }
+
+        private static void ClassifyBatchDelete()
+        {
+            bool ok = OperationClassifier.TryClassify("POST", "/v1.0/api/tenants/ten_1/scopes/scp_9/memories/batch-delete", out string resourceType, out string operation, out _, out _);
+            TestCase.Require(ok, "batch-delete should classify.");
+            TestCase.Require(resourceType == "memory" && operation == "delete", "memories/batch-delete should be memory/delete, got " + resourceType + "/" + operation + ".");
+        }
+
+        private static void ClassifyChat()
+        {
+            bool ok1 = OperationClassifier.TryClassify("POST", "/v1.0/api/tenants/ten_1/scopes/scp_9/chat", out string rt1, out string op1, out _, out string? sid1);
+            TestCase.Require(ok1 && rt1 == "chat" && op1 == "chat", "chat should be chat/chat.");
+            TestCase.Require(sid1 == "scp_9", "chat should carry the scope id.");
+
+            bool ok2 = OperationClassifier.TryClassify("POST", "/v1.0/api/tenants/ten_1/scopes/scp_9/chat/stream", out string rt2, out string op2, out _, out _);
+            TestCase.Require(ok2 && rt2 == "chat" && op2 == "chat", "chat/stream should be chat/chat.");
+        }
+
+        private static void ClassifyAuthToken()
+        {
+            bool login = OperationClassifier.TryClassify("POST", "/v1.0/api/token", out string rt1, out string op1, out _, out _);
+            TestCase.Require(login && rt1 == "auth" && op1 == "login", "POST /token should be auth/login.");
+
+            bool logout = OperationClassifier.TryClassify("DELETE", "/v1.0/api/token", out string rt2, out string op2, out _, out _);
+            TestCase.Require(logout && rt2 == "auth" && op2 == "logout", "DELETE /token should be auth/logout.");
+        }
+
+        private static void ClassifyIgnoresMeta()
+        {
+            TestCase.Require(!OperationClassifier.TryClassify("GET", "/v1.0/api/health", out _, out _, out _, out _), "health should not classify.");
+            TestCase.Require(!OperationClassifier.TryClassify("GET", "/v1.0/api/requests", out _, out _, out _, out _), "request-history listing should not classify.");
+            TestCase.Require(!OperationClassifier.TryClassify("GET", "/v1.0/api/operations", out _, out _, out _, out _), "operations listing should not classify.");
+            TestCase.Require(!OperationClassifier.TryClassify("GET", "/favicon.ico", out _, out _, out _, out _), "non-API paths should not classify.");
         }
 
         #endregion

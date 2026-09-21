@@ -6,11 +6,16 @@ import { formatNumber } from '../i18n/formatters';
 /**
  * Hand-rolled stacked SVG bar chart (no charting library).
  *
- * Renders `success` stacked on `failure` per bucket, a Y axis with ~3 ticks,
- * distributed X labels, and a portal-rendered hover tooltip. Buckets:
- *   { label, success, failure?, total?, tooltip?: [{k, v}] }
+ * Two modes:
+ *  - Legacy (default): renders `success` stacked on `failure` per bucket. Buckets:
+ *      { label, success, failure?, total?, tooltip?: [{k, v}] }
+ *  - Multi-series: pass `series` = [{ key, label, color }]. Each bucket carries a numeric value per
+ *      series key and is drawn as a stacked bar in series order, with a legend. Buckets:
+ *      { label, [key]: number, tooltip?: [{k, v}] }
+ *
+ * Both modes share the Y axis (~3 ticks), distributed X labels, and a portal-rendered hover tooltip.
  */
-function ActivityChart({ buckets = [], height = 220, onBucketClick = null, emptyLabel }) {
+function ActivityChart({ buckets = [], series = null, height = 220, onBucketClick = null, emptyLabel }) {
   const { t, i18n } = useTranslation();
   const [hover, setHover] = useState(null);
 
@@ -19,10 +24,22 @@ function ActivityChart({ buckets = [], height = 220, onBucketClick = null, empty
   const chartW = width - padding.left - padding.right;
   const chartH = height - padding.top - padding.bottom;
 
-  const maxVal = Math.max(
-    1,
-    ...buckets.map((b) => (b.total != null ? b.total : (b.success || 0) + (b.failure || 0)))
-  );
+  const multi = Array.isArray(series) && series.length > 0;
+
+  // Default (legacy) series: failure at the bottom, success on top — preserves the original look.
+  const activeSeries = multi
+    ? series
+    : [
+        { key: 'failure', label: t('requestHistory.failed'), color: 'var(--color-danger)' },
+        { key: 'success', label: t('requestHistory.success'), color: 'var(--color-primary)' }
+      ];
+
+  const bucketTotal = (b) => {
+    if (!multi && b.total != null) return b.total;
+    return activeSeries.reduce((sum, s) => sum + (b[s.key] || 0), 0);
+  };
+
+  const maxVal = Math.max(1, ...buckets.map(bucketTotal));
 
   const barGap = 2;
   const barW = buckets.length > 0 ? Math.max(1, chartW / buckets.length - barGap) : 0;
@@ -33,6 +50,12 @@ function ActivityChart({ buckets = [], height = 220, onBucketClick = null, empty
   const handleMove = useCallback((e, bucket) => {
     setHover({ x: e.clientX, y: e.clientY, bucket });
   }, []);
+
+  const tooltipRows = (b) => {
+    if (b.tooltip) return b.tooltip;
+    if (multi) return activeSeries.map((s) => ({ k: s.label, v: b[s.key] || 0 }));
+    return [{ k: t('common.total') || 'Total', v: bucketTotal(b) }];
+  };
 
   if (!buckets.length) {
     return (
@@ -46,6 +69,16 @@ function ActivityChart({ buckets = [], height = 220, onBucketClick = null, empty
 
   return (
     <div className="chart-frame">
+      {multi && (
+        <div className="chart-legend" style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--spacing-md)', marginBottom: 'var(--spacing-sm)' }}>
+          {activeSeries.map((s) => (
+            <span key={s.key} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+              <span style={{ width: 10, height: 10, borderRadius: 2, background: s.color, display: 'inline-block' }} />
+              {s.label}
+            </span>
+          ))}
+        </div>
+      )}
       <svg
         width="100%"
         viewBox={`0 0 ${width} ${height}`}
@@ -72,17 +105,18 @@ function ActivityChart({ buckets = [], height = 220, onBucketClick = null, empty
           );
         })}
 
-        {/* Bars */}
+        {/* Bars — stacked segments from the bottom up in series order */}
         {buckets.map((b, i) => {
-          const success = b.success || 0;
-          const failure = b.failure || 0;
-          const total = b.total != null ? b.total : success + failure;
           const x = padding.left + i * (chartW / buckets.length) + barGap / 2;
-          const totalH = (total / maxVal) * chartH;
-          const failH = (failure / maxVal) * chartH;
-          const succH = totalH - failH;
-          const yFail = padding.top + chartH - failH;
-          const ySucc = yFail - succH;
+          let yCursor = padding.top + chartH;
+          const segments = [];
+          activeSeries.forEach((s) => {
+            const value = b[s.key] || 0;
+            if (value <= 0) return;
+            const segH = (value / maxVal) * chartH;
+            yCursor -= segH;
+            segments.push(<rect key={s.key} x={x} y={yCursor} width={barW} height={Math.max(0, segH)} fill={s.color} rx="1" />);
+          });
           return (
             <g
               key={i}
@@ -93,10 +127,7 @@ function ActivityChart({ buckets = [], height = 220, onBucketClick = null, empty
             >
               {/* invisible hit area */}
               <rect x={x} y={padding.top} width={barW} height={chartH} fill="transparent" />
-              {failH > 0 && (
-                <rect x={x} y={yFail} width={barW} height={failH} fill="var(--color-danger)" rx="1" />
-              )}
-              <rect x={x} y={ySucc} width={barW} height={Math.max(0, succH)} fill="var(--color-primary)" rx="1" />
+              {segments}
             </g>
           );
         })}
@@ -122,9 +153,7 @@ function ActivityChart({ buckets = [], height = 220, onBucketClick = null, empty
         createPortal(
           <div className="chart-tooltip" style={{ top: hover.y + 12, left: hover.x + 12 }}>
             <div style={{ fontWeight: 600, marginBottom: 4 }}>{hover.bucket.label}</div>
-            {(hover.bucket.tooltip || [
-              { k: t('common.total') || 'Total', v: hover.bucket.total ?? (hover.bucket.success || 0) + (hover.bucket.failure || 0) }
-            ]).map((row) => (
+            {tooltipRows(hover.bucket).map((row) => (
               <div className="tt-row" key={row.k}>
                 <span style={{ color: 'var(--color-text-muted)' }}>{row.k}</span>
                 <span>{typeof row.v === 'number' ? formatNumber(row.v, i18n.language) : row.v}</span>
