@@ -136,7 +136,7 @@ namespace Isis.Core.Stores.RecallDb
                 if (chunk.Embedding == null) throw new InvalidOperationException("RecallDB requires an embedding vector for every chunk; chunk " + chunk.Ordinal + " has none.");
 
                 DocumentRecord document = new DocumentRecord();
-                document.DocumentKey = single ? memory.Id : memory.Id + "#" + chunk.Ordinal;
+                document.DocumentKey = single ? memory.Id : ChunkDocumentKey(memory.Id, chunk.Ordinal);
                 document.DocumentId = memory.Slug;
                 document.Position = chunk.Ordinal;
                 document.ContentType = "Text";
@@ -508,10 +508,22 @@ namespace Isis.Core.Stores.RecallDb
         }
 
         /// <summary>
+        /// Build the store document key for a chunk of a memory. The separator MUST stay URL-safe (RFC 3986
+        /// unreserved): the RecallDB SDK places the document key straight into the request path without
+        /// encoding, so a URL-reserved character such as '#' (fragment) or '?' (query) would silently truncate
+        /// the delete/exists path and orphan the chunk documents. Uses "-c" (both characters unreserved) and the
+        /// memory id (a PrettyId of unreserved characters), so the composed key is always URL-safe.
+        /// </summary>
+        internal static string ChunkDocumentKey(string memoryId, int ordinal)
+        {
+            return memoryId + "-c" + ordinal.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>
         /// Delete every stored document belonging to a memory: the single/legacy document keyed by the memory
-        /// id, plus any ordinal chunk documents keyed <c>{memoryId}#{ordinal}</c>. Chunk documents are written
-        /// with contiguous ordinals, so probing ordinals in order until one is absent removes them all without
-        /// needing to know the chunk count.
+        /// id, plus any ordinal chunk documents keyed by <see cref="ChunkDocumentKey"/>. Chunk documents are
+        /// written with contiguous ordinals, so probing ordinals in order until one is absent removes them all
+        /// without needing to know the chunk count.
         /// </summary>
         private static async Task DeleteByParentAsync(RecallDbClient client, Scope scope, string memoryId, CancellationToken token)
         {
@@ -522,7 +534,7 @@ namespace Isis.Core.Stores.RecallDb
 
             for (int ordinal = 0; ; ordinal++)
             {
-                string key = memoryId + "#" + ordinal;
+                string key = ChunkDocumentKey(memoryId, ordinal);
                 if (!await client.DocumentExistsAsync(scope.TenantId, scope.RecallCollectionId, key, token).ConfigureAwait(false)) break;
                 await client.DeleteDocumentAsync(scope.TenantId, scope.RecallCollectionId, key, token).ConfigureAwait(false);
             }

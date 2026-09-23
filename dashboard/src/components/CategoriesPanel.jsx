@@ -89,6 +89,7 @@ function CategoriesPanel({ tenantId, scopeId, onCountChange }) {
   const [jsonItem, setJsonItem] = useState(null);
   const [viewItem, setViewItem] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [bulkDelete, setBulkDelete] = useState(null); // { ids, clear } | null
 
   const load = useCallback(async () => {
     if (!scopeId) return;
@@ -125,6 +126,20 @@ function CategoriesPanel({ tenantId, scopeId, onCountChange }) {
     addToast(t('categories.deleted'), 'success');
     setDeleteTarget(null);
     load();
+  };
+
+  const handleBulkDelete = async () => {
+    const { ids, clear } = bulkDelete;
+    try {
+      const res = await apiClient.batchDeleteCategories(tenantId, scopeId, ids);
+      addToast(t('confirm.deletedCount', { count: res?.deleted ?? ids.length }), 'success');
+      clear?.();
+    } catch (err) {
+      addToast(err.message, 'error');
+    } finally {
+      setBulkDelete(null);
+      load();
+    }
   };
 
   const columns = [
@@ -176,6 +191,13 @@ function CategoriesPanel({ tenantId, scopeId, onCountChange }) {
         onRefresh={load}
         onRowClick={(c) => { setEditing(c); setShowForm(true); }}
         emptyMessage={t('categories.empty')}
+        selectable
+        getRowId={(c) => c.id || c.Id}
+        bulkActions={(ids, items, clear) => (
+          <button className="btn-danger btn-sm" onClick={() => setBulkDelete({ ids, clear })}>
+            {t('common.deleteSelected')}
+          </button>
+        )}
         toolbarLeft={
           <button className="btn-primary btn-sm" onClick={() => { setEditing(null); setShowForm(true); }}>
             + {t('categories.addCategory')}
@@ -213,6 +235,14 @@ function CategoriesPanel({ tenantId, scopeId, onCountChange }) {
         onClose={() => setDeleteTarget(null)}
         onConfirm={handleDelete}
         message={t('confirm.deleteBody', { name: deleteTarget?.name })}
+      />
+
+      <ConfirmModal
+        isOpen={Boolean(bulkDelete)}
+        onClose={() => setBulkDelete(null)}
+        onConfirm={handleBulkDelete}
+        title={t('confirm.deleteManyTitle')}
+        message={t('confirm.deleteManyBody', { count: bulkDelete?.ids.length || 0 })}
       />
     </>
   );

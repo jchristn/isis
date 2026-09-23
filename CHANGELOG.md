@@ -7,6 +7,18 @@ All notable changes to Isis are documented here. This project adheres to
 
 ### Fixed
 
+- **Chunk document keys are now URL-safe (fixes orphaned chunks on delete).** Multi-chunk memories were
+  keyed `{memoryId}#{ordinal}`, but the RecallDB SDK places the document key into the request path without
+  URL-encoding — so the `#` (a URL fragment delimiter) truncated the delete/exists path and
+  `DeleteByParentAsync` never matched a chunk, leaving orphaned chunk documents behind (still returned by
+  search after the memory's index row was gone; also on category-cascade delete and on re-upsert of a
+  multi-chunk memory, since upsert clears prior chunks the same way). Scope delete was unaffected (it drops
+  the whole collection) and single-chunk memories were fine (key = memory id, no `#`). Fixed by composing the
+  chunk key via `ChunkDocumentKey` with a URL-safe `-c` separator (all RFC 3986 unreserved characters); added
+  a regression test asserting chunk keys need no URL escaping. Recommended upstream: `RecallDbClient` should
+  URL-encode document keys in its path building. (Requires a redeploy; existing `#`-keyed orphans are only
+  removable by dropping the scope.)
+
 - **Embedding chunk budget fits the real model context (all-minilm).** The chunker's tokenizer library
   previously resolved `all-minilm` to the 512-token BERT architecture ceiling, but the real all-MiniLM-L6-v2
   caps at 256 — so oversized memories were embedded whole or in 512-token chunks and rejected with "input

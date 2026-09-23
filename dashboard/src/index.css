@@ -719,6 +719,38 @@ table.data-table {
 .data-table tbody tr:hover {
   background-color: var(--color-surface-alt);
 }
+.data-table th.col-select,
+.data-table td.col-select {
+  width: 40px;
+  text-align: center;
+  white-space: nowrap;
+}
+.data-table th.col-select input,
+.data-table td.col-select input {
+  width: auto;
+  cursor: pointer;
+  margin: 0;
+}
+.data-table tbody tr.row-selected {
+  background-color: var(--color-primary-soft);
+}
+.selection-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: 0.5rem 0.8rem;
+  border-bottom: 1px solid var(--color-border);
+  background-color: var(--color-primary-soft);
+  flex-wrap: wrap;
+}
+.selection-bar .selection-count {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+.selection-bar .spacer {
+  flex: 1;
+}
 .data-table td.cell-id {
   white-space: nowrap;
   font-family: var(--font-mono);

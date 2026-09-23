@@ -23,10 +23,15 @@ function DataTable({
   toolbarLeft = null,
   toolbarRight = null,
   emptyMessage = null,
-  pageSize: initialPageSize = DEFAULT_PAGE_SIZE
+  pageSize: initialPageSize = DEFAULT_PAGE_SIZE,
+  selectable = false,
+  getRowId = null,
+  bulkActions = null
 }) {
   const { t } = useTranslation();
   const [sortKey, setSortKey] = useState(null);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const selectAllRef = useRef(null);
   const [sortDir, setSortDir] = useState('asc');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(() => {
@@ -127,6 +132,58 @@ function DataTable({
     return sorted.slice(start, start + pageSize);
   }, [sorted, page, pageSize]);
 
+  // ---- Multi-select ------------------------------------------------------
+  const rowId = useCallback(
+    (item) => (getRowId ? getRowId(item) : item.id ?? item.Id ?? item.slug),
+    [getRowId]
+  );
+
+  // Drop selections whose rows are no longer present (after delete/refresh/filter).
+  useEffect(() => {
+    if (!selectable) return;
+    setSelectedIds((prev) => {
+      if (prev.size === 0) return prev;
+      const valid = new Set(data.map(rowId));
+      const next = new Set();
+      prev.forEach((id) => valid.has(id) && next.add(id));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [data, selectable, rowId]);
+
+  const selectedItems = useMemo(
+    () => (selectable ? data.filter((it) => selectedIds.has(rowId(it))) : []),
+    [selectable, data, selectedIds, rowId]
+  );
+
+  // Select-all operates over the full filtered/sorted set, not just the current page.
+  const allIds = useMemo(() => sorted.map(rowId), [sorted, rowId]);
+  const allSelected = allIds.length > 0 && allIds.every((id) => selectedIds.has(id));
+  const someSelected = selectedIds.size > 0 && !allSelected;
+
+  useEffect(() => {
+    if (selectAllRef.current) selectAllRef.current.indeterminate = someSelected;
+  }, [someSelected]);
+
+  const toggleAll = useCallback(() => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      const everySelected = allIds.length > 0 && allIds.every((id) => next.has(id));
+      allIds.forEach((id) => (everySelected ? next.delete(id) : next.add(id)));
+      return next;
+    });
+  }, [allIds]);
+
+  const toggleRow = useCallback((id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+
   const handleRowClick = (item, e) => {
     if (!onRowClick) return;
     if (e.target.closest('[data-row-click-ignore="true"], a, button, input, select, textarea, label')) return;
@@ -178,6 +235,17 @@ function DataTable({
         columnSelector={columnSelector}
       />
 
+      {selectable && selectedIds.size > 0 && (
+        <div className="selection-bar">
+          <span className="selection-count">{t('table.selected', { count: selectedIds.size })}</span>
+          {bulkActions ? bulkActions(Array.from(selectedIds), selectedItems, clearSelection) : null}
+          <span className="spacer" />
+          <button className="btn-secondary btn-sm" onClick={clearSelection}>
+            {t('table.clearSelection')}
+          </button>
+        </div>
+      )}
+
       {loading ? (
         <LoadingState />
       ) : (
@@ -185,6 +253,17 @@ function DataTable({
           <table className="data-table">
             <thead>
               <tr>
+                {selectable && (
+                  <th scope="col" className="col-select">
+                    <input
+                      ref={selectAllRef}
+                      type="checkbox"
+                      aria-label={t('table.selectAll')}
+                      checked={allSelected}
+                      onChange={toggleAll}
+                    />
+                  </th>
+                )}
                 {visibleColumns.map((col) => (
                   <th
                     key={col.key}
@@ -203,17 +282,30 @@ function DataTable({
             <tbody>
               {pageData.length === 0 ? (
                 <tr>
-                  <td colSpan={visibleColumns.length} className="table-empty">
+                  <td colSpan={visibleColumns.length + (selectable ? 1 : 0)} className="table-empty">
                     {emptyMessage || t('table.noData')}
                   </td>
                 </tr>
               ) : (
-                pageData.map((item, idx) => (
+                pageData.map((item, idx) => {
+                  const id = selectable ? rowId(item) : undefined;
+                  const isSelected = selectable && selectedIds.has(id);
+                  return (
                   <tr
                     key={item.id || item.Id || item.slug || idx}
-                    className={onRowClick ? 'clickable' : ''}
+                    className={`${onRowClick ? 'clickable' : ''}${isSelected ? ' row-selected' : ''}`.trim()}
                     onClick={(e) => handleRowClick(item, e)}
                   >
+                    {selectable && (
+                      <td className="col-select" data-row-click-ignore="true">
+                        <input
+                          type="checkbox"
+                          aria-label={t('table.selectAll')}
+                          checked={isSelected}
+                          onChange={() => toggleRow(id)}
+                        />
+                      </td>
+                    )}
                     {visibleColumns.map((col) => (
                       <td
                         key={col.key}
@@ -223,7 +315,8 @@ function DataTable({
                       </td>
                     ))}
                   </tr>
-                ))
+                  );
+                })
               )}
             </tbody>
           </table>

@@ -83,6 +83,7 @@ namespace Test.Shared
 
                     // Capabilities.
                     TestCase.Async("store", "caps-recalldb", "RecallDB advertises semantic, hybrid, keyword, and embeddings", CapsRecallDbAsync),
+                    TestCase.Async("store", "recalldb-chunk-key-url-safe", "RecallDB chunk document keys are URL-safe (no reserved chars)", RecallDbChunkKeyUrlSafeAsync),
                     TestCase.Async("store", "caps-verbex", "Verbex advertises keyword only, no semantic/hybrid/embeddings", CapsVerbexAsync),
                     TestCase.Async("store", "caps-filesystem", "Filesystem advertises keyword only, no semantic/embeddings", CapsFilesystemAsync),
 
@@ -832,6 +833,23 @@ namespace Test.Shared
         #endregion
 
         #region Private-Methods-RecallDb-Unconfigured
+
+        private static async Task RecallDbChunkKeyUrlSafeAsync()
+        {
+            // Chunk keys are placed straight into the RecallDB SDK's request path with no encoding, so a
+            // URL-reserved character (e.g. '#') would truncate delete/exists and orphan chunk docs. Guard that
+            // the composed key needs no escaping (i.e. is all RFC 3986 unreserved characters).
+            string memId = "mem_abc123_XyZ";
+            for (int ordinal = 0; ordinal < 3; ordinal++)
+            {
+                string key = RecallDbMemoryStore.ChunkDocumentKey(memId, ordinal);
+                TestCase.Require(key == Uri.EscapeDataString(key), "Chunk key must be URL-safe (no chars requiring escaping): '" + key + "'.");
+                TestCase.Require(key != memId, "A chunk key must differ from the single-chunk (memory-id) key.");
+                TestCase.Require(key.StartsWith(memId, StringComparison.Ordinal), "A chunk key should derive from the memory id.");
+            }
+
+            await Task.CompletedTask.ConfigureAwait(false);
+        }
 
         private static async Task RecallDbUnconfiguredEnsureThrowsAsync()
         {

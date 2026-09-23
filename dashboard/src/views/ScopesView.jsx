@@ -223,6 +223,7 @@ function ScopesView() {
   const [showForm, setShowForm] = useState(false);
   const [jsonScope, setJsonScope] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [bulkDelete, setBulkDelete] = useState(null); // { ids, clear } | null
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -272,6 +273,20 @@ function ScopesView() {
     addToast('Scope deleted', 'success');
     setDeleteTarget(null);
     load();
+  };
+
+  const handleBulkDelete = async () => {
+    const { ids, clear } = bulkDelete;
+    try {
+      const res = await apiClient.batchDeleteScopes(tenantId, ids);
+      addToast(t('confirm.deletedCount', { count: res?.deleted ?? ids.length }), 'success');
+      clear?.();
+    } catch (err) {
+      addToast(err.message, 'error');
+    } finally {
+      setBulkDelete(null);
+      load();
+    }
   };
 
   const columns = [
@@ -341,6 +356,13 @@ function ScopesView() {
         onRefresh={load}
         onRowClick={(s) => openEdit(s)}
         emptyMessage={t('scopes.empty')}
+        selectable
+        getRowId={(s) => s.id || s.Id}
+        bulkActions={(ids, items, clear) => (
+          <button className="btn-danger btn-sm" onClick={() => setBulkDelete({ ids, clear })}>
+            {t('common.deleteSelected')}
+          </button>
+        )}
       />
 
       {showForm && (
@@ -364,6 +386,14 @@ function ScopesView() {
         onClose={() => setDeleteTarget(null)}
         onConfirm={handleDelete}
         message={t('confirm.deleteBody', { name: deleteTarget?.name || deleteTarget?.id })}
+      />
+
+      <ConfirmModal
+        isOpen={Boolean(bulkDelete)}
+        onClose={() => setBulkDelete(null)}
+        onConfirm={handleBulkDelete}
+        title={t('confirm.deleteManyTitle')}
+        message={t('confirm.deleteManyBody', { count: bulkDelete?.ids.length || 0 })}
       />
     </>
   );

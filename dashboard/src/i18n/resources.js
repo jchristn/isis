@@ -44,6 +44,7 @@ export const en = {
       created: 'Created',
       updated: 'Updated',
       confirm: 'Confirm',
+      deleteSelected: 'Delete Selected',
       required: 'required',
       optional: 'optional',
       selectScope: 'Select a scope',
@@ -590,9 +591,15 @@ export const en = {
       next: 'Next',
       last: 'Last',
       pageSize: 'Per page',
-      jumpTo: 'Go to page'
+      jumpTo: 'Go to page',
+      selectAll: 'Select all',
+      selected: '{{count}} selected',
+      clearSelection: 'Clear selection'
     },
     confirm: {
+      deleteManyTitle: 'Delete selected',
+      deleteManyBody: 'Delete {{count}} selected item(s)? This cannot be undone.',
+      deletedCount: '{{count}} deleted',
       deleteTitle: 'Confirm delete',
       deleteBody: 'Delete “{{name}}”? This cannot be undone.',
       deleting: 'Deleting…'

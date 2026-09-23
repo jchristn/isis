@@ -306,6 +306,10 @@ class ApiClient {
   deleteScope(tid, sid) {
     return this.del(`${API_BASE}/tenants/${this._tid(tid)}/scopes/${encodeURIComponent(sid)}`);
   }
+  /** Cascade-delete several scopes (store content + categories + memories) in one call. */
+  batchDeleteScopes(tid, ids) {
+    return this.post(`${API_BASE}/tenants/${this._tid(tid)}/scopes/batch-delete`, { ids });
+  }
 
   // ------------------------------------------------------------------
   // Categories
@@ -339,6 +343,13 @@ class ApiClient {
       `${API_BASE}/tenants/${this._tid(tid)}/scopes/${encodeURIComponent(sid)}/categories/${encodeURIComponent(cid)}`
     );
   }
+  /** Cascade-delete several categories (and their memories) in one call. */
+  batchDeleteCategories(tid, sid, ids) {
+    return this.post(
+      `${API_BASE}/tenants/${this._tid(tid)}/scopes/${encodeURIComponent(sid)}/categories/batch-delete`,
+      { ids }
+    );
+  }
 
   // ------------------------------------------------------------------
   // Memories
@@ -364,6 +375,13 @@ class ApiClient {
   deleteMemory(tid, sid, mid) {
     return this.del(
       `${API_BASE}/tenants/${this._tid(tid)}/scopes/${encodeURIComponent(sid)}/memories/${encodeURIComponent(mid)}`
+    );
+  }
+  /** Delete several memories (store docs + index rows) in one call. */
+  batchDeleteMemories(tid, sid, ids) {
+    return this.post(
+      `${API_BASE}/tenants/${this._tid(tid)}/scopes/${encodeURIComponent(sid)}/memories/batch-delete`,
+      { ids }
     );
   }
   searchMemories(tid, sid, body) {
