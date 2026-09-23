@@ -121,23 +121,34 @@ namespace Isis.Core.Stores.RecallDb
         }
 
         /// <inheritdoc />
-        public async Task<string> UpsertAsync(Scope scope, Memory memory, float[]? embedding, CancellationToken token = default)
+        public async Task<string> UpsertAsync(Scope scope, Memory memory, IReadOnlyList<MemoryChunk> chunks, CancellationToken token = default)
         {
             if (scope == null) throw new ArgumentNullException(nameof(scope));
             if (memory == null) throw new ArgumentNullException(nameof(memory));
+            if (chunks == null || chunks.Count == 0) throw new InvalidOperationException("RecallDB requires at least one chunk; none was supplied.");
             RecallDbClient client = RequireClient();
-            if (embedding == null) throw new InvalidOperationException("RecallDB requires an embedding vector; none was supplied.");
             if (string.IsNullOrEmpty(scope.RecallCollectionId)) throw new InvalidOperationException("The scope has no RecallDB collection; call EnsureScopeAsync first.");
 
-            DocumentRecord document = new DocumentRecord();
-            document.DocumentKey = memory.Id;
-            document.DocumentId = memory.Slug;
-            document.ContentType = "Text";
-            document.Content = memory.Body;
-            document.Embeddings = embedding.ToList();
-            document.Labels = new List<string> { memory.CategoryId };
-            document.Tags = new Dictionary<string, string>(memory.Metadata);
-            if (!string.IsNullOrEmpty(memory.Title)) document.Tags["title"] = memory.Title!;
+            bool single = chunks.Count == 1;
+            List<DocumentRecord> documents = new List<DocumentRecord>(chunks.Count);
+            foreach (MemoryChunk chunk in chunks)
+            {
+                if (chunk.Embedding == null) throw new InvalidOperationException("RecallDB requires an embedding vector for every chunk; chunk " + chunk.Ordinal + " has none.");
+
+                DocumentRecord document = new DocumentRecord();
+                document.DocumentKey = single ? memory.Id : memory.Id + "#" + chunk.Ordinal;
+                document.DocumentId = memory.Slug;
+                document.Position = chunk.Ordinal;
+                document.ContentType = "Text";
+                document.Content = chunk.Text;
+                document.Embeddings = chunk.Embedding.ToList();
+                document.Labels = new List<string> { memory.CategoryId };
+                document.Tags = new Dictionary<string, string>(memory.Metadata);
+                document.Tags["parentKey"] = memory.Id;
+                document.Tags["ordinal"] = chunk.Ordinal.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                if (!string.IsNullOrEmpty(memory.Title)) document.Tags["title"] = memory.Title!;
+                documents.Add(document);
+            }
 
             long telemetryStart = Stopwatch.GetTimestamp();
             string telemetryOutcome = "success";
@@ -145,10 +156,23 @@ namespace Isis.Core.Stores.RecallDb
             activity?.SetTag(IsisTelemetry.TagStore, "recalldb");
             activity?.SetTag(IsisTelemetry.TagOperation, "upsert");
             activity?.SetTag(IsisTelemetry.TagScope, scope.Id);
+            activity?.SetTag("isis.chunks", chunks.Count);
 
             try
             {
-                await client.CreateDocumentAsync(scope.TenantId, scope.RecallCollectionId, document, token).ConfigureAwait(false);
+                // Clear any prior documents for this memory so an update (which may re-chunk into a different
+                // count) never leaves orphaned chunk documents behind.
+                await DeleteByParentAsync(client, scope, memory.Id, token).ConfigureAwait(false);
+
+                if (single)
+                {
+                    await client.CreateDocumentAsync(scope.TenantId, scope.RecallCollectionId, documents[0], token).ConfigureAwait(false);
+                }
+                else
+                {
+                    await client.CreateDocumentBatchAsync(scope.TenantId, scope.RecallCollectionId, documents, token).ConfigureAwait(false);
+                }
+
                 return memory.Id;
             }
             catch (RecallDbException e)
@@ -190,7 +214,7 @@ namespace Isis.Core.Stores.RecallDb
 
             try
             {
-                await client.DeleteDocumentAsync(scope.TenantId, scope.RecallCollectionId, memory.Id, token).ConfigureAwait(false);
+                await DeleteByParentAsync(client, scope, memory.Id, token).ConfigureAwait(false);
             }
             catch (RecallDbException e)
             {
@@ -245,6 +269,42 @@ namespace Isis.Core.Stores.RecallDb
         }
 
         /// <inheritdoc />
+        public async Task DeleteTenantAsync(string tenantId, CancellationToken token = default)
+        {
+            if (string.IsNullOrEmpty(tenantId)) throw new ArgumentNullException(nameof(tenantId));
+            if (_Client == null) return;
+
+            long telemetryStart = Stopwatch.GetTimestamp();
+            string telemetryOutcome = "success";
+            using Activity? activity = IsisTelemetry.ActivitySource.StartActivity("store delete_tenant", ActivityKind.Client);
+            activity?.SetTag(IsisTelemetry.TagStore, "recalldb");
+            activity?.SetTag(IsisTelemetry.TagOperation, "delete_tenant");
+
+            try
+            {
+                // Isis provisions a RecallDB tenant on first use; drop it once the tenant's collections are gone.
+                if (await _Client.TenantExistsAsync(tenantId, token).ConfigureAwait(false))
+                {
+                    await _Client.DeleteTenantAsync(tenantId, token).ConfigureAwait(false);
+                }
+            }
+            catch (RecallDbException)
+            {
+                // Best-effort teardown during cascade; ignore a missing/failed tenant drop.
+            }
+            catch (Exception e)
+            {
+                telemetryOutcome = "error";
+                IsisTelemetry.RecordException(activity, e);
+                throw;
+            }
+            finally
+            {
+                RecordStoreOp("delete_tenant", telemetryStart, telemetryOutcome);
+            }
+        }
+
+        /// <inheritdoc />
         public async Task<MemorySearchResult> SearchAsync(Scope scope, MemorySearchQuery query, float[]? queryEmbedding, CancellationToken token = default)
         {
             if (scope == null) throw new ArgumentNullException(nameof(scope));
@@ -264,7 +324,9 @@ namespace Isis.Core.Stores.RecallDb
             try
             {
             int topK = query.TopK < 1 ? 5 : query.TopK;
-            int fetch = Math.Max(topK, 10);
+            // Fetch well beyond topK: a single memory may contribute several chunk documents that collapse to
+            // one hit, so we need enough raw documents to still surface topK distinct memories after rollup.
+            int fetch = Math.Max(topK * 4, 20);
             bool wantSemantic = queryEmbedding != null && query.Mode != SearchModeEnum.Keyword;
             bool wantKeyword = query.Mode != SearchModeEnum.Semantic && !string.IsNullOrEmpty(query.QueryText);
 
@@ -297,7 +359,9 @@ namespace Isis.Core.Stores.RecallDb
 
                 SearchResult vectorResult = await ExecuteSearchAsync(client, scope, vectorQuery, token).ConfigureAwait(false);
                 SearchResult textResult = await ExecuteSearchAsync(client, scope, textQuery, token).ConfigureAwait(false);
-                documents = FuseByReciprocalRank(new[] { vectorResult.Documents, textResult.Documents }, topK);
+                // Fuse the two rankings at the chunk-document level, then roll chunks up to one hit per memory.
+                List<DocumentRecord> fused = FuseByReciprocalRank(new[] { vectorResult.Documents, textResult.Documents });
+                documents = GroupByParent(fused, topK);
                 effectiveMode = SearchModeEnum.Hybrid;
             }
             else
@@ -315,7 +379,7 @@ namespace Isis.Core.Stores.RecallDb
                 }
 
                 SearchResult result = await ExecuteSearchAsync(client, scope, single, token).ConfigureAwait(false);
-                documents = result.Documents != null ? result.Documents.Take(topK).ToList() : new List<DocumentRecord>();
+                documents = GroupByParent(result.Documents, topK);
             }
 
             MemorySearchResult output = new MemorySearchResult();
@@ -330,7 +394,7 @@ namespace Isis.Core.Stores.RecallDb
 
                 output.Hits.Add(new MemorySearchHit
                 {
-                    StoreKey = document.DocumentKey,
+                    StoreKey = ParentKey(document),
                     Slug = document.DocumentId,
                     Title = title,
                     Snippet = snippet,
@@ -383,10 +447,11 @@ namespace Isis.Core.Stores.RecallDb
 
         /// <summary>
         /// Reciprocal-rank fusion: union multiple ranked result lists, scoring each document by the sum of
-        /// 1/(k + rank) across the lists it appears in, then return the top results. This blends the vector
-        /// and full-text rankings without needing to normalize their score scales.
+        /// 1/(k + rank) across the lists it appears in, then return every document ordered by fused score. This
+        /// blends the vector and full-text rankings without needing to normalize their score scales; the caller
+        /// rolls the fused chunk documents up to memories and truncates to topK.
         /// </summary>
-        private static List<DocumentRecord> FuseByReciprocalRank(IEnumerable<List<DocumentRecord>?> lists, int topK)
+        private static List<DocumentRecord> FuseByReciprocalRank(IEnumerable<List<DocumentRecord>?> lists)
         {
             const int k = 60;
             Dictionary<string, DocumentRecord> byKey = new Dictionary<string, DocumentRecord>();
@@ -406,9 +471,61 @@ namespace Isis.Core.Stores.RecallDb
 
             return scores
                 .OrderByDescending(pair => pair.Value)
-                .Take(topK)
                 .Select(pair => byKey[pair.Key])
                 .ToList();
+        }
+
+        /// <summary>
+        /// Collapse chunk documents to at most <paramref name="topK"/> memories, keeping the best-scoring chunk
+        /// per parent memory. The input must already be ordered best-first; the first document seen for a parent
+        /// wins and represents that memory (its content becomes the hit snippet).
+        /// </summary>
+        private static List<DocumentRecord> GroupByParent(IEnumerable<DocumentRecord>? ordered, int topK)
+        {
+            List<DocumentRecord> result = new List<DocumentRecord>();
+            if (ordered == null) return result;
+
+            HashSet<string> seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (DocumentRecord document in ordered)
+            {
+                string parent = ParentKey(document);
+                if (!seen.Add(parent)) continue;
+                result.Add(document);
+                if (result.Count >= topK) break;
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Resolve the parent memory key for a document: the <c>parentKey</c> tag written on upsert, falling
+        /// back to the document key (single-chunk / legacy documents whose key is the memory id).
+        /// </summary>
+        private static string ParentKey(DocumentRecord document)
+        {
+            if (document.Tags != null && document.Tags.TryGetValue("parentKey", out string? parent) && !string.IsNullOrEmpty(parent)) return parent;
+            return document.DocumentKey ?? document.DocumentId ?? string.Empty;
+        }
+
+        /// <summary>
+        /// Delete every stored document belonging to a memory: the single/legacy document keyed by the memory
+        /// id, plus any ordinal chunk documents keyed <c>{memoryId}#{ordinal}</c>. Chunk documents are written
+        /// with contiguous ordinals, so probing ordinals in order until one is absent removes them all without
+        /// needing to know the chunk count.
+        /// </summary>
+        private static async Task DeleteByParentAsync(RecallDbClient client, Scope scope, string memoryId, CancellationToken token)
+        {
+            if (await client.DocumentExistsAsync(scope.TenantId, scope.RecallCollectionId, memoryId, token).ConfigureAwait(false))
+            {
+                await client.DeleteDocumentAsync(scope.TenantId, scope.RecallCollectionId, memoryId, token).ConfigureAwait(false);
+            }
+
+            for (int ordinal = 0; ; ordinal++)
+            {
+                string key = memoryId + "#" + ordinal;
+                if (!await client.DocumentExistsAsync(scope.TenantId, scope.RecallCollectionId, key, token).ConfigureAwait(false)) break;
+                await client.DeleteDocumentAsync(scope.TenantId, scope.RecallCollectionId, key, token).ConfigureAwait(false);
+            }
         }
 
         private RecallDbClient RequireClient()

@@ -122,11 +122,16 @@ namespace Isis.Server.Services
                 }
             }
 
+            // With every scope (and its collection) gone, drop the tenant-level external container — the RecallDB
+            // tenant Isis provisions on first use. Best-effort; a no-op when no external store is configured.
+            await _MemoryService.DeleteTenantStoreAsync(tenantId, token).ConfigureAwait(false);
+
             // Remaining tenant-scoped records, drained via batch delete.
             await DrainAsync<Credential>((q, t) => _Database.Credentials.EnumerateAsync(tenantId, q, t), c => c.Id, (ids, t) => _Database.Credentials.DeleteManyAsync(tenantId, ids, t), token).ConfigureAwait(false);
             await DrainAsync<AuthSession>((q, t) => _Database.Sessions.EnumerateAsync(tenantId, q, t), s => s.Id, (ids, t) => _Database.Sessions.DeleteManyAsync(tenantId, ids, t), token).ConfigureAwait(false);
             await DrainAsync<ModelEndpoint>((q, t) => _Database.ModelEndpoints.EnumerateAsync(tenantId, null, q, t), e => e.Id, (ids, t) => _Database.ModelEndpoints.DeleteManyAsync(tenantId, ids, t), token).ConfigureAwait(false);
-            await DrainAsync<Instruction>((q, t) => _Database.Instructions.EnumerateAsync(tenantId, q, t), i => i.Id, (ids, t) => _Database.Instructions.DeleteManyAsync(tenantId, ids, t), token).ConfigureAwait(false);
+            // Scope-specific instructions are removed with their scopes above; drain the tenant-global set here.
+            await DrainAsync<Instruction>((q, t) => _Database.Instructions.EnumerateAsync(tenantId, null, q, t), i => i.Id, (ids, t) => _Database.Instructions.DeleteManyAsync(tenantId, ids, t), token).ConfigureAwait(false);
             await DrainAsync<Permission>((q, t) => _Database.Permissions.EnumerateAsync(tenantId, null, q, t), p => p.Id, (ids, t) => _Database.Permissions.DeleteManyAsync(tenantId, ids, t), token).ConfigureAwait(false);
             await DrainAsync<User>((q, t) => _Database.Users.EnumerateAsync(tenantId, q, t), u => u.Id, (ids, t) => _Database.Users.DeleteManyAsync(tenantId, ids, t), token).ConfigureAwait(false);
 

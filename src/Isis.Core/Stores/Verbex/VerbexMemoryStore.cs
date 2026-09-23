@@ -1,6 +1,7 @@
 namespace Isis.Core.Stores.Verbex
 {
     using System;
+    using System.Collections.Generic;
     using System.Threading;
     using System.Threading.Tasks;
     using Isis.Core.Models;
@@ -55,7 +56,7 @@ namespace Isis.Core.Stores.Verbex
         }
 
         /// <inheritdoc />
-        public Task<string> UpsertAsync(Scope scope, Memory memory, float[]? embedding, CancellationToken token = default)
+        public Task<string> UpsertAsync(Scope scope, Memory memory, IReadOnlyList<MemoryChunk> chunks, CancellationToken token = default)
         {
             throw new NotSupportedException(_NotWired);
         }
@@ -70,6 +71,13 @@ namespace Isis.Core.Stores.Verbex
         public Task DeleteScopeAsync(Scope scope, CancellationToken token = default)
         {
             // Best-effort teardown during cascade: no persistent Verbex content to remove in this build.
+            return Task.CompletedTask;
+        }
+
+        /// <inheritdoc />
+        public Task DeleteTenantAsync(string tenantId, CancellationToken token = default)
+        {
+            // Best-effort teardown during cascade: no tenant-level Verbex container in this build.
             return Task.CompletedTask;
         }
 

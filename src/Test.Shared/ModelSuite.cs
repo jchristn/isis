@@ -3,6 +3,7 @@ namespace Test.Shared
     using System;
     using System.Collections.Generic;
     using System.IO;
+    using System.Linq;
     using System.Threading.Tasks;
     using Isis.Core;
     using Isis.Core.Enums;
@@ -46,7 +47,7 @@ namespace Test.Shared
                     TestCase.Sync("model", "requesthistory-validation", "RequestHistoryEntry required id rejects blanks", RequestHistoryValidation),
 
                     // 2. Range setters throw ArgumentOutOfRangeException.
-                    TestCase.Sync("model", "modelendpoint-port-range", "ModelEndpoint.Port rejects out-of-range values", ModelEndpointPortRange),
+                    TestCase.Sync("model", "modelendpoint-baseurl", "ModelEndpoint.GetBaseUrl normalizes the base URL", ModelEndpointBaseUrl),
                     TestCase.Sync("model", "scope-dimensionality-range", "Scope.Dimensionality rejects negatives", ScopeDimensionalityRange),
                     TestCase.Sync("model", "modelendpoint-dimensionality-range", "ModelEndpoint.Dimensionality rejects negatives", ModelEndpointDimensionalityRange),
 
@@ -83,7 +84,14 @@ namespace Test.Shared
                     // 7. Settings.
                     TestCase.Sync("model", "isissettings-roundtrip", "IsisSettings round-trips through a file", IsisSettingsRoundTrip),
                     TestCase.Sync("model", "mcpsettings-defaults", "McpServerSettings defaults and RestBaseUrl", McpSettingsDefaults),
-                    TestCase.Sync("model", "mcpsettings-fromfile-missing", "McpServerSettings.FromFile returns defaults for a missing file", McpSettingsFromFileMissing)
+                    TestCase.Sync("model", "mcpsettings-fromfile-missing", "McpServerSettings.FromFile returns defaults for a missing file", McpSettingsFromFileMissing),
+
+                    // 8. InstructionResolver (scope + global merge).
+                    TestCase.Sync("model", "instructions-resolve-fallback", "Resolve: no scope instructions yields the global set", InstructionResolveFallback),
+                    TestCase.Sync("model", "instructions-resolve-append", "Resolve: append adds after the globals", InstructionResolveAppend),
+                    TestCase.Sync("model", "instructions-resolve-replace", "Resolve: replace overrides a same-named global in place", InstructionResolveReplace),
+                    TestCase.Sync("model", "instructions-resolve-hide", "Resolve: hide suppresses a same-named global", InstructionResolveHide),
+                    TestCase.Sync("model", "instructions-resolve-replace-missing", "Resolve: replace with no global match appends", InstructionResolveReplaceMissing)
                 });
         }
 
@@ -182,13 +190,13 @@ namespace Test.Shared
 
         #region Private-Methods-Range
 
-        private static void ModelEndpointPortRange()
+        private static void ModelEndpointBaseUrl()
         {
-            TestCase.Throws<ArgumentOutOfRangeException>(() => { new ModelEndpoint().Port = -1; }, "ModelEndpoint.Port -1 must throw.");
-            TestCase.Throws<ArgumentOutOfRangeException>(() => { new ModelEndpoint().Port = 70000; }, "ModelEndpoint.Port 70000 must throw.");
+            ModelEndpoint e = new ModelEndpoint { BaseUrl = "http://host:8080/v1.0/api/model/" };
+            TestCase.Require(e.GetBaseUrl() == "http://host:8080/v1.0/api/model", "ModelEndpoint.GetBaseUrl should trim a trailing slash.");
 
-            ModelEndpoint ok = new ModelEndpoint { Port = 8080 };
-            TestCase.Require(ok.Port == 8080, "ModelEndpoint.Port should accept an in-range value.");
+            ModelEndpoint plain = new ModelEndpoint { BaseUrl = "https://api.openai.com" };
+            TestCase.Require(plain.GetBaseUrl() == "https://api.openai.com", "ModelEndpoint.GetBaseUrl should return the base URL unchanged when there is no trailing slash.");
         }
 
         private static void ScopeDimensionalityRange()
@@ -324,13 +332,63 @@ namespace Test.Shared
             TestCase.Require(e.Id.StartsWith("eep_", StringComparison.Ordinal), "ModelEndpoint.Id should default to the eep_ prefix.");
             TestCase.Require(e.Active, "ModelEndpoint.Active should default to true.");
             TestCase.Require(e.Kind == EndpointKindEnum.Embedding, "ModelEndpoint.Kind should default to Embedding.");
-            TestCase.Require(e.Port == 0, "ModelEndpoint.Port should default to 0.");
+            TestCase.Require(e.AuthType == EndpointAuthTypeEnum.None, "ModelEndpoint.AuthType should default to None.");
         }
 
         private static void RequestHistoryDefaults()
         {
             RequestHistoryEntry r = new RequestHistoryEntry();
             TestCase.Require(r.Id.StartsWith("req_", StringComparison.Ordinal), "RequestHistoryEntry.Id should start with req_.");
+        }
+
+        private static List<Instruction> Globals()
+        {
+            return new List<Instruction>
+            {
+                new Instruction { Id = "ins_a", TenantId = "t", Name = "Start", Content = "start", Position = 0 },
+                new Instruction { Id = "ins_b", TenantId = "t", Name = "Tools", Content = "tools", Position = 1 }
+            };
+        }
+
+        private static void InstructionResolveFallback()
+        {
+            List<ResolvedInstruction> r = InstructionResolver.Resolve(Globals(), new List<Instruction>(), "scp_1");
+            TestCase.Require(r.Count == 2, "With no scope instructions the effective set equals the globals.");
+            TestCase.Require(r[0].Name == "Start" && r[0].Source == InstructionSourceEnum.Global, "Global instructions keep their order and Global source.");
+            TestCase.Require(r[0].Position == 0 && r[1].Position == 1, "Effective positions are re-sequenced from zero.");
+        }
+
+        private static void InstructionResolveAppend()
+        {
+            List<Instruction> scope = new List<Instruction> { new Instruction { Id = "ins_s", TenantId = "t", ScopeId = "scp_1", Name = "ScopeRule", Content = "extra", Position = 0, MergeMode = InstructionMergeModeEnum.Append } };
+            List<ResolvedInstruction> r = InstructionResolver.Resolve(Globals(), scope, "scp_1");
+            TestCase.Require(r.Count == 3, "Append adds one instruction to the two globals.");
+            TestCase.Require(r[2].Name == "ScopeRule" && r[2].Source == InstructionSourceEnum.ScopeAdded, "Appended instruction comes after the globals as ScopeAdded.");
+        }
+
+        private static void InstructionResolveReplace()
+        {
+            List<Instruction> scope = new List<Instruction> { new Instruction { Id = "ins_s", TenantId = "t", ScopeId = "scp_1", Name = "Tools", Content = "scope tools", Position = 0, MergeMode = InstructionMergeModeEnum.Replace } };
+            List<ResolvedInstruction> r = InstructionResolver.Resolve(Globals(), scope, "scp_1");
+            TestCase.Require(r.Count == 2, "Replace does not add a row; it overrides in place.");
+            ResolvedInstruction tools = r.First(x => x.Name == "Tools");
+            TestCase.Require(tools.Content == "scope tools" && tools.Source == InstructionSourceEnum.ScopeOverride, "Replace overrides the same-named global's content in place.");
+            TestCase.Require(r[1].Name == "Tools", "Replace keeps the global's position.");
+        }
+
+        private static void InstructionResolveHide()
+        {
+            List<Instruction> scope = new List<Instruction> { new Instruction { Id = "ins_s", TenantId = "t", ScopeId = "scp_1", Name = "Tools", Content = "", Position = 0, MergeMode = InstructionMergeModeEnum.Hide } };
+            List<ResolvedInstruction> r = InstructionResolver.Resolve(Globals(), scope, "scp_1");
+            TestCase.Require(r.Count == 1 && r[0].Name == "Start", "Hide suppresses the same-named global.");
+        }
+
+        private static void InstructionResolveReplaceMissing()
+        {
+            List<Instruction> scope = new List<Instruction> { new Instruction { Id = "ins_s", TenantId = "t", ScopeId = "scp_1", Name = "BrandNew", Content = "new", Position = 0, MergeMode = InstructionMergeModeEnum.Replace } };
+            List<ResolvedInstruction> r = InstructionResolver.Resolve(Globals(), scope, "scp_1");
+            TestCase.Require(r.Count == 3, "Replace with no matching global behaves like append.");
+            TestCase.Require(r[2].Name == "BrandNew" && r[2].Source == InstructionSourceEnum.ScopeAdded, "The unmatched replace is appended as ScopeAdded.");
         }
 
         #endregion

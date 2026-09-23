@@ -7,6 +7,7 @@ namespace Test.Shared
     using System.Net;
     using System.Net.Http;
     using System.Text.Json;
+    using System.Threading;
     using System.Threading.Tasks;
     using Isis.Core.Database;
     using Isis.Core.Enums;
@@ -42,7 +43,15 @@ namespace Test.Shared
                     TestCase.Async("service", "buildkey-method-differs", "BuildKey: GET vs HEAD differs", BuildKeyMethodDiffersAsync),
                     TestCase.Async("service", "buildkey-port-differs", "BuildKey: different port differs", BuildKeyPortDiffersAsync),
                     TestCase.Async("service", "buildkey-auth-differs", "BuildKey: auth vs no-auth differs", BuildKeyAuthDiffersAsync),
-                    TestCase.Async("service", "buildkey-gemini-openai-auth-differ", "BuildKey: Gemini vs OpenAI auth headers differ", BuildKeyGeminiVsOpenAiAuthAsync),
+                    TestCase.Async("service", "buildkey-auth-type-differ", "BuildKey: different auth mechanisms differ", BuildKeyAuthTypeDiffersAsync),
+
+                    // EndpointAuthenticator
+                    TestCase.Sync("service", "auth-bearer", "Auth: bearer token sets Authorization header", AuthBearer),
+                    TestCase.Sync("service", "auth-header", "Auth: api-key header uses the configured name", AuthApiKeyHeader),
+                    TestCase.Sync("service", "auth-query", "Auth: query-param auth appends the configured parameter", AuthQueryParam),
+                    TestCase.Sync("service", "auth-basic", "Auth: basic auth encodes username:password", AuthBasic),
+                    TestCase.Sync("service", "auth-access-secret", "Auth: access/secret sets both configured headers", AuthAccessKeySecret),
+                    TestCase.Sync("service", "auth-none", "Auth: None applies nothing", AuthNone),
 
                     // HealthCheckService probing
                     TestCase.Async("service", "probe-dedup-same-url", "Probe: shared URL is probed once", ProbeDedupSameUrlAsync),
@@ -77,6 +86,7 @@ namespace Test.Shared
                     TestCase.Async("service", "memory-upsert-latest-wins", "Memory: latest content wins", MemoryUpsertLatestWinsAsync),
                     TestCase.Async("service", "memory-search-keyword-hit", "Memory: keyword search returns a hit", MemorySearchKeywordHitAsync),
                     TestCase.Async("service", "memory-delete-removes", "Memory: delete removes the row", MemoryDeleteRemovesAsync),
+                    TestCase.Async("service", "tenant-delete-tears-down-store", "Tenant: nuke tears down the external tenant store and the row", TenantDeleteTearsDownStoreAsync),
 
                     // MemoryChatService
                     TestCase.Async("service", "chat-answer-with-citations", "Chat: grounded answer cites the memory", ChatAnswerWithCitationsAsync),
@@ -172,50 +182,105 @@ namespace Test.Shared
 
         private static Task BuildKeyIdenticalEqualAsync()
         {
-            ModelEndpoint a = new ModelEndpoint { TenantId = "t", Name = "a", Hostname = "127.0.0.1", Port = 9000, HealthCheckUrl = "/health", HealthCheckMethod = HealthCheckMethodEnum.GET };
-            ModelEndpoint b = new ModelEndpoint { TenantId = "t", Name = "b", Hostname = "127.0.0.1", Port = 9000, HealthCheckUrl = "/health", HealthCheckMethod = HealthCheckMethodEnum.GET };
+            ModelEndpoint a = new ModelEndpoint { TenantId = "t", Name = "a", BaseUrl = "http://127.0.0.1:9000", HealthCheckUrl = "/health", HealthCheckMethod = HealthCheckMethodEnum.GET };
+            ModelEndpoint b = new ModelEndpoint { TenantId = "t", Name = "b", BaseUrl = "http://127.0.0.1:9000", HealthCheckUrl = "/health", HealthCheckMethod = HealthCheckMethodEnum.GET };
             TestCase.Require(HealthCheckService.BuildKey(a) == HealthCheckService.BuildKey(b), "Identical endpoints must share a dedup key.");
             return Task.CompletedTask;
         }
 
         private static Task BuildKeyPathDiffersAsync()
         {
-            ModelEndpoint a = new ModelEndpoint { TenantId = "t", Name = "a", Hostname = "127.0.0.1", Port = 9000, HealthCheckUrl = "/health" };
-            ModelEndpoint b = new ModelEndpoint { TenantId = "t", Name = "b", Hostname = "127.0.0.1", Port = 9000, HealthCheckUrl = "/other" };
+            ModelEndpoint a = new ModelEndpoint { TenantId = "t", Name = "a", BaseUrl = "http://127.0.0.1:9000", HealthCheckUrl = "/health" };
+            ModelEndpoint b = new ModelEndpoint { TenantId = "t", Name = "b", BaseUrl = "http://127.0.0.1:9000", HealthCheckUrl = "/other" };
             TestCase.Require(HealthCheckService.BuildKey(a) != HealthCheckService.BuildKey(b), "Different health-check paths must produce different keys.");
             return Task.CompletedTask;
         }
 
         private static Task BuildKeyMethodDiffersAsync()
         {
-            ModelEndpoint a = new ModelEndpoint { TenantId = "t", Name = "a", Hostname = "127.0.0.1", Port = 9000, HealthCheckUrl = "/health", HealthCheckMethod = HealthCheckMethodEnum.GET };
-            ModelEndpoint b = new ModelEndpoint { TenantId = "t", Name = "b", Hostname = "127.0.0.1", Port = 9000, HealthCheckUrl = "/health", HealthCheckMethod = HealthCheckMethodEnum.HEAD };
+            ModelEndpoint a = new ModelEndpoint { TenantId = "t", Name = "a", BaseUrl = "http://127.0.0.1:9000", HealthCheckUrl = "/health", HealthCheckMethod = HealthCheckMethodEnum.GET };
+            ModelEndpoint b = new ModelEndpoint { TenantId = "t", Name = "b", BaseUrl = "http://127.0.0.1:9000", HealthCheckUrl = "/health", HealthCheckMethod = HealthCheckMethodEnum.HEAD };
             TestCase.Require(HealthCheckService.BuildKey(a) != HealthCheckService.BuildKey(b), "GET and HEAD must produce different keys.");
             return Task.CompletedTask;
         }
 
         private static Task BuildKeyPortDiffersAsync()
         {
-            ModelEndpoint a = new ModelEndpoint { TenantId = "t", Name = "a", Hostname = "127.0.0.1", Port = 9000, HealthCheckUrl = "/health" };
-            ModelEndpoint b = new ModelEndpoint { TenantId = "t", Name = "b", Hostname = "127.0.0.1", Port = 9001, HealthCheckUrl = "/health" };
+            ModelEndpoint a = new ModelEndpoint { TenantId = "t", Name = "a", BaseUrl = "http://127.0.0.1:9000", HealthCheckUrl = "/health" };
+            ModelEndpoint b = new ModelEndpoint { TenantId = "t", Name = "b", BaseUrl = "http://127.0.0.1:9001", HealthCheckUrl = "/health" };
             TestCase.Require(HealthCheckService.BuildKey(a) != HealthCheckService.BuildKey(b), "Different ports must produce different keys.");
             return Task.CompletedTask;
         }
 
         private static Task BuildKeyAuthDiffersAsync()
         {
-            ModelEndpoint noAuth = new ModelEndpoint { TenantId = "t", Name = "a", Hostname = "127.0.0.1", Port = 9000, HealthCheckUrl = "/health" };
-            ModelEndpoint withAuth = new ModelEndpoint { TenantId = "t", Name = "b", Hostname = "127.0.0.1", Port = 9000, HealthCheckUrl = "/health", HealthCheckUseAuth = true, ApiKey = "secret-key" };
+            ModelEndpoint noAuth = new ModelEndpoint { TenantId = "t", Name = "a", BaseUrl = "http://127.0.0.1:9000", HealthCheckUrl = "/health" };
+            ModelEndpoint withAuth = new ModelEndpoint { TenantId = "t", Name = "b", BaseUrl = "http://127.0.0.1:9000", HealthCheckUrl = "/health", HealthCheckUseAuth = true, AuthType = EndpointAuthTypeEnum.BearerToken, AuthSecret = "secret-key" };
             TestCase.Require(HealthCheckService.BuildKey(noAuth) != HealthCheckService.BuildKey(withAuth), "Authenticated probe must differ from the anonymous one.");
             return Task.CompletedTask;
         }
 
-        private static Task BuildKeyGeminiVsOpenAiAuthAsync()
+        private static Task BuildKeyAuthTypeDiffersAsync()
         {
-            ModelEndpoint gemini = new ModelEndpoint { TenantId = "t", Name = "g", Hostname = "127.0.0.1", Port = 9000, HealthCheckUrl = "/health", HealthCheckUseAuth = true, ApiKey = "k", ApiFormat = ApiFormatEnum.Gemini };
-            ModelEndpoint openai = new ModelEndpoint { TenantId = "t", Name = "o", Hostname = "127.0.0.1", Port = 9000, HealthCheckUrl = "/health", HealthCheckUseAuth = true, ApiKey = "k", ApiFormat = ApiFormatEnum.OpenAI };
-            TestCase.Require(HealthCheckService.BuildKey(gemini) != HealthCheckService.BuildKey(openai), "Gemini and OpenAI auth headers must produce different keys.");
+            ModelEndpoint query = new ModelEndpoint { TenantId = "t", Name = "g", BaseUrl = "http://127.0.0.1:9000", HealthCheckUrl = "/health", HealthCheckUseAuth = true, AuthType = EndpointAuthTypeEnum.QueryParam, AuthQueryParam = "key", AuthSecret = "k" };
+            ModelEndpoint bearer = new ModelEndpoint { TenantId = "t", Name = "o", BaseUrl = "http://127.0.0.1:9000", HealthCheckUrl = "/health", HealthCheckUseAuth = true, AuthType = EndpointAuthTypeEnum.BearerToken, AuthSecret = "k" };
+            TestCase.Require(HealthCheckService.BuildKey(query) != HealthCheckService.BuildKey(bearer), "Different auth mechanisms must produce different dedup keys.");
             return Task.CompletedTask;
+        }
+
+        #endregion
+
+        #region Private-Methods-EndpointAuthenticator
+
+        private static void AuthBearer()
+        {
+            ModelEndpoint ep = new ModelEndpoint { TenantId = "t", Name = "a", BaseUrl = "http://h:9000", AuthType = EndpointAuthTypeEnum.BearerToken, AuthSecret = "tok123" };
+            using HttpRequestMessage req = new HttpRequestMessage(HttpMethod.Post, "http://h:9000/v1/embeddings");
+            EndpointAuthenticator.Apply(req, ep);
+            TestCase.Require(req.Headers.Authorization != null && req.Headers.Authorization.Scheme == "Bearer" && req.Headers.Authorization.Parameter == "tok123", "Bearer auth must set 'Authorization: Bearer tok123'.");
+        }
+
+        private static void AuthApiKeyHeader()
+        {
+            ModelEndpoint ep = new ModelEndpoint { TenantId = "t", Name = "a", BaseUrl = "http://h:9000", AuthType = EndpointAuthTypeEnum.ApiKeyHeader, AuthHeaderName = "x-api-key", AuthSecret = "abc" };
+            using HttpRequestMessage req = new HttpRequestMessage(HttpMethod.Post, "http://h:9000/v1/embeddings");
+            EndpointAuthenticator.Apply(req, ep);
+            TestCase.Require(req.Headers.TryGetValues("x-api-key", out IEnumerable<string>? values) && values != null && string.Join(string.Empty, values) == "abc", "ApiKeyHeader auth must set the configured header to the secret.");
+        }
+
+        private static void AuthQueryParam()
+        {
+            ModelEndpoint ep = new ModelEndpoint { TenantId = "t", Name = "a", BaseUrl = "http://h:9000", AuthType = EndpointAuthTypeEnum.QueryParam, AuthQueryParam = "key", AuthSecret = "abc" };
+            using HttpRequestMessage req = new HttpRequestMessage(HttpMethod.Post, "http://h:9000/v1beta/models/x:generateContent");
+            EndpointAuthenticator.Apply(req, ep);
+            TestCase.Require(req.RequestUri != null && req.RequestUri.Query.Contains("key=abc", StringComparison.Ordinal), "QueryParam auth must append the configured parameter, got: " + req.RequestUri?.Query);
+        }
+
+        private static void AuthBasic()
+        {
+            ModelEndpoint ep = new ModelEndpoint { TenantId = "t", Name = "a", BaseUrl = "http://h:9000", AuthType = EndpointAuthTypeEnum.BasicAuth, AuthKeyId = "user", AuthSecret = "pass" };
+            using HttpRequestMessage req = new HttpRequestMessage(HttpMethod.Post, "http://h:9000/v1/embeddings");
+            EndpointAuthenticator.Apply(req, ep);
+            string expected = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("user:pass"));
+            TestCase.Require(req.Headers.Authorization != null && req.Headers.Authorization.Scheme == "Basic" && req.Headers.Authorization.Parameter == expected, "Basic auth must encode base64(user:pass).");
+        }
+
+        private static void AuthAccessKeySecret()
+        {
+            ModelEndpoint ep = new ModelEndpoint { TenantId = "t", Name = "a", BaseUrl = "http://h:9000", AuthType = EndpointAuthTypeEnum.AccessKeySecret, AuthHeaderName = "x-access-key", AuthKeyId = "ak", AuthSecretHeaderName = "x-secret-key", AuthSecret = "sk" };
+            using HttpRequestMessage req = new HttpRequestMessage(HttpMethod.Post, "http://h:9000/v1/embeddings");
+            EndpointAuthenticator.Apply(req, ep);
+            TestCase.Require(req.Headers.TryGetValues("x-access-key", out IEnumerable<string>? ak) && ak != null && string.Join(string.Empty, ak) == "ak", "AccessKeySecret must set the access-key header.");
+            TestCase.Require(req.Headers.TryGetValues("x-secret-key", out IEnumerable<string>? sk) && sk != null && string.Join(string.Empty, sk) == "sk", "AccessKeySecret must set the secret-key header.");
+        }
+
+        private static void AuthNone()
+        {
+            ModelEndpoint ep = new ModelEndpoint { TenantId = "t", Name = "a", BaseUrl = "http://h:9000", AuthType = EndpointAuthTypeEnum.None };
+            using HttpRequestMessage req = new HttpRequestMessage(HttpMethod.Post, "http://h:9000/v1/embeddings");
+            EndpointAuthenticator.Apply(req, ep);
+            TestCase.Require(req.Headers.Authorization == null, "None auth must not set an Authorization header.");
+            TestCase.Require(req.RequestUri != null && string.IsNullOrEmpty(req.RequestUri.Query), "None auth must not add query parameters.");
         }
 
         #endregion
@@ -228,8 +293,8 @@ namespace Test.Shared
             using HttpClient client = new HttpClient(handler);
             HealthCheckService service = new HealthCheckService(client);
 
-            ModelEndpoint a = new ModelEndpoint { TenantId = "t", Name = "a", Hostname = "127.0.0.1", Port = 9000, HealthCheckUrl = "/health" };
-            ModelEndpoint b = new ModelEndpoint { TenantId = "t", Name = "b", Hostname = "127.0.0.1", Port = 9000, HealthCheckUrl = "/health" };
+            ModelEndpoint a = new ModelEndpoint { TenantId = "t", Name = "a", BaseUrl = "http://127.0.0.1:9000", HealthCheckUrl = "/health" };
+            ModelEndpoint b = new ModelEndpoint { TenantId = "t", Name = "b", BaseUrl = "http://127.0.0.1:9000", HealthCheckUrl = "/health" };
 
             int probes = await service.ProbeOnceAsync(new[] { a, b }).ConfigureAwait(false);
             TestCase.Require(probes == 1, "Two endpoints sharing a URL must be probed once, got " + probes + ".");
@@ -242,9 +307,9 @@ namespace Test.Shared
             using HttpClient client = new HttpClient(handler);
             HealthCheckService service = new HealthCheckService(client);
 
-            ModelEndpoint a = new ModelEndpoint { TenantId = "t", Name = "a", Hostname = "127.0.0.1", Port = 9000, HealthCheckUrl = "/health" };
-            ModelEndpoint b = new ModelEndpoint { TenantId = "t", Name = "b", Hostname = "127.0.0.1", Port = 9000, HealthCheckUrl = "/health" };
-            ModelEndpoint c = new ModelEndpoint { TenantId = "t", Name = "c", Hostname = "127.0.0.1", Port = 9000, HealthCheckUrl = "/other" };
+            ModelEndpoint a = new ModelEndpoint { TenantId = "t", Name = "a", BaseUrl = "http://127.0.0.1:9000", HealthCheckUrl = "/health" };
+            ModelEndpoint b = new ModelEndpoint { TenantId = "t", Name = "b", BaseUrl = "http://127.0.0.1:9000", HealthCheckUrl = "/health" };
+            ModelEndpoint c = new ModelEndpoint { TenantId = "t", Name = "c", BaseUrl = "http://127.0.0.1:9000", HealthCheckUrl = "/other" };
 
             int first = await service.ProbeOnceAsync(new[] { a, b }).ConfigureAwait(false);
             TestCase.Require(first == 1, "First round with a shared URL must be probed once, got " + first + ".");
@@ -262,7 +327,7 @@ namespace Test.Shared
             using HttpClient client = new HttpClient(handler);
             HealthCheckService service = new HealthCheckService(client);
 
-            ModelEndpoint a = new ModelEndpoint { TenantId = "t", Name = "a", Hostname = "127.0.0.1", Port = 9000, HealthCheckUrl = "/health" };
+            ModelEndpoint a = new ModelEndpoint { TenantId = "t", Name = "a", BaseUrl = "http://127.0.0.1:9000", HealthCheckUrl = "/health" };
             TestCase.Require(service.GetStatus(a.Id) == null, "Status must be null before any probe.");
             return Task.CompletedTask;
         }
@@ -273,7 +338,7 @@ namespace Test.Shared
             using HttpClient client = new HttpClient(handler);
             HealthCheckService service = new HealthCheckService(client);
 
-            ModelEndpoint a = new ModelEndpoint { TenantId = "t", Name = "a", Hostname = "127.0.0.1", Port = 9000, HealthCheckUrl = "/health", HealthCheckExpectedStatusCode = 200, HealthyThreshold = 2 };
+            ModelEndpoint a = new ModelEndpoint { TenantId = "t", Name = "a", BaseUrl = "http://127.0.0.1:9000", HealthCheckUrl = "/health", HealthCheckExpectedStatusCode = 200, HealthyThreshold = 2 };
 
             await service.ProbeOnceAsync(new[] { a }).ConfigureAwait(false);
             await service.ProbeOnceAsync(new[] { a }).ConfigureAwait(false);
@@ -289,7 +354,7 @@ namespace Test.Shared
             using HttpClient client = new HttpClient(handler);
             HealthCheckService service = new HealthCheckService(client);
 
-            ModelEndpoint a = new ModelEndpoint { TenantId = "t", Name = "a", Hostname = "127.0.0.1", Port = 9000, HealthCheckUrl = "/health", HealthCheckExpectedStatusCode = 200, HealthyThreshold = 2 };
+            ModelEndpoint a = new ModelEndpoint { TenantId = "t", Name = "a", BaseUrl = "http://127.0.0.1:9000", HealthCheckUrl = "/health", HealthCheckExpectedStatusCode = 200, HealthyThreshold = 2 };
 
             await service.ProbeOnceAsync(new[] { a }).ConfigureAwait(false);
 
@@ -304,7 +369,7 @@ namespace Test.Shared
             using HttpClient client = new HttpClient(handler);
             HealthCheckService service = new HealthCheckService(client);
 
-            ModelEndpoint a = new ModelEndpoint { TenantId = "t", Name = "a", Hostname = "127.0.0.1", Port = 9100, HealthCheckUrl = "/health", HealthCheckExpectedStatusCode = 200, HealthyThreshold = 1 };
+            ModelEndpoint a = new ModelEndpoint { TenantId = "t", Name = "a", BaseUrl = "http://127.0.0.1:9100", HealthCheckUrl = "/health", HealthCheckExpectedStatusCode = 200, HealthyThreshold = 1 };
             await service.ProbeOnceAsync(new[] { a }).ConfigureAwait(false);
 
             EndpointHealthStatus? status = service.GetStatus(a.Id);
@@ -325,7 +390,7 @@ namespace Test.Shared
             HealthCheckService service = new HealthCheckService(client);
 
             // Expected status never matches the returned 200, so every probe fails.
-            ModelEndpoint bad = new ModelEndpoint { TenantId = "t", Name = "bad", Hostname = "127.0.0.1", Port = 9101, HealthCheckUrl = "/health", HealthCheckExpectedStatusCode = 599, UnhealthyThreshold = 1 };
+            ModelEndpoint bad = new ModelEndpoint { TenantId = "t", Name = "bad", BaseUrl = "http://127.0.0.1:9101", HealthCheckUrl = "/health", HealthCheckExpectedStatusCode = 599, UnhealthyThreshold = 1 };
             await service.ProbeOnceAsync(new[] { bad }).ConfigureAwait(false);
 
             EndpointHealthStatus? status = service.GetStatus(bad.Id);
@@ -341,7 +406,7 @@ namespace Test.Shared
             using HttpClient client = new HttpClient(handler);
             HealthCheckService service = new HealthCheckService(client);
 
-            ModelEndpoint a = new ModelEndpoint { TenantId = "t", Name = "a", Hostname = "127.0.0.1", Port = 9102, HealthCheckUrl = "/health", HealthCheckExpectedStatusCode = 200, HealthyThreshold = 1 };
+            ModelEndpoint a = new ModelEndpoint { TenantId = "t", Name = "a", BaseUrl = "http://127.0.0.1:9102", HealthCheckUrl = "/health", HealthCheckExpectedStatusCode = 200, HealthyThreshold = 1 };
             await service.ProbeOnceAsync(new[] { a }).ConfigureAwait(false); // becomes healthy; no interval yet
             await Task.Delay(30).ConfigureAwait(false);
             await service.ProbeOnceAsync(new[] { a }).ConfigureAwait(false); // healthy interval accrues to uptime
@@ -360,7 +425,7 @@ namespace Test.Shared
             HealthCheckService service = new HealthCheckService(client);
 
             // Expected status never matches, so the endpoint is never healthy and intervals accrue to downtime.
-            ModelEndpoint bad = new ModelEndpoint { TenantId = "t", Name = "bad", Hostname = "127.0.0.1", Port = 9103, HealthCheckUrl = "/health", HealthCheckExpectedStatusCode = 599, UnhealthyThreshold = 1 };
+            ModelEndpoint bad = new ModelEndpoint { TenantId = "t", Name = "bad", BaseUrl = "http://127.0.0.1:9103", HealthCheckUrl = "/health", HealthCheckExpectedStatusCode = 599, UnhealthyThreshold = 1 };
             await service.ProbeOnceAsync(new[] { bad }).ConfigureAwait(false);
             await Task.Delay(30).ConfigureAwait(false);
             await service.ProbeOnceAsync(new[] { bad }).ConfigureAwait(false);
@@ -377,7 +442,7 @@ namespace Test.Shared
             using HttpClient client = new HttpClient(handler);
             HealthCheckService service = new HealthCheckService(client);
 
-            ModelEndpoint bad = new ModelEndpoint { TenantId = "t", Name = "bad", Hostname = "127.0.0.1", Port = 9001, HealthCheckUrl = "/health", HealthCheckExpectedStatusCode = 599 };
+            ModelEndpoint bad = new ModelEndpoint { TenantId = "t", Name = "bad", BaseUrl = "http://127.0.0.1:9001", HealthCheckUrl = "/health", HealthCheckExpectedStatusCode = 599 };
 
             await service.ProbeOnceAsync(new[] { bad }).ConfigureAwait(false);
             await service.ProbeOnceAsync(new[] { bad }).ConfigureAwait(false);
@@ -394,7 +459,7 @@ namespace Test.Shared
             using HttpClient client = new HttpClient(handler);
             HealthCheckService service = new HealthCheckService(client);
 
-            ModelEndpoint inactive = new ModelEndpoint { TenantId = "t", Name = "off", Hostname = "127.0.0.1", Port = 9000, HealthCheckUrl = "/health", Active = false };
+            ModelEndpoint inactive = new ModelEndpoint { TenantId = "t", Name = "off", BaseUrl = "http://127.0.0.1:9000", HealthCheckUrl = "/health", Active = false };
 
             int probes = await service.ProbeOnceAsync(new[] { inactive }).ConfigureAwait(false);
             TestCase.Require(probes == 0, "Inactive endpoints must not be probed, got " + probes + ".");
@@ -408,9 +473,9 @@ namespace Test.Shared
             using HttpClient client = new HttpClient(handler);
             HealthCheckService service = new HealthCheckService(client);
 
-            ModelEndpoint a = new ModelEndpoint { TenantId = "t", Name = "a", Hostname = "127.0.0.1", Port = 9000, HealthCheckUrl = "/health" };
-            ModelEndpoint b = new ModelEndpoint { TenantId = "t", Name = "b", Hostname = "127.0.0.1", Port = 9000, HealthCheckUrl = "/other" };
-            ModelEndpoint inactive = new ModelEndpoint { TenantId = "t", Name = "off", Hostname = "127.0.0.1", Port = 9000, HealthCheckUrl = "/skip", Active = false };
+            ModelEndpoint a = new ModelEndpoint { TenantId = "t", Name = "a", BaseUrl = "http://127.0.0.1:9000", HealthCheckUrl = "/health" };
+            ModelEndpoint b = new ModelEndpoint { TenantId = "t", Name = "b", BaseUrl = "http://127.0.0.1:9000", HealthCheckUrl = "/other" };
+            ModelEndpoint inactive = new ModelEndpoint { TenantId = "t", Name = "off", BaseUrl = "http://127.0.0.1:9000", HealthCheckUrl = "/skip", Active = false };
 
             await service.ProbeOnceAsync(new[] { a, b, inactive }).ConfigureAwait(false);
 
@@ -427,7 +492,7 @@ namespace Test.Shared
             string json = JsonSerializer.Serialize(new { data = new[] { new { embedding = new[] { 0.1, 0.2, 0.3 } } } });
             using HttpClient client = new HttpClient(new StubResponseHandler(json));
             EmbeddingService service = new EmbeddingService(client);
-            ModelEndpoint endpoint = new ModelEndpoint { TenantId = "t", Name = "e", Kind = EndpointKindEnum.Embedding, ApiFormat = ApiFormatEnum.OpenAI, Hostname = "127.0.0.1", Port = 9998 };
+            ModelEndpoint endpoint = new ModelEndpoint { TenantId = "t", Name = "e", Kind = EndpointKindEnum.Embedding, ApiFormat = ApiFormatEnum.OpenAI, BaseUrl = "http://127.0.0.1:9998" };
 
             float[] vector = await service.EmbedAsync(endpoint, "hello").ConfigureAwait(false);
             TestCase.Require(vector.Length == 3, "Expected a length-3 vector, got " + vector.Length + ".");
@@ -439,7 +504,7 @@ namespace Test.Shared
             string json = JsonSerializer.Serialize(new { embedding = new[] { 0.1, 0.2 } });
             using HttpClient client = new HttpClient(new StubResponseHandler(json));
             EmbeddingService service = new EmbeddingService(client);
-            ModelEndpoint endpoint = new ModelEndpoint { TenantId = "t", Name = "e", Kind = EndpointKindEnum.Embedding, ApiFormat = ApiFormatEnum.Ollama, Hostname = "127.0.0.1", Port = 11434 };
+            ModelEndpoint endpoint = new ModelEndpoint { TenantId = "t", Name = "e", Kind = EndpointKindEnum.Embedding, ApiFormat = ApiFormatEnum.Ollama, BaseUrl = "http://127.0.0.1:11434" };
 
             float[] vector = await service.EmbedAsync(endpoint, "hello").ConfigureAwait(false);
             TestCase.Require(vector.Length == 2, "Expected a length-2 vector, got " + vector.Length + ".");
@@ -449,7 +514,7 @@ namespace Test.Shared
         {
             using HttpClient client = new HttpClient(new StubResponseHandler("{}", HttpStatusCode.InternalServerError));
             EmbeddingService service = new EmbeddingService(client);
-            ModelEndpoint endpoint = new ModelEndpoint { TenantId = "t", Name = "e", Kind = EndpointKindEnum.Embedding, ApiFormat = ApiFormatEnum.OpenAI, Hostname = "127.0.0.1", Port = 9998 };
+            ModelEndpoint endpoint = new ModelEndpoint { TenantId = "t", Name = "e", Kind = EndpointKindEnum.Embedding, ApiFormat = ApiFormatEnum.OpenAI, BaseUrl = "http://127.0.0.1:9998" };
 
             await TestCase.ThrowsAsync<InvalidOperationException>(
                 async () => await service.EmbedAsync(endpoint, "hello").ConfigureAwait(false),
@@ -460,7 +525,7 @@ namespace Test.Shared
         {
             using HttpClient client = new HttpClient(new StubResponseHandler("{\"nope\":1}"));
             EmbeddingService service = new EmbeddingService(client);
-            ModelEndpoint endpoint = new ModelEndpoint { TenantId = "t", Name = "e", Kind = EndpointKindEnum.Embedding, ApiFormat = ApiFormatEnum.OpenAI, Hostname = "127.0.0.1", Port = 9998 };
+            ModelEndpoint endpoint = new ModelEndpoint { TenantId = "t", Name = "e", Kind = EndpointKindEnum.Embedding, ApiFormat = ApiFormatEnum.OpenAI, BaseUrl = "http://127.0.0.1:9998" };
 
             await TestCase.ThrowsAsync<InvalidOperationException>(
                 async () => await service.EmbedAsync(endpoint, "hello").ConfigureAwait(false),
@@ -474,9 +539,9 @@ namespace Test.Shared
         private static async Task InferOpenAiAsync()
         {
             string json = JsonSerializer.Serialize(new { choices = new[] { new { message = new { role = "assistant", content = "hi" } } } });
-            using HttpClient client = new HttpClient(new StubResponseHandler(json));
-            InferenceService service = new InferenceService(client);
-            ModelEndpoint endpoint = new ModelEndpoint { TenantId = "t", Name = "c", Kind = EndpointKindEnum.Inference, ApiFormat = ApiFormatEnum.OpenAI, Hostname = "127.0.0.1", Port = 9999 };
+            using StubResponseHandler handler = new StubResponseHandler(json);
+            InferenceService service = new InferenceService(handler);
+            ModelEndpoint endpoint = new ModelEndpoint { TenantId = "t", Name = "c", Kind = EndpointKindEnum.Inference, ApiFormat = ApiFormatEnum.OpenAI, BaseUrl = "http://127.0.0.1:9999" };
 
             string content = await service.CompleteAsync(endpoint, "sys", "user").ConfigureAwait(false);
             TestCase.Require(content == "hi", "Expected the OpenAI content 'hi', got '" + content + "'.");
@@ -485,9 +550,9 @@ namespace Test.Shared
         private static async Task InferOllamaAsync()
         {
             string json = JsonSerializer.Serialize(new { message = new { role = "assistant", content = "yo" } });
-            using HttpClient client = new HttpClient(new StubResponseHandler(json));
-            InferenceService service = new InferenceService(client);
-            ModelEndpoint endpoint = new ModelEndpoint { TenantId = "t", Name = "c", Kind = EndpointKindEnum.Inference, ApiFormat = ApiFormatEnum.Ollama, Hostname = "127.0.0.1", Port = 11434 };
+            using StubResponseHandler handler = new StubResponseHandler(json);
+            InferenceService service = new InferenceService(handler);
+            ModelEndpoint endpoint = new ModelEndpoint { TenantId = "t", Name = "c", Kind = EndpointKindEnum.Inference, ApiFormat = ApiFormatEnum.Ollama, BaseUrl = "http://127.0.0.1:11434" };
 
             string content = await service.CompleteAsync(endpoint, "sys", "user").ConfigureAwait(false);
             TestCase.Require(content == "yo", "Expected the Ollama content 'yo', got '" + content + "'.");
@@ -495,9 +560,9 @@ namespace Test.Shared
 
         private static async Task InferErrorStatusAsync()
         {
-            using HttpClient client = new HttpClient(new StubResponseHandler("{}", HttpStatusCode.InternalServerError));
-            InferenceService service = new InferenceService(client);
-            ModelEndpoint endpoint = new ModelEndpoint { TenantId = "t", Name = "c", Kind = EndpointKindEnum.Inference, ApiFormat = ApiFormatEnum.OpenAI, Hostname = "127.0.0.1", Port = 9999 };
+            using StubResponseHandler handler = new StubResponseHandler("{}", HttpStatusCode.InternalServerError);
+            InferenceService service = new InferenceService(handler);
+            ModelEndpoint endpoint = new ModelEndpoint { TenantId = "t", Name = "c", Kind = EndpointKindEnum.Inference, ApiFormat = ApiFormatEnum.OpenAI, BaseUrl = "http://127.0.0.1:9999" };
 
             await TestCase.ThrowsAsync<InvalidOperationException>(
                 async () => await service.CompleteAsync(endpoint, "sys", "user").ConfigureAwait(false),
@@ -507,9 +572,9 @@ namespace Test.Shared
         private static async Task InferMissingContentAsync()
         {
             string json = JsonSerializer.Serialize(new { choices = new[] { new { message = new { role = "assistant" } } } });
-            using HttpClient client = new HttpClient(new StubResponseHandler(json));
-            InferenceService service = new InferenceService(client);
-            ModelEndpoint endpoint = new ModelEndpoint { TenantId = "t", Name = "c", Kind = EndpointKindEnum.Inference, ApiFormat = ApiFormatEnum.OpenAI, Hostname = "127.0.0.1", Port = 9999 };
+            using StubResponseHandler handler = new StubResponseHandler(json);
+            InferenceService service = new InferenceService(handler);
+            ModelEndpoint endpoint = new ModelEndpoint { TenantId = "t", Name = "c", Kind = EndpointKindEnum.Inference, ApiFormat = ApiFormatEnum.OpenAI, BaseUrl = "http://127.0.0.1:9999" };
 
             await TestCase.ThrowsAsync<InvalidOperationException>(
                 async () => await service.CompleteAsync(endpoint, "sys", "user").ConfigureAwait(false),
@@ -630,6 +695,52 @@ namespace Test.Shared
             }
         }
 
+        private static async Task TenantDeleteTearsDownStoreAsync()
+        {
+            using TempSqlite t = await TempSqlite.CreateAsync().ConfigureAwait(false);
+            string work = NewWork();
+            try
+            {
+                RecordingMemoryService memory = new RecordingMemoryService(t.Db);
+                TenantLifecycleService lifecycle = new TenantLifecycleService(t.Db, memory);
+                TenantProvisionResult provision = await lifecycle.ProvisionAsync(new Tenant { Name = "Acme" }).ConfigureAwait(false);
+                // A scope so the scope cascade runs ahead of the tenant-store teardown.
+                await t.Db.Scopes.CreateAsync(new Scope { TenantId = provision.Tenant.Id, Name = "proj", StoreProvider = StoreProviderEnum.Filesystem, TargetPath = work }).ConfigureAwait(false);
+
+                TenantDeleteOutcome outcome = await lifecycle.DeleteTenantAsync(provision.Tenant.Id).ConfigureAwait(false);
+
+                TestCase.Require(outcome == TenantDeleteOutcome.Deleted, "Tenant delete should report Deleted, got " + outcome + ".");
+                TestCase.Require(memory.TenantStoreTornDown, "Tenant nuke must issue the external tenant-store teardown.");
+                TestCase.Require(memory.TornDownTenantId == provision.Tenant.Id, "Tenant-store teardown must target the deleted tenant.");
+                Tenant? gone = await t.Db.Tenants.ReadAsync(provision.Tenant.Id).ConfigureAwait(false);
+                TestCase.Require(gone == null, "The tenant row must be gone after a nuke.");
+            }
+            finally
+            {
+                TryDeleteDir(work);
+            }
+        }
+
+        // A MemoryService that records the external tenant-store teardown so the tenant cascade can be observed
+        // without a live RecallDB. Scope teardown still runs through the real base implementation.
+        private sealed class RecordingMemoryService : MemoryService
+        {
+            public bool TenantStoreTornDown { get; private set; }
+
+            public string? TornDownTenantId { get; private set; }
+
+            public RecordingMemoryService(DatabaseDriverBase database) : base(database)
+            {
+            }
+
+            public override Task DeleteTenantStoreAsync(string tenantId, CancellationToken token = default)
+            {
+                TenantStoreTornDown = true;
+                TornDownTenantId = tenantId;
+                return Task.CompletedTask;
+            }
+        }
+
         #endregion
 
         #region Private-Methods-Chat
@@ -644,9 +755,9 @@ namespace Test.Shared
                 await memoryService.UpsertAsync(scope, category, new Memory { Slug = "a", Title = "Centerline", Body = "Control the centerline; posture and framing win positions." }).ConfigureAwait(false);
 
                 string chatJson = JsonSerializer.Serialize(new { choices = new[] { new { message = new { role = "assistant", content = "Answer [a]" } } } });
-                using HttpClient client = new HttpClient(new StubResponseHandler(chatJson));
-                InferenceService inference = new InferenceService(client);
-                ModelEndpoint endpoint = new ModelEndpoint { TenantId = scope.TenantId, Name = "chat", Kind = EndpointKindEnum.Inference, ApiFormat = ApiFormatEnum.OpenAI, Hostname = "127.0.0.1", Port = 9999 };
+                using StubResponseHandler handler = new StubResponseHandler(chatJson);
+                InferenceService inference = new InferenceService(handler);
+                ModelEndpoint endpoint = new ModelEndpoint { TenantId = scope.TenantId, Name = "chat", Kind = EndpointKindEnum.Inference, ApiFormat = ApiFormatEnum.OpenAI, BaseUrl = "http://127.0.0.1:9999" };
 
                 MemoryChatService chat = new MemoryChatService(memoryService, inference);
                 ChatAnswer answer = await chat.AskAsync(scope, endpoint, "How do posture and framing win positions?", 5).ConfigureAwait(false);
@@ -673,9 +784,9 @@ namespace Test.Shared
                 await memoryService.UpsertAsync(scope, category, new Memory { Slug = "b", Title = "Grip", Body = "Win the grip to control the exchange." }).ConfigureAwait(false);
 
                 string chatJson = JsonSerializer.Serialize(new { choices = new[] { new { message = new { role = "assistant", content = "You have two memories: [a] and [b]." } } } });
-                using HttpClient client = new HttpClient(new StubResponseHandler(chatJson));
-                InferenceService inference = new InferenceService(client);
-                ModelEndpoint endpoint = new ModelEndpoint { TenantId = scope.TenantId, Name = "chat", Kind = EndpointKindEnum.Inference, ApiFormat = ApiFormatEnum.OpenAI, Hostname = "127.0.0.1", Port = 9999 };
+                using StubResponseHandler handler = new StubResponseHandler(chatJson);
+                InferenceService inference = new InferenceService(handler);
+                ModelEndpoint endpoint = new ModelEndpoint { TenantId = scope.TenantId, Name = "chat", Kind = EndpointKindEnum.Inference, ApiFormat = ApiFormatEnum.OpenAI, BaseUrl = "http://127.0.0.1:9999" };
 
                 MemoryChatService chat = new MemoryChatService(memoryService, inference);
                 // A broad meta-question whose words match no memory content — keyword search misses, so the
@@ -705,9 +816,9 @@ namespace Test.Shared
                 await memoryService.UpsertAsync(scope, category, new Memory { Slug = "b", Title = "Escapes", Body = "Bridge and shrimp to recover guard from bottom." }).ConfigureAwait(false);
 
                 string chatJson = JsonSerializer.Serialize(new { choices = new[] { new { message = new { role = "assistant", content = "See [a]." } } } });
-                using HttpClient client = new HttpClient(new StubResponseHandler(chatJson));
-                InferenceService inference = new InferenceService(client);
-                ModelEndpoint endpoint = new ModelEndpoint { TenantId = scope.TenantId, Name = "chat", Kind = EndpointKindEnum.Inference, ApiFormat = ApiFormatEnum.OpenAI, Hostname = "127.0.0.1", Port = 9999 };
+                using StubResponseHandler handler = new StubResponseHandler(chatJson);
+                InferenceService inference = new InferenceService(handler);
+                ModelEndpoint endpoint = new ModelEndpoint { TenantId = scope.TenantId, Name = "chat", Kind = EndpointKindEnum.Inference, ApiFormat = ApiFormatEnum.OpenAI, BaseUrl = "http://127.0.0.1:9999" };
 
                 MemoryChatService chat = new MemoryChatService(memoryService, inference);
                 // The question lexically matches only "a" (posture). A keyword search would return just that
@@ -734,9 +845,9 @@ namespace Test.Shared
                 _ = category; // no memories are written — the scope is intentionally empty.
 
                 string chatJson = JsonSerializer.Serialize(new { choices = new[] { new { message = new { role = "assistant", content = "This scope has no memories yet." } } } });
-                using HttpClient client = new HttpClient(new StubResponseHandler(chatJson));
-                InferenceService inference = new InferenceService(client);
-                ModelEndpoint endpoint = new ModelEndpoint { TenantId = scope.TenantId, Name = "chat", Kind = EndpointKindEnum.Inference, ApiFormat = ApiFormatEnum.OpenAI, Hostname = "127.0.0.1", Port = 9999 };
+                using StubResponseHandler handler = new StubResponseHandler(chatJson);
+                InferenceService inference = new InferenceService(handler);
+                ModelEndpoint endpoint = new ModelEndpoint { TenantId = scope.TenantId, Name = "chat", Kind = EndpointKindEnum.Inference, ApiFormat = ApiFormatEnum.OpenAI, BaseUrl = "http://127.0.0.1:9999" };
 
                 MemoryChatService chat = new MemoryChatService(memoryService, inference);
                 ChatAnswer answer = await chat.AskAsync(scope, endpoint, "What memories do you have?", 5).ConfigureAwait(false);

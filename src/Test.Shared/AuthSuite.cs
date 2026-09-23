@@ -96,7 +96,7 @@ namespace Test.Shared
             Credential? credential = await temp.Db.Credentials.ReadAsync(DefaultSeeder.DefaultTenantId, DefaultSeeder.DefaultCredentialId).ConfigureAwait(false);
             TestCase.Require(credential != null && !string.IsNullOrEmpty(credential!.SecretKey), "Default credential should be seeded with a secret key.");
 
-            EnumerationResult<Instruction> instructions = await temp.Db.Instructions.EnumerateAsync(DefaultSeeder.DefaultTenantId, new EnumerationQuery { MaxResults = 100 }).ConfigureAwait(false);
+            EnumerationResult<Instruction> instructions = await temp.Db.Instructions.EnumerateAsync(DefaultSeeder.DefaultTenantId, null, new EnumerationQuery { MaxResults = 100 }).ConfigureAwait(false);
             TestCase.Require(instructions.TotalRecords >= 1, "The default tenant should be seeded with a default instruction set.");
         }
 

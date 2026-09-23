@@ -101,6 +101,10 @@ CREATE TABLE IF NOT EXISTS scopes (
     embeddingendpointid VARCHAR(64),
     filesystemlayout VARCHAR(32) NOT NULL DEFAULT 'Hierarchy',
     targetpath VARCHAR(1024),
+    chunkingmode VARCHAR(32) NOT NULL DEFAULT 'OnOverflow',
+    chunkstrategy VARCHAR(32) NOT NULL DEFAULT 'FixedTokenCount',
+    chunkmaxtokens INT NOT NULL DEFAULT 0,
+    chunkoverlaptokens INT NOT NULL DEFAULT 64,
     active INT NOT NULL DEFAULT 1,
     createdutc VARCHAR(40) NOT NULL,
     lastupdateutc VARCHAR(40) NOT NULL,
@@ -154,10 +158,14 @@ CREATE TABLE IF NOT EXISTS model_endpoints (
     name VARCHAR(255) NOT NULL,
     kind VARCHAR(32) NOT NULL DEFAULT 'Embedding',
     apiformat VARCHAR(32) NOT NULL DEFAULT 'OpenAI',
-    hostname VARCHAR(255) NOT NULL,
-    port INT NOT NULL DEFAULT 0,
-    usessl INT NOT NULL DEFAULT 0,
-    apikey VARCHAR(512),
+    maxinputtokens INT NOT NULL DEFAULT 0,
+    baseurl VARCHAR(1024) NOT NULL DEFAULT '',
+    authtype VARCHAR(32) NOT NULL DEFAULT 'None',
+    authheadername VARCHAR(128),
+    authsecretheadername VARCHAR(128),
+    authqueryparam VARCHAR(128),
+    authkeyid VARCHAR(512),
+    authsecret VARCHAR(1024),
     model VARCHAR(255),
     dimensionality INT NOT NULL DEFAULT 0,
     timeoutms INT NOT NULL DEFAULT 60000,
@@ -227,14 +235,16 @@ CREATE TABLE IF NOT EXISTS permissions (
 CREATE TABLE IF NOT EXISTS instructions (
     id VARCHAR(64) PRIMARY KEY,
     tenantid VARCHAR(64) NOT NULL,
+    scopeid VARCHAR(64),
     name VARCHAR(255) NOT NULL,
     content LONGTEXT NOT NULL,
+    mergemode VARCHAR(16) NOT NULL DEFAULT 'Append',
     position INT NOT NULL DEFAULT 0,
     active INT NOT NULL DEFAULT 1,
     isprotected INT NOT NULL DEFAULT 0,
     createdutc VARCHAR(40) NOT NULL,
     lastupdateutc VARCHAR(40) NOT NULL,
-    INDEX idx_instructions_tenantid (tenantid, position)
+    INDEX idx_instructions_tenantid (tenantid, scopeid, position)
 );
 ";
         }

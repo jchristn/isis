@@ -28,13 +28,15 @@ namespace Isis.Core.Database.Interfaces
         Task<Instruction?> ReadAsync(string tenantId, string id, CancellationToken token = default);
 
         /// <summary>
-        /// Enumerate instructions within a tenant, ordered by ascending position.
+        /// Enumerate instructions within a tenant and scope, ordered by ascending position.
         /// </summary>
         /// <param name="tenantId">The owning tenant identifier.</param>
+        /// <param name="scopeId">The scope filter; null returns the tenant-global instructions (scope id null),
+        /// a value returns that scope's instructions.</param>
         /// <param name="query">The enumeration query.</param>
         /// <param name="token">Cancellation token.</param>
         /// <returns>The enumeration result.</returns>
-        Task<EnumerationResult<Instruction>> EnumerateAsync(string tenantId, EnumerationQuery query, CancellationToken token = default);
+        Task<EnumerationResult<Instruction>> EnumerateAsync(string tenantId, string? scopeId, EnumerationQuery query, CancellationToken token = default);
 
         /// <summary>
         /// Update an instruction.
@@ -78,5 +80,14 @@ namespace Isis.Core.Database.Interfaces
         /// <param name="token">Cancellation token.</param>
         /// <returns>The number of identifiers requested for deletion.</returns>
         Task<int> DeleteManyAsync(string tenantId, IReadOnlyCollection<string> ids, CancellationToken token = default);
+
+        /// <summary>
+        /// Delete all instructions belonging to a scope (used when the scope is deleted).
+        /// </summary>
+        /// <param name="tenantId">The owning tenant identifier.</param>
+        /// <param name="scopeId">The scope identifier.</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>The number of instructions deleted.</returns>
+        Task<int> DeleteByScopeAsync(string tenantId, string scopeId, CancellationToken token = default);
     }
 }

@@ -8,6 +8,7 @@ namespace Isis.Core.Database.SqlServer
     using System.Threading.Tasks;
     using Isis.Core.Database.Sqlite.Implementations;
     using Isis.Core.Database.SqlServer.Queries;
+    using Isis.Core.Models;
     using Microsoft.Data.SqlClient;
 
     /// <summary>
@@ -64,10 +65,16 @@ namespace Isis.Core.Database.SqlServer
         /// <inheritdoc />
         public override async Task InitializeAsync(CancellationToken token = default)
         {
-            foreach (string statement in SplitStatements(SqlServerSetupQueries.CreateTables()))
+            async Task EnsureSchemaAsync(CancellationToken t)
             {
-                await ExecuteQueryAsync(statement, true, token).ConfigureAwait(false);
+                foreach (string statement in SplitStatements(SqlServerSetupQueries.CreateTables()))
+                {
+                    await ExecuteQueryAsync(statement, true, t).ConfigureAwait(false);
+                }
             }
+
+            await EnsureSchemaAsync(token).ConfigureAwait(false);
+            await MigrationRunner.ApplyAllAsync(this, EnsureSchemaAsync, token).ConfigureAwait(false);
         }
 
         /// <inheritdoc />

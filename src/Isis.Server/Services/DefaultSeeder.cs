@@ -127,7 +127,7 @@ namespace Isis.Server.Services
                 log?.Invoke("seeded default credential '" + DefaultCredentialId + "' (access/secret key from settings)");
             }
 
-            EnumerationResult<Instruction> instructions = await database.Instructions.EnumerateAsync(DefaultTenantId, new EnumerationQuery { MaxResults = 1 }, token).ConfigureAwait(false);
+            EnumerationResult<Instruction> instructions = await database.Instructions.EnumerateAsync(DefaultTenantId, null, new EnumerationQuery { MaxResults = 1 }, token).ConfigureAwait(false);
             if (instructions.TotalRecords == 0)
             {
                 await database.Instructions.CreateManyAsync(DefaultInstructions.For(DefaultTenantId), token).ConfigureAwait(false);
@@ -148,8 +148,16 @@ namespace Isis.Server.Services
             // Hostname the default Ollama endpoints point at. Defaults to 'localhost' for a bare local run; the
             // Docker stack sets ISIS_DEFAULT_ENDPOINT_HOST='ollama' so the in-container endpoints reach the
             // bundled Ollama service (localhost inside the container would be the container itself).
-            string endpointHost = Environment.GetEnvironmentVariable("ISIS_DEFAULT_ENDPOINT_HOST");
-            if (string.IsNullOrWhiteSpace(endpointHost)) endpointHost = "localhost";
+            // Base URL the default Ollama endpoints point at. ISIS_DEFAULT_ENDPOINT_BASEURL sets it outright;
+            // otherwise ISIS_DEFAULT_ENDPOINT_HOST supplies the host of a standard Ollama (port 11434). The
+            // Docker stack sets the host to 'ollama' so in-container endpoints reach the bundled service.
+            string baseUrl = Environment.GetEnvironmentVariable("ISIS_DEFAULT_ENDPOINT_BASEURL") ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(baseUrl))
+            {
+                string endpointHost = Environment.GetEnvironmentVariable("ISIS_DEFAULT_ENDPOINT_HOST") ?? "localhost";
+                if (string.IsNullOrWhiteSpace(endpointHost)) endpointHost = "localhost";
+                baseUrl = "http://" + endpointHost + ":11434";
+            }
 
             EnumerationResult<ModelEndpoint> embeddings = await database.ModelEndpoints.EnumerateAsync(DefaultTenantId, EndpointKindEnum.Embedding, query, token).ConfigureAwait(false);
             if (embeddings.TotalRecords == 0)
@@ -161,14 +169,17 @@ namespace Isis.Server.Services
                     Name = "Default Embedding (Ollama all-minilm)",
                     Kind = EndpointKindEnum.Embedding,
                     ApiFormat = ApiFormatEnum.Ollama,
-                    Hostname = endpointHost,
-                    Port = 11434,
+                    BaseUrl = baseUrl,
+                    AuthType = EndpointAuthTypeEnum.None,
                     Model = "all-minilm",
                     Dimensionality = 384,
+                    // MaxInputTokens is left at 0 (auto): TextChunker knows all-minilm's real 256-token context,
+                    // and MemoryChunker reserves the WordPiece [CLS]/[SEP] tokens. Set a value here only to pin a
+                    // model whose real context the chunker library does not already know.
                     HealthCheckUrl = "/api/tags"
                 };
                 await database.ModelEndpoints.CreateAsync(embedding, token).ConfigureAwait(false);
-                log?.Invoke("seeded default embedding endpoint (Ollama all-minilm @ " + endpointHost + ":11434)");
+                log?.Invoke("seeded default embedding endpoint (Ollama all-minilm @ " + baseUrl + ")");
             }
 
             EnumerationResult<ModelEndpoint> inference = await database.ModelEndpoints.EnumerateAsync(DefaultTenantId, EndpointKindEnum.Inference, query, token).ConfigureAwait(false);
@@ -181,13 +192,13 @@ namespace Isis.Server.Services
                     Name = "Default Inference (Ollama gemma3:4b)",
                     Kind = EndpointKindEnum.Inference,
                     ApiFormat = ApiFormatEnum.Ollama,
-                    Hostname = endpointHost,
-                    Port = 11434,
+                    BaseUrl = baseUrl,
+                    AuthType = EndpointAuthTypeEnum.None,
                     Model = "gemma3:4b",
                     HealthCheckUrl = "/api/tags"
                 };
                 await database.ModelEndpoints.CreateAsync(completion, token).ConfigureAwait(false);
-                log?.Invoke("seeded default inference endpoint (Ollama gemma3:4b @ " + endpointHost + ":11434)");
+                log?.Invoke("seeded default inference endpoint (Ollama gemma3:4b @ " + baseUrl + ")");
             }
         }
 

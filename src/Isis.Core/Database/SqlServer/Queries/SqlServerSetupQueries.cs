@@ -101,6 +101,10 @@ IF OBJECT_ID(N'dbo.scopes', N'U') IS NULL CREATE TABLE scopes (
     embeddingendpointid NVARCHAR(64),
     filesystemlayout NVARCHAR(32) NOT NULL DEFAULT 'Hierarchy',
     targetpath NVARCHAR(1024),
+    chunkingmode NVARCHAR(32) NOT NULL DEFAULT 'OnOverflow',
+    chunkstrategy NVARCHAR(32) NOT NULL DEFAULT 'FixedTokenCount',
+    chunkmaxtokens INT NOT NULL DEFAULT 0,
+    chunkoverlaptokens INT NOT NULL DEFAULT 64,
     active INT NOT NULL DEFAULT 1,
     createdutc NVARCHAR(40) NOT NULL,
     lastupdateutc NVARCHAR(40) NOT NULL,
@@ -154,10 +158,14 @@ IF OBJECT_ID(N'dbo.model_endpoints', N'U') IS NULL CREATE TABLE model_endpoints 
     name NVARCHAR(255) NOT NULL,
     kind NVARCHAR(32) NOT NULL DEFAULT 'Embedding',
     apiformat NVARCHAR(32) NOT NULL DEFAULT 'OpenAI',
-    hostname NVARCHAR(255) NOT NULL,
-    port INT NOT NULL DEFAULT 0,
-    usessl INT NOT NULL DEFAULT 0,
-    apikey NVARCHAR(512),
+    maxinputtokens INT NOT NULL DEFAULT 0,
+    baseurl NVARCHAR(1024) NOT NULL DEFAULT '',
+    authtype NVARCHAR(32) NOT NULL DEFAULT 'None',
+    authheadername NVARCHAR(128),
+    authsecretheadername NVARCHAR(128),
+    authqueryparam NVARCHAR(128),
+    authkeyid NVARCHAR(512),
+    authsecret NVARCHAR(1024),
     model NVARCHAR(255),
     dimensionality INT NOT NULL DEFAULT 0,
     timeoutms INT NOT NULL DEFAULT 60000,
@@ -227,14 +235,16 @@ IF OBJECT_ID(N'dbo.permissions', N'U') IS NULL CREATE TABLE permissions (
 IF OBJECT_ID(N'dbo.instructions', N'U') IS NULL CREATE TABLE instructions (
     id NVARCHAR(64) NOT NULL PRIMARY KEY,
     tenantid NVARCHAR(64) NOT NULL,
+    scopeid NVARCHAR(64),
     name NVARCHAR(255) NOT NULL,
     content NVARCHAR(MAX) NOT NULL,
+    mergemode NVARCHAR(16) NOT NULL DEFAULT 'Append',
     position INT NOT NULL DEFAULT 0,
     active INT NOT NULL DEFAULT 1,
     isprotected INT NOT NULL DEFAULT 0,
     createdutc NVARCHAR(40) NOT NULL,
     lastupdateutc NVARCHAR(40) NOT NULL,
-    INDEX idx_instructions_tenantid (tenantid, position)
+    INDEX idx_instructions_tenantid (tenantid, scopeid, position)
 );
 ";
         }

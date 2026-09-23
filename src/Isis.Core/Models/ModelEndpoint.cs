@@ -71,40 +71,69 @@ namespace Isis.Core.Models
         public ApiFormatEnum ApiFormat { get; set; } = ApiFormatEnum.OpenAI;
 
         /// <summary>
-        /// The endpoint hostname.
+        /// The full base URL of the endpoint, onto which the API-format-specific path (for example
+        /// <c>/api/embed</c> or <c>/v1/embeddings</c>) is appended. Example:
+        /// <c>http://view.homedns.org:8900/v1.0/api/all-minilm-latest</c>.
         /// </summary>
-        public string Hostname { get; set; } = "127.0.0.1";
+        public string BaseUrl { get; set; } = "http://127.0.0.1:11434";
 
         /// <summary>
-        /// The endpoint port. Range 0 to 65535.
+        /// The authentication mechanism Isis applies when calling this endpoint.
         /// </summary>
-        public int Port
-        {
-            get
-            {
-                return _Port;
-            }
-            set
-            {
-                if (value < 0 || value > 65535) throw new ArgumentOutOfRangeException(nameof(Port), "Port must be between 0 and 65535.");
-                _Port = value;
-            }
-        }
+        public EndpointAuthTypeEnum AuthType { get; set; } = EndpointAuthTypeEnum.None;
 
         /// <summary>
-        /// Whether the endpoint uses TLS.
+        /// For <see cref="EndpointAuthTypeEnum.ApiKeyHeader"/>, the request header name that carries the key
+        /// (for example <c>x-api-key</c>). For <see cref="EndpointAuthTypeEnum.AccessKeySecret"/>, the header
+        /// that carries the access key.
         /// </summary>
-        public bool UseSsl { get; set; } = false;
+        public string? AuthHeaderName { get; set; } = null;
 
         /// <summary>
-        /// The API key or bearer token for the endpoint, if required.
+        /// For <see cref="EndpointAuthTypeEnum.AccessKeySecret"/>, the request header name that carries the
+        /// secret key.
         /// </summary>
-        public string? ApiKey { get; set; } = null;
+        public string? AuthSecretHeaderName { get; set; } = null;
+
+        /// <summary>
+        /// For <see cref="EndpointAuthTypeEnum.QueryParam"/>, the query-string parameter name that carries the
+        /// key (for example <c>key</c>).
+        /// </summary>
+        public string? AuthQueryParam { get; set; } = null;
+
+        /// <summary>
+        /// The credential identifier: the username for <see cref="EndpointAuthTypeEnum.BasicAuth"/>, or the
+        /// access key for <see cref="EndpointAuthTypeEnum.AccessKeySecret"/>. Unused by other schemes.
+        /// </summary>
+        public string? AuthKeyId { get; set; } = null;
+
+        /// <summary>
+        /// The secret credential material: the bearer token, header value, query value, Basic password, or
+        /// secret key, depending on <see cref="AuthType"/>.
+        /// </summary>
+        public string? AuthSecret { get; set; } = null;
 
         /// <summary>
         /// The model identifier to request (for example an embedding or completion model name).
         /// </summary>
         public string? Model { get; set; } = null;
+
+        /// <summary>
+        /// Optional override of the model's maximum input token budget used for chunk sizing. Zero means the
+        /// budget is resolved automatically from the API format and model name.
+        /// </summary>
+        public int MaxInputTokens
+        {
+            get
+            {
+                return _MaxInputTokens;
+            }
+            set
+            {
+                if (value < 0) throw new ArgumentOutOfRangeException(nameof(MaxInputTokens), "MaxInputTokens may not be negative.");
+                _MaxInputTokens = value;
+            }
+        }
 
         /// <summary>
         /// For embedding endpoints, the vector dimensionality produced. Zero when unknown.
@@ -189,8 +218,8 @@ namespace Isis.Core.Models
         private string _Id = IdGenerator.EmbeddingEndpoint();
         private string _TenantId = String.Empty;
         private string _Name = String.Empty;
-        private int _Port = 0;
         private int _Dimensionality = 0;
+        private int _MaxInputTokens = 0;
 
         #endregion
 
@@ -208,13 +237,13 @@ namespace Isis.Core.Models
         #region Public-Methods
 
         /// <summary>
-        /// Get the base URL for the endpoint.
+        /// Get the normalized base URL for the endpoint (any trailing slash removed), onto which
+        /// API-format-specific paths are appended.
         /// </summary>
         /// <returns>The base URL.</returns>
         public string GetBaseUrl()
         {
-            string scheme = UseSsl ? "https" : "http";
-            return scheme + "://" + Hostname + ":" + Port;
+            return String.IsNullOrEmpty(BaseUrl) ? String.Empty : BaseUrl.TrimEnd('/');
         }
 
         #endregion

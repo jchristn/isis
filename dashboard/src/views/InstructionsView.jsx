@@ -9,14 +9,22 @@ import ConfirmModal from '../components/ConfirmModal';
 import ActionMenu from '../components/ActionMenu';
 import StatusBadge from '../components/StatusBadge';
 import { EmptyState, ErrorBanner } from '../components/States';
+import { INSTRUCTION_MERGE_MODES } from '../utils/constants';
 
-function InstructionForm({ initial, onSubmit, onClose, t }) {
+function sourceTone(source) {
+  if (source === 'ScopeOverride') return 'warning';
+  if (source === 'ScopeAdded') return 'info';
+  return 'neutral';
+}
+
+function InstructionForm({ initial, scoped, onSubmit, onClose, t }) {
   const [form, setForm] = useState(
-    initial || { name: '', content: '', position: 0, active: true }
+    initial || { name: '', content: '', position: 0, active: true, mergeMode: 'Append' }
   );
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const isHide = scoped && form.mergeMode === 'Hide';
 
   const submit = async (e) => {
     e.preventDefault();
@@ -25,9 +33,10 @@ function InstructionForm({ initial, onSubmit, onClose, t }) {
     try {
       await onSubmit({
         name: form.name,
-        content: form.content,
+        content: isHide ? '' : form.content,
         position: Number(form.position) || 0,
-        active: form.active
+        active: form.active,
+        mergeMode: scoped ? form.mergeMode : 'Append'
       });
       onClose();
     } catch (e2) {
@@ -41,7 +50,7 @@ function InstructionForm({ initial, onSubmit, onClose, t }) {
     <Modal
       isOpen
       onClose={onClose}
-      title={initial ? t('instructions.editInstruction') : t('instructions.addInstruction')}
+      title={initial ? t('common.edit') : scoped ? t('instructions.addScopeInstruction') : t('instructions.addInstruction')}
       size="wide"
       footer={
         <>
@@ -62,10 +71,23 @@ function InstructionForm({ initial, onSubmit, onClose, t }) {
             <input type="number" value={form.position} onChange={(e) => set('position', e.target.value)} />
           </div>
         </div>
-        <div className="field">
-          <label>{t('instructions.content')}</label>
-          <textarea value={form.content} onChange={(e) => set('content', e.target.value)} rows={10} placeholder={t('instructions.contentPlaceholder')} />
-        </div>
+        {scoped && (
+          <div className="field">
+            <label>{t('instructions.mergeMode')}</label>
+            <select value={form.mergeMode} onChange={(e) => set('mergeMode', e.target.value)}>
+              {INSTRUCTION_MERGE_MODES.map((m) => (
+                <option key={m} value={m}>{t(`instructions.merge_${m}`)}</option>
+              ))}
+            </select>
+            <span className="field-hint">{t('instructions.mergeHint')}</span>
+          </div>
+        )}
+        {!isHide && (
+          <div className="field">
+            <label>{t('instructions.content')}</label>
+            <textarea value={form.content} onChange={(e) => set('content', e.target.value)} rows={10} placeholder={t('instructions.contentPlaceholder')} />
+          </div>
+        )}
         <label className="check-row">
           <input type="checkbox" checked={form.active} onChange={(e) => set('active', e.target.checked)} />
           {t('instructions.active')}
@@ -81,43 +103,66 @@ function InstructionsView() {
   const { addToast } = useApp();
 
   const canManage = isAdmin || isTenantAdmin;
-  const [items, setItems] = useState([]);
+  const [scopes, setScopes] = useState([]);
+  const [scopeId, setScopeId] = useState(''); // '' = tenant-global
+  const scoped = scopeId !== '';
+
+  const [items, setItems] = useState([]); // raw rows for the current view (global or this scope)
+  const [effective, setEffective] = useState([]); // resolved list (scope view only)
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
 
+  // Load the tenant's scopes once for the selector.
+  useEffect(() => {
+    apiClient.listScopes(tenantId, { maxResults: 1000 }).then((res) => setScopes(res.items || [])).catch(() => setScopes([]));
+  }, [apiClient, tenantId]);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await apiClient.listInstructions(tenantId, { maxResults: 1000 });
-      setItems(res.items || []);
+      if (scoped) {
+        const [raw, resolved] = await Promise.all([
+          apiClient.listScopeInstructions(tenantId, scopeId, { maxResults: 1000 }),
+          apiClient.resolveInstructions(tenantId, scopeId)
+        ]);
+        setItems(raw.items || []);
+        setEffective(resolved.items || []);
+      } else {
+        const res = await apiClient.listInstructions(tenantId, { maxResults: 1000 });
+        setItems(res.items || []);
+        setEffective([]);
+      }
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
     }
-  }, [apiClient, tenantId]);
+  }, [apiClient, tenantId, scopeId, scoped]);
 
   useEffect(() => {
     load();
   }, [load]);
 
   const handleSubmit = async (body) => {
-    if (editing?.id) {
+    if (scoped) {
+      if (editing?.id) await apiClient.updateScopeInstruction(tenantId, scopeId, editing.id, body);
+      else await apiClient.createScopeInstruction(tenantId, scopeId, body);
+    } else if (editing?.id) {
       await apiClient.updateInstruction(tenantId, editing.id, body);
-      addToast(t('instructions.updated'), 'success');
     } else {
       await apiClient.createInstruction(tenantId, body);
-      addToast(t('instructions.created'), 'success');
     }
+    addToast(editing?.id ? t('instructions.updated') : t('instructions.created'), 'success');
     load();
   };
 
   const handleDelete = async () => {
-    await apiClient.deleteInstruction(tenantId, deleteTarget.id);
+    if (scoped) await apiClient.deleteScopeInstruction(tenantId, scopeId, deleteTarget.id);
+    else await apiClient.deleteInstruction(tenantId, deleteTarget.id);
     addToast(t('instructions.deleted'), 'success');
     setDeleteTarget(null);
     load();
@@ -132,6 +177,7 @@ function InstructionsView() {
   const columns = [
     { key: 'position', label: t('instructions.position'), numeric: true, width: '80px', render: (x) => x.position ?? 0 },
     { key: 'name', label: t('common.name'), pinned: true },
+    ...(scoped ? [{ key: 'mergeMode', label: t('instructions.mergeMode'), width: '110px', render: (x) => <StatusBadge tone="info">{t(`instructions.merge_${x.mergeMode || 'Append'}`)}</StatusBadge> }] : []),
     {
       key: 'content',
       label: t('instructions.content'),
@@ -163,32 +209,66 @@ function InstructionsView() {
     <>
       <PageHeader
         title={t('instructions.title')}
-        subtitle={t('instructions.subtitle')}
+        subtitle={scoped ? t('instructions.scopeSubtitle') : t('instructions.subtitle')}
         actions={
           canManage ? (
             <button className="btn-primary" onClick={() => { setEditing(null); setShowForm(true); }}>
-              + {t('instructions.addInstruction')}
+              + {scoped ? t('instructions.addScopeInstruction') : t('instructions.addInstruction')}
             </button>
           ) : null
         }
       />
+
+      <div className="filter-bar section">
+        <div className="field" style={{ maxWidth: 360 }}>
+          <label>{t('instructions.scopeLabel')}</label>
+          <select value={scopeId} onChange={(e) => setScopeId(e.target.value)}>
+            <option value="">{t('instructions.tenantGlobal')}</option>
+            {scopes.map((s) => (
+              <option key={s.id || s.Id} value={s.id || s.Id}>{s.name || s.id || s.Id}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
       {error && <ErrorBanner message={error} onRetry={load} onDismiss={() => setError(null)} />}
+
       {!loading && items.length === 0 && !canManage ? (
         <EmptyState title={t('instructions.title')} message={t('instructions.emptyReadonly')} />
       ) : (
         <DataTable
-          tableId="instructions"
+          tableId={scoped ? 'instructions-scope' : 'instructions'}
           columns={columns}
           data={items}
           loading={loading}
           onRefresh={load}
           onRowClick={canManage ? openEdit : null}
-          emptyMessage={t('instructions.empty')}
+          emptyMessage={scoped ? t('instructions.emptyScope') : t('instructions.empty')}
         />
       )}
 
+      {scoped && (
+        <div className="section">
+          <div className="section-title">{t('instructions.effective')}</div>
+          <p className="page-subtitle" style={{ marginBottom: 'var(--spacing-sm)' }}>{t('instructions.effectiveHint')}</p>
+          {effective.length === 0 ? (
+            <div className="card"><p className="page-subtitle">{t('instructions.emptyReadonly')}</p></div>
+          ) : (
+            effective.map((r) => (
+              <div className="card" key={r.id} style={{ marginBottom: 'var(--spacing-sm)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)', marginBottom: '0.35rem' }}>
+                  <strong>{r.name}</strong>
+                  <StatusBadge tone={sourceTone(r.source)}>{t(`instructions.source_${r.source}`)}</StatusBadge>
+                </div>
+                <div className="page-subtitle" style={{ whiteSpace: 'pre-wrap' }}>{r.content || '—'}</div>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
       {showForm && (
-        <InstructionForm initial={editing} t={t} onSubmit={handleSubmit} onClose={() => setShowForm(false)} />
+        <InstructionForm initial={editing} scoped={scoped} t={t} onSubmit={handleSubmit} onClose={() => setShowForm(false)} />
       )}
 
       <ConfirmModal

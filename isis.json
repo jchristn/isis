@@ -1,54 +1,59 @@
 {
-  "Product": "Isis",
-  "Version": "0.1.0",
-  "Rest": {
-    "Hostname": "127.0.0.1",
-    "Port": 8700,
-    "Ssl": false
+  "nodeId": "isis-1",
+  "rest": {
+    "hostname": "127.0.0.1",
+    "port": 8700,
+    "ssl": false
   },
-  "Mcp": {
-    "Hostname": "127.0.0.1",
-    "Port": 8720,
-    "RpcPath": "/rpc",
-    "EventsPath": "/events",
-    "McpPath": "/mcp"
+  "database": {
+    "type": "Sqlite",
+    "filename": "data/isis.db",
+    "hostname": "127.0.0.1",
+    "port": 0,
+    "databaseName": "isis",
+    "logQueries": false,
+    "requireEncryption": false
   },
-  "Database": {
-    "Type": "Sqlite",
-    "Filename": "data/isis.db",
-    "Server": null,
-    "Port": 0,
-    "DatabaseName": null,
-    "Username": null,
-    "Password": null
+  "recallDb": {
+    "endpoint": "http://127.0.0.1:8600",
+    "adminApiKey": "override-via-env"
   },
-  "RecallDb": {
-    "Endpoint": "http://127.0.0.1:8600",
-    "AdminApiKey": "override-via-env"
+  "verbex": {},
+  "auth": {
+    "issuer": "isis",
+    "sessionLifetimeMinutes": 1440,
+    "seedAdminEmail": "admin@isis.local",
+    "seedAdminPassword": "override-via-env",
+    "defaultAccessKey": "isisdefaultkey",
+    "defaultSecretKey": "override-via-env"
   },
-  "Verbex": {
-    "Endpoint": null
+  "logging": {
+    "consoleLogging": true,
+    "logQueries": false
   },
-  "Logging": {
-    "ConsoleLogging": true,
-    "FileLogging": true,
-    "LogDirectory": "logs",
-    "LogFilename": "isis.log"
+  "requestHistory": {
+    "enabled": true,
+    "captureHeaders": true,
+    "captureBodies": true,
+    "maxBodyBytes": 16384
   },
-  "Telemetry": {
-    "Enable": true,
-    "OtlpEndpoint": "http://127.0.0.1:4317"
+  "retention": {
+    "enabled": true,
+    "maxAgeDays": 30,
+    "sweepIntervalMinutes": 60
   },
-  "Auth": {
-    "Issuer": "isis",
-    "SeedAdminEmail": "admin@isis.local",
-    "SeedAdminPassword": "override-via-env",
-    "DefaultAccessKey": "isisdefaultkey",
-    "DefaultSecretKey": "override-via-env"
-  },
-  "Retention": {
-    "Enabled": true,
-    "MaxAgeDays": 30,
-    "SweepIntervalMinutes": 60
+  "observability": {
+    "enabled": true,
+    "serviceName": "isis-server",
+    "prometheusEnabled": true,
+    "prometheusHostname": "localhost",
+    "prometheusPort": 9464,
+    "prometheusPath": "/metrics",
+    "tracingEnabled": true,
+    "otlpEndpoint": "http://localhost:4317",
+    "otlpProtocol": "grpc",
+    "samplingRatio": 1,
+    "includeRuntimeMetrics": true,
+    "includeProcessMetrics": true
   }
 }

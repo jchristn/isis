@@ -65,6 +65,7 @@ namespace Test.Shared
                 ModelSuite.Suite(),
                 DatabaseSuite.Suite(),
                 StoreSuite.Suite(),
+                ChunkerSuite.Suite(),
                 ServiceSuite.Suite(),
                 RestSuite.Suite(),
                 McpSuite.Suite(),
@@ -269,8 +270,7 @@ namespace Test.Shared
                     Name = "local-embed",
                     Kind = EndpointKindEnum.Embedding,
                     ApiFormat = ApiFormatEnum.Ollama,
-                    Hostname = "127.0.0.1",
-                    Port = 11434,
+                    BaseUrl = "http://127.0.0.1:11434",
                     Model = "nomic-embed-text",
                     Dimensionality = 768
                 }).ConfigureAwait(false);
@@ -282,8 +282,7 @@ namespace Test.Shared
                     Name = "local-chat",
                     Kind = EndpointKindEnum.Inference,
                     ApiFormat = ApiFormatEnum.OpenAI,
-                    Hostname = "127.0.0.1",
-                    Port = 8080
+                    BaseUrl = "http://127.0.0.1:8080"
                 }).ConfigureAwait(false);
                 if (!inference.Id.StartsWith("iep_", StringComparison.Ordinal)) throw new InvalidOperationException("Inference endpoint id should use the iep_ prefix.");
 
@@ -314,8 +313,8 @@ namespace Test.Shared
             using HttpClient client = new HttpClient(handler);
             HealthCheckService service = new HealthCheckService(client);
 
-            ModelEndpoint a = new ModelEndpoint { TenantId = "t", Name = "a", Hostname = "127.0.0.1", Port = 9000, HealthCheckUrl = "/health" };
-            ModelEndpoint b = new ModelEndpoint { TenantId = "t", Name = "b", Hostname = "127.0.0.1", Port = 9000, HealthCheckUrl = "/health" };
+            ModelEndpoint a = new ModelEndpoint { TenantId = "t", Name = "a", BaseUrl = "http://127.0.0.1:9000", HealthCheckUrl = "/health" };
+            ModelEndpoint b = new ModelEndpoint { TenantId = "t", Name = "b", BaseUrl = "http://127.0.0.1:9000", HealthCheckUrl = "/health" };
 
             if (HealthCheckService.BuildKey(a) != HealthCheckService.BuildKey(b)) throw new InvalidOperationException("Endpoints with the same method/URL/auth must share a dedup key.");
 
@@ -323,7 +322,7 @@ namespace Test.Shared
             if (probes != 1) throw new InvalidOperationException("Two endpoints with the same URL must be probed once, got " + probes + ".");
             if (handler.Count != 1) throw new InvalidOperationException("The HTTP endpoint should have been hit once, got " + handler.Count + ".");
 
-            ModelEndpoint c = new ModelEndpoint { TenantId = "t", Name = "c", Hostname = "127.0.0.1", Port = 9000, HealthCheckUrl = "/other" };
+            ModelEndpoint c = new ModelEndpoint { TenantId = "t", Name = "c", BaseUrl = "http://127.0.0.1:9000", HealthCheckUrl = "/other" };
             if (HealthCheckService.BuildKey(a) == HealthCheckService.BuildKey(c)) throw new InvalidOperationException("Endpoints with different paths must not share a dedup key.");
 
             handler.Reset();
@@ -336,7 +335,7 @@ namespace Test.Shared
             if (statusA == null || !statusA.IsHealthy) throw new InvalidOperationException("Endpoint 'a' should be healthy after two successful probes.");
 
             // An endpoint whose expected status never matches becomes unhealthy after the unhealthy threshold.
-            ModelEndpoint bad = new ModelEndpoint { TenantId = "t", Name = "bad", Hostname = "127.0.0.1", Port = 9001, HealthCheckUrl = "/health", HealthCheckExpectedStatusCode = 599 };
+            ModelEndpoint bad = new ModelEndpoint { TenantId = "t", Name = "bad", BaseUrl = "http://127.0.0.1:9001", HealthCheckUrl = "/health", HealthCheckExpectedStatusCode = 599 };
             await service.ProbeOnceAsync(new[] { bad }).ConfigureAwait(false);
             await service.ProbeOnceAsync(new[] { bad }).ConfigureAwait(false);
             EndpointHealthStatus? statusBad = service.GetStatus(bad.Id);
@@ -348,7 +347,7 @@ namespace Test.Shared
             string body = JsonSerializer.Serialize(new { data = new[] { new { embedding = new[] { 0.1, 0.2, 0.3, 0.4 } } } });
             using HttpClient client = new HttpClient(new StubResponseHandler(body));
             EmbeddingService service = new EmbeddingService(client);
-            ModelEndpoint endpoint = new ModelEndpoint { TenantId = "t", Name = "e", Kind = EndpointKindEnum.Embedding, ApiFormat = ApiFormatEnum.OpenAI, Hostname = "127.0.0.1", Port = 9998 };
+            ModelEndpoint endpoint = new ModelEndpoint { TenantId = "t", Name = "e", Kind = EndpointKindEnum.Embedding, ApiFormat = ApiFormatEnum.OpenAI, BaseUrl = "http://127.0.0.1:9998" };
 
             float[] vector = await service.EmbedAsync(endpoint, "hello world").ConfigureAwait(false);
             if (vector.Length != 4) throw new InvalidOperationException("Expected a 4-dimensional vector, got " + vector.Length + ".");
@@ -374,9 +373,9 @@ namespace Test.Shared
                 {
                     choices = new[] { new { message = new { role = "assistant", content = "Win the grip first, controlling the sleeve and collar [grip]." } } }
                 });
-                using HttpClient client = new HttpClient(new StubResponseHandler(completion));
-                InferenceService inference = new InferenceService(client);
-                ModelEndpoint endpoint = new ModelEndpoint { TenantId = tenant.Id, Name = "chat", Kind = EndpointKindEnum.Inference, ApiFormat = ApiFormatEnum.OpenAI, Hostname = "127.0.0.1", Port = 9999 };
+                using StubResponseHandler handler = new StubResponseHandler(completion);
+                InferenceService inference = new InferenceService(handler);
+                ModelEndpoint endpoint = new ModelEndpoint { TenantId = tenant.Id, Name = "chat", Kind = EndpointKindEnum.Inference, ApiFormat = ApiFormatEnum.OpenAI, BaseUrl = "http://127.0.0.1:9999" };
 
                 MemoryChatService chat = new MemoryChatService(memoryService, inference);
                 ChatAnswer answer = await chat.AskAsync(scope, endpoint, "How do I win the exchange?", 5).ConfigureAwait(false);
@@ -495,7 +494,7 @@ namespace Test.Shared
             EnumerationResult<Memory> page2 = await db.Memories.EnumerateAsync(tenant.Id, scope.Id, null, new EnumerationQuery { MaxResults = 2, Skip = 2 }).ConfigureAwait(false);
             if (page2.Objects.Count != 1) throw new InvalidOperationException("Pagination page 2 wrong: count=" + page2.Objects.Count + ".");
 
-            ModelEndpoint endpoint = await db.ModelEndpoints.CreateAsync(new ModelEndpoint { TenantId = tenant.Id, Name = "e", Kind = EndpointKindEnum.Embedding, Hostname = "127.0.0.1", Port = 1234, Dimensionality = 384 }).ConfigureAwait(false);
+            ModelEndpoint endpoint = await db.ModelEndpoints.CreateAsync(new ModelEndpoint { TenantId = tenant.Id, Name = "e", Kind = EndpointKindEnum.Embedding, BaseUrl = "http://127.0.0.1:1234", Dimensionality = 384 }).ConfigureAwait(false);
             if (!endpoint.Id.StartsWith("eep_", StringComparison.Ordinal)) throw new InvalidOperationException("Endpoint id prefix wrong.");
             EnumerationResult<ModelEndpoint> embeddings = await db.ModelEndpoints.EnumerateAsync(tenant.Id, EndpointKindEnum.Embedding, new EnumerationQuery { MaxResults = 10 }).ConfigureAwait(false);
             if (embeddings.TotalRecords != 1) throw new InvalidOperationException("Endpoint kind filter wrong.");

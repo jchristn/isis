@@ -5,7 +5,82 @@ All notable changes to Isis are documented here. This project adheres to
 
 ## [0.1.0] - ALPHA (in progress)
 
+### Fixed
+
+- **Embedding chunk budget fits the real model context (all-minilm).** The chunker's tokenizer library
+  previously resolved `all-minilm` to the 512-token BERT architecture ceiling, but the real all-MiniLM-L6-v2
+  caps at 256 — so oversized memories were embedded whole or in 512-token chunks and rejected with "input
+  length exceeds the context length." Fixed by upgrading **TextChunker to 0.2.2**, which pre-configures the
+  real per-model budgets (all-minilm 256, paraphrase-MiniLM 128, all-mpnet 384, mxbai/nomic corrected to the
+  BERT tokenizer instead of tiktoken) and reserves the WordPiece `[CLS]`/`[SEP]` framing tokens in the
+  effective budget (all-minilm resolves to 254 usable, `ProfileSource=KnownModel`). `MemoryChunker` keeps a
+  shortfall-aware special-token reserve as a backstop — a no-op when the profile already reserves, and it
+  never double-counts. No per-endpoint `MaxInputTokens` is needed for models the library knows; set one only
+  to pin a model it doesn't. (Requires a redeploy; the deployed image must include TextChunker 0.2.2.)
+
+- **Tenant deletion now tears down the external RecallDB tenant.** A tenant nuke already dropped every
+  scope's collection (and filesystem content) and all tenant-scoped DB records, but the RecallDB tenant
+  that Isis provisions on first use was left behind as an empty orphan. `IMemoryStore` gained a
+  best-effort `DeleteTenantAsync` (RecallDB drops the tenant; filesystem/Verbex no-op), which the tenant
+  cascade invokes once after its scopes are gone. Scope deletion is unchanged (it must not drop the
+  shared tenant). Added store-level no-op tests and a tenant-cascade test asserting the teardown is issued.
+
 ### Added
+
+- **Native chunking of oversized memories.** A memory whose body exceeds the embedding model's token
+  budget is now split into ordinal chunks that each fit the budget, embedded independently, and stored
+  as sibling documents that share the parent memory's identity (`DocumentKey` `{memoryId}#{ordinal}`,
+  `DocumentId` = slug, `parentKey` tag = memory id, `Position` = ordinal); a small memory still stores
+  as a single document keyed by its id, unchanged. Retrieval fuses the vector and full-text rankings by
+  reciprocal rank at the chunk level, then rolls chunks up to a single best-scoring hit per memory, so a
+  long memory that matches only in its tail is no longer penalized by a truncated embedding. Chunking is
+  configured per scope — `ChunkingMode` (`OnOverflow` default / `Always` / `Off`), `ChunkStrategy`
+  (`FixedTokenCount` default), `ChunkMaxTokens` (0 = use the model budget), and `ChunkOverlapTokens`
+  (64) — plus an optional per-endpoint `MaxInputTokens` override. Token counting and budget resolution
+  are performed locally by the `TextChunker` library with no extra model call (for example `all-minilm`
+  resolves to a 512-token BERT WordPiece budget). Added a `MemoryChunk` model, a `MemoryChunker` helper,
+  an `IMemoryStore.UpsertAsync` that takes the chunk set, delete-by-parent cleanup on update and delete,
+  and a six-case chunker test suite.
+
+- **Versioned schema migrations.** Schema changes the create-only DDL cannot express now run through an
+  ordered, provider-neutral migration framework (`ISchemaMigration` + `MigrationRunner`) that records
+  applied migrations by name in a `schemamigrations` table and skips those already applied. Tables are
+  created, then migrations run, then indices are created, so an index never references a column a pending
+  migration has yet to add. Ships the base-URL/auth, scoped-instruction, scope chunk-config, and
+  endpoint `MaxInputTokens` migrations, each data-preserving and idempotent on an already-current schema.
+
+- **MCP tool surface brought to parity with the REST API.** The MCP server now exposes the full
+  tenant-scoped resource surface (32 tools): scope/category/memory/endpoint/collection/instruction
+  CRUD, endpoint health, and chat-with-memory — previously only enumerate/read + memory writes were
+  available (notably, endpoint management was missing). Each tool proxies its REST route and accepts
+  the same body fields. Admin-only surfaces (tenant/user/credential management, settings, session
+  login, raw observability feeds) remain REST/dashboard-only by design. Added a `tools/list` parity
+  test plus endpoint- and scope-CRUD MCP round-trip tests, and updated `docs/MCP_API.md`.
+
+- **Scope-scoped instructions with a tenant-global fallback.** Instructions can now be attached to a
+  specific scope in addition to the tenant-global set. Each scope instruction has a merge mode —
+  `Append` (add a new instruction), `Replace` (override a same-named global's content in place), or
+  `Hide` (suppress a same-named global) — matched to the global set by name. A new
+  `GET …/scopes/{scopeId}/effective-instructions` route returns the merged, source-annotated result,
+  and the `isis_instructions` MCP tool takes an optional `scopeId` to return a scope's effective set.
+  Implemented with a nullable `scopeId` (+ `mergeMode`) on the instruction model/table across all four
+  DB providers, a pure `InstructionResolver`, scope-delete + tenant-delete cascades, a data-preserving
+  migration (existing instructions become the tenant-global set), and a dashboard scope selector with a
+  live "effective instructions" preview.
+
+- **Model endpoints use a base URL with a generic auth model.** Embedding and inference endpoints
+  are now addressed by a single `baseUrl` (a full URL onto which the API-format path is appended)
+  instead of `hostname`/`port`/`useSsl`, so gateway deployments like **Conductor** — which expose a
+  distinct base URL per model — are first-class. Outbound authentication is now configurable via
+  `authType`: `None`, `BearerToken`, `ApiKeyHeader` (operator-named header), `QueryParam`
+  (operator-named query parameter, e.g. Gemini's `key`), `BasicAuth`, and `AccessKeySecret`
+  (access key + secret sent as two operator-named headers). Isis applies auth itself through a
+  shared `EndpointAuthenticator` (used by the embedding client, the inference client via a
+  delegating handler around PolyPrompt, and the health prober), independent of API format. Bumped
+  the **PolyPrompt** dependency 2.2.1 → 2.6.0. The `model_endpoints` schema changed accordingly
+  across all four database providers; a data-preserving migration recomposes `baseUrl` from any
+  existing `hostname`/`port`/`useSsl` rows and derives the typed auth from the former single
+  `apiKey`. Dashboard endpoint editor, REST body, docs, and tests updated to match.
 
 - **All agent installers are access-key-only.** All agent installers (Claude, Codex, Cursor,
   Gemini, Mux) now authenticate with the credential access key only; none send `x-secret-key`.

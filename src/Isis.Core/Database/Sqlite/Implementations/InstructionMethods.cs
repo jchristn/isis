@@ -8,6 +8,7 @@ namespace Isis.Core.Database.Sqlite.Implementations
     using System.Threading;
     using System.Threading.Tasks;
     using Isis.Core.Database.Interfaces;
+    using Isis.Core.Enums;
     using Isis.Core.Helpers;
     using Isis.Core.Models;
 
@@ -41,11 +42,13 @@ namespace Isis.Core.Database.Sqlite.Implementations
             instruction.LastUpdateUtc = DateTime.UtcNow;
 
             string query =
-                "INSERT INTO instructions (id, tenantid, name, content, position, active, isprotected, createdutc, lastupdateutc) VALUES (" +
+                "INSERT INTO instructions (id, tenantid, scopeid, name, content, mergemode, position, active, isprotected, createdutc, lastupdateutc) VALUES (" +
                 SqliteHelpers.ToSqlRequired(instruction.Id) + ", " +
                 SqliteHelpers.ToSqlRequired(instruction.TenantId) + ", " +
+                SqliteHelpers.ToSql(instruction.ScopeId) + ", " +
                 SqliteHelpers.ToSqlRequired(instruction.Name) + ", " +
-                SqliteHelpers.ToSql(instruction.Content) + ", " +
+                SqliteHelpers.ToSqlRequired(instruction.Content) + ", " +
+                SqliteHelpers.ToSqlRequired(instruction.MergeMode.ToString()) + ", " +
                 instruction.Position + ", " +
                 SqliteHelpers.ToSql(instruction.Active) + ", " +
                 SqliteHelpers.ToSql(instruction.Protected) + ", " +
@@ -71,7 +74,7 @@ namespace Isis.Core.Database.Sqlite.Implementations
         }
 
         /// <inheritdoc />
-        public async Task<EnumerationResult<Instruction>> EnumerateAsync(string tenantId, EnumerationQuery query, CancellationToken token = default)
+        public async Task<EnumerationResult<Instruction>> EnumerateAsync(string tenantId, string? scopeId, EnumerationQuery query, CancellationToken token = default)
         {
             if (String.IsNullOrEmpty(tenantId)) throw new ArgumentNullException(nameof(tenantId));
             if (query == null) throw new ArgumentNullException(nameof(query));
@@ -79,6 +82,7 @@ namespace Isis.Core.Database.Sqlite.Implementations
             EnumerationResult<Instruction> result = new EnumerationResult<Instruction> { MaxResults = query.MaxResults, Skip = query.Skip };
 
             string where = " WHERE tenantid = " + SqliteHelpers.ToSqlRequired(tenantId);
+            where += String.IsNullOrEmpty(scopeId) ? " AND scopeid IS NULL" : " AND scopeid = " + SqliteHelpers.ToSqlRequired(scopeId);
             if (!String.IsNullOrEmpty(query.SearchTerm))
             {
                 string term = SqliteHelpers.Sanitize(query.SearchTerm);
@@ -109,8 +113,10 @@ namespace Isis.Core.Database.Sqlite.Implementations
 
             string query =
                 "UPDATE instructions SET " +
+                "scopeid = " + SqliteHelpers.ToSql(instruction.ScopeId) + ", " +
                 "name = " + SqliteHelpers.ToSqlRequired(instruction.Name) + ", " +
-                "content = " + SqliteHelpers.ToSql(instruction.Content) + ", " +
+                "content = " + SqliteHelpers.ToSqlRequired(instruction.Content) + ", " +
+                "mergemode = " + SqliteHelpers.ToSqlRequired(instruction.MergeMode.ToString()) + ", " +
                 "position = " + instruction.Position + ", " +
                 "active = " + SqliteHelpers.ToSql(instruction.Active) + ", " +
                 "isprotected = " + SqliteHelpers.ToSql(instruction.Protected) + ", " +
@@ -174,6 +180,23 @@ namespace Isis.Core.Database.Sqlite.Implementations
             return ids.Count;
         }
 
+        /// <inheritdoc />
+        public async Task<int> DeleteByScopeAsync(string tenantId, string scopeId, CancellationToken token = default)
+        {
+            if (String.IsNullOrEmpty(tenantId)) throw new ArgumentNullException(nameof(tenantId));
+            if (String.IsNullOrEmpty(scopeId)) throw new ArgumentNullException(nameof(scopeId));
+
+            DataTable countTable = await _Driver.ExecuteQueryAsync(
+                "SELECT COUNT(*) AS cnt FROM instructions WHERE tenantid = " + SqliteHelpers.ToSqlRequired(tenantId) +
+                " AND scopeid = " + SqliteHelpers.ToSqlRequired(scopeId) + ";", false, token).ConfigureAwait(false);
+            int count = countTable.Rows.Count > 0 ? SqliteHelpers.GetInt(countTable.Rows[0]["cnt"]) : 0;
+
+            await _Driver.ExecuteQueryAsync(
+                "DELETE FROM instructions WHERE tenantid = " + SqliteHelpers.ToSqlRequired(tenantId) +
+                " AND scopeid = " + SqliteHelpers.ToSqlRequired(scopeId) + ";", true, token).ConfigureAwait(false);
+            return count;
+        }
+
         #endregion
 
         #region Private-Methods
@@ -183,8 +206,10 @@ namespace Isis.Core.Database.Sqlite.Implementations
             Instruction instruction = new Instruction();
             instruction.Id = SqliteHelpers.GetString(row["id"]);
             instruction.TenantId = SqliteHelpers.GetString(row["tenantid"]);
+            instruction.ScopeId = SqliteHelpers.NullIfEmpty(SqliteHelpers.GetString(row["scopeid"]));
             instruction.Name = SqliteHelpers.GetString(row["name"]);
             instruction.Content = SqliteHelpers.GetString(row["content"]);
+            instruction.MergeMode = Enum.TryParse(SqliteHelpers.GetString(row["mergemode"]), out InstructionMergeModeEnum mode) ? mode : InstructionMergeModeEnum.Append;
             instruction.Position = SqliteHelpers.GetInt(row["position"]);
             instruction.Active = SqliteHelpers.GetBool(row["active"]);
             instruction.Protected = SqliteHelpers.GetBool(row["isprotected"]);

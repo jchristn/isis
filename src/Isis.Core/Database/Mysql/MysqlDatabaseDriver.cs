@@ -8,6 +8,7 @@ namespace Isis.Core.Database.Mysql
     using System.Threading.Tasks;
     using Isis.Core.Database.Mysql.Queries;
     using Isis.Core.Database.Sqlite.Implementations;
+    using Isis.Core.Models;
     using MySqlConnector;
 
     /// <summary>
@@ -57,10 +58,16 @@ namespace Isis.Core.Database.Mysql
         /// <inheritdoc />
         public override async Task InitializeAsync(CancellationToken token = default)
         {
-            foreach (string statement in SplitStatements(MysqlSetupQueries.CreateTables()))
+            async Task EnsureSchemaAsync(CancellationToken t)
             {
-                await ExecuteQueryAsync(statement, true, token).ConfigureAwait(false);
+                foreach (string statement in SplitStatements(MysqlSetupQueries.CreateTables()))
+                {
+                    await ExecuteQueryAsync(statement, true, t).ConfigureAwait(false);
+                }
             }
+
+            await EnsureSchemaAsync(token).ConfigureAwait(false);
+            await MigrationRunner.ApplyAllAsync(this, EnsureSchemaAsync, token).ConfigureAwait(false);
         }
 
         /// <inheritdoc />

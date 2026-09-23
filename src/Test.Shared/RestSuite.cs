@@ -59,6 +59,7 @@ namespace Test.Shared
                     TestCase.Async("rest", "category-delete-cascade", "DELETE /categories/{id} cascades to its memories", CategoryDeleteCascadeAsync),
                     TestCase.Async("rest", "user-delete-cascade", "DELETE /users/{id} cascades to its credentials", UserDeleteCascadeAsync),
                     TestCase.Async("rest", "instructions-batch", "Batch create/get/delete instructions over REST", InstructionsBatchAsync),
+                    TestCase.Async("rest", "instructions-scope-resolve", "Scope instructions merge onto the global set via effective-instructions", InstructionsScopeResolveAsync),
                     TestCase.Async("rest", "scope-batch-delete-cascade", "POST /scopes/batch-delete cascades to children", ScopeBatchDeleteCascadeAsync),
 
                     // Scopes.
@@ -323,7 +324,7 @@ namespace Test.Shared
             HttpResponseMessage memResp = await PostAsync(admin, MemoriesPath(id, scopeId), new { categoryId, slug = "m1", title = "m1", body = "hello" }).ConfigureAwait(false);
             ExpectStatus(memResp, HttpStatusCode.OK, "upsert memory in doomed tenant");
             await PostAsync(admin, TenantPath(id) + "/users", new { email = "extra@x.local", password = "pw123456" }).ConfigureAwait(false);
-            await PostAsync(admin, EndpointsPath(id), new { name = "emb", kind = "Embedding", apiFormat = "Ollama", hostname = "localhost", port = 11434, model = "all-minilm", dimensionality = 384 }).ConfigureAwait(false);
+            await PostAsync(admin, EndpointsPath(id), new { name = "emb", kind = "Embedding", apiFormat = "Ollama", baseUrl = "http://localhost:11434", model = "all-minilm", dimensionality = 384 }).ConfigureAwait(false);
 
             // Sanity: children exist.
             TestCase.Require(await CountAsync(admin, ScopesPath(id)).ConfigureAwait(false) >= 1, "doomed tenant should have a scope before nuke.");
@@ -422,6 +423,53 @@ namespace Test.Shared
 
             HttpResponseMessage after = await admin.GetAsync(TenantPath(h.TenantId) + "/credentials/" + credentialId).ConfigureAwait(false);
             ExpectStatus(after, HttpStatusCode.NotFound, "deleting a user should cascade to its credentials");
+        }
+
+        private static async Task InstructionsScopeResolveAsync()
+        {
+            using ServerHarness h = await ServerHarness.StartAsync().ConfigureAwait(false);
+            using HttpClient admin = h.AdminClient();
+
+            HttpResponseMessage scopeResp = await PostAsync(admin, ScopesPath(h.TenantId), NewScope(h, "instr-scope")).ConfigureAwait(false);
+            ExpectStatus(scopeResp, HttpStatusCode.Created, "create scope");
+            string scopeId;
+            using (JsonDocument sd = await ReadJsonAsync(scopeResp).ConfigureAwait(false)) scopeId = sd.RootElement.GetProperty("id").GetString()!;
+
+            string tenantInstr = TenantPath(h.TenantId) + "/instructions";
+            string scopeInstr = ScopesPath(h.TenantId) + "/" + scopeId + "/instructions";
+
+            // Two tenant-global instructions. Names are deliberately unique so they do not collide with the
+            // tenant's seeded default instruction set.
+            ExpectStatus(await PostAsync(admin, tenantInstr, new { name = "E2E-Tools", content = "global tools", position = 100 }).ConfigureAwait(false), HttpStatusCode.Created, "global E2E-Tools");
+            ExpectStatus(await PostAsync(admin, tenantInstr, new { name = "E2E-Start", content = "global start", position = 101 }).ConfigureAwait(false), HttpStatusCode.Created, "global E2E-Start");
+
+            // Scope: replace E2E-Tools, hide E2E-Start, append E2E-ScopeOnly.
+            ExpectStatus(await PostAsync(admin, scopeInstr, new { name = "E2E-Tools", content = "scope tools", position = 0, mergeMode = "Replace" }).ConfigureAwait(false), HttpStatusCode.Created, "scope replace E2E-Tools");
+            ExpectStatus(await PostAsync(admin, scopeInstr, new { name = "E2E-Start", content = "", position = 1, mergeMode = "Hide" }).ConfigureAwait(false), HttpStatusCode.Created, "scope hide E2E-Start");
+            ExpectStatus(await PostAsync(admin, scopeInstr, new { name = "E2E-ScopeOnly", content = "only here", position = 2, mergeMode = "Append" }).ConfigureAwait(false), HttpStatusCode.Created, "scope append E2E-ScopeOnly");
+
+            HttpResponseMessage eff = await admin.GetAsync(ScopesPath(h.TenantId) + "/" + scopeId + "/effective-instructions").ConfigureAwait(false);
+            ExpectStatus(eff, HttpStatusCode.OK, "resolve effective instructions");
+            using JsonDocument ed = await ReadJsonAsync(eff).ConfigureAwait(false);
+            JsonElement objects = ed.RootElement.GetProperty("objects");
+
+            bool sawToolsOverride = false;
+            bool sawStart = false;
+            bool sawScopeOnly = false;
+            foreach (JsonElement e in objects.EnumerateArray())
+            {
+                string name = e.GetProperty("name").GetString()!;
+                if (name == "E2E-Tools")
+                {
+                    sawToolsOverride = e.GetProperty("content").GetString() == "scope tools" && e.GetProperty("source").GetString() == "ScopeOverride";
+                }
+                if (name == "E2E-Start") sawStart = true;
+                if (name == "E2E-ScopeOnly") sawScopeOnly = e.GetProperty("source").GetString() == "ScopeAdded";
+            }
+
+            TestCase.Require(sawToolsOverride, "Effective 'E2E-Tools' must be overridden by the scope (content 'scope tools', source ScopeOverride).");
+            TestCase.Require(!sawStart, "Effective set must not contain the hidden 'E2E-Start' instruction.");
+            TestCase.Require(sawScopeOnly, "Effective set must contain the appended 'E2E-ScopeOnly' instruction.");
         }
 
         private static async Task InstructionsBatchAsync()
@@ -527,7 +575,7 @@ namespace Test.Shared
             ExpectStatus(noEndpoint, HttpStatusCode.BadRequest, "RecallDb scope with no embedding endpoint");
 
             // After adding an embedding endpoint, a bare RecallDb scope adopts it and its dimensionality.
-            HttpResponseMessage epResp = await PostAsync(admin, EndpointsPath(h.TenantId), new { name = "emb", kind = "Embedding", apiFormat = "Ollama", hostname = "localhost", port = 11434, model = "all-minilm", dimensionality = 384 }).ConfigureAwait(false);
+            HttpResponseMessage epResp = await PostAsync(admin, EndpointsPath(h.TenantId), new { name = "emb", kind = "Embedding", apiFormat = "Ollama", baseUrl = "http://localhost:11434", model = "all-minilm", dimensionality = 384 }).ConfigureAwait(false);
             ExpectStatus(epResp, HttpStatusCode.Created, "create embedding endpoint");
             string endpointId;
             using (JsonDocument ed = await ReadJsonAsync(epResp).ConfigureAwait(false)) endpointId = ed.RootElement.GetProperty("id").GetString()!;
@@ -828,7 +876,7 @@ namespace Test.Shared
             using ServerHarness h = await ServerHarness.StartAsync().ConfigureAwait(false);
             using HttpClient access = h.AccessClient();
             HttpResponseMessage r = await PostAsync(access, EndpointsPath(h.TenantId),
-                new { name = "embed", kind = "Embedding", apiFormat = "OpenAI", hostname = "127.0.0.1", port = 9000, dimensionality = 384 }).ConfigureAwait(false);
+                new { name = "embed", kind = "Embedding", apiFormat = "OpenAI", baseUrl = "http://127.0.0.1:9000", dimensionality = 384 }).ConfigureAwait(false);
             ExpectStatus(r, HttpStatusCode.Created, "create embedding endpoint");
             using JsonDocument doc = await ReadJsonAsync(r).ConfigureAwait(false);
             TestCase.Require((doc.RootElement.GetProperty("id").GetString() ?? string.Empty).StartsWith("eep_", StringComparison.Ordinal), "embedding endpoint id should start with 'eep_'.");
@@ -839,7 +887,7 @@ namespace Test.Shared
             using ServerHarness h = await ServerHarness.StartAsync().ConfigureAwait(false);
             using HttpClient access = h.AccessClient();
             HttpResponseMessage r = await PostAsync(access, EndpointsPath(h.TenantId),
-                new { name = "chat", kind = "Inference", apiFormat = "OpenAI", hostname = "127.0.0.1", port = 8080 }).ConfigureAwait(false);
+                new { name = "chat", kind = "Inference", apiFormat = "OpenAI", baseUrl = "http://127.0.0.1:8080" }).ConfigureAwait(false);
             ExpectStatus(r, HttpStatusCode.Created, "create inference endpoint");
             using JsonDocument doc = await ReadJsonAsync(r).ConfigureAwait(false);
             TestCase.Require((doc.RootElement.GetProperty("id").GetString() ?? string.Empty).StartsWith("iep_", StringComparison.Ordinal), "inference endpoint id should start with 'iep_'.");
@@ -887,7 +935,7 @@ namespace Test.Shared
             using HttpClient access = h.AccessClient();
             string eid = await CreateEmbeddingEndpointAsync(access, h).ConfigureAwait(false);
             HttpResponseMessage r = await PutAsync(access, EndpointsPath(h.TenantId) + "/" + eid,
-                new { name = "embed", kind = "Embedding", apiFormat = "OpenAI", hostname = "127.0.0.1", port = 9000, dimensionality = 512 }).ConfigureAwait(false);
+                new { name = "embed", kind = "Embedding", apiFormat = "OpenAI", baseUrl = "http://127.0.0.1:9000", dimensionality = 512 }).ConfigureAwait(false);
             ExpectStatus(r, HttpStatusCode.OK, "update endpoint");
         }
 
@@ -1093,7 +1141,7 @@ namespace Test.Shared
         private static async Task<string> CreateEmbeddingEndpointAsync(HttpClient client, ServerHarness h)
         {
             HttpResponseMessage r = await PostAsync(client, EndpointsPath(h.TenantId),
-                new { name = "embed", kind = "Embedding", apiFormat = "OpenAI", hostname = "127.0.0.1", port = 9000, dimensionality = 384 }).ConfigureAwait(false);
+                new { name = "embed", kind = "Embedding", apiFormat = "OpenAI", baseUrl = "http://127.0.0.1:9000", dimensionality = 384 }).ConfigureAwait(false);
             ExpectStatus(r, HttpStatusCode.Created, "setup create embedding endpoint");
             using JsonDocument doc = await ReadJsonAsync(r).ConfigureAwait(false);
             return doc.RootElement.GetProperty("id").GetString() ?? throw new InvalidOperationException("No endpoint id.");
@@ -1102,7 +1150,7 @@ namespace Test.Shared
         private static async Task<string> CreateInferenceEndpointAsync(HttpClient client, ServerHarness h)
         {
             HttpResponseMessage r = await PostAsync(client, EndpointsPath(h.TenantId),
-                new { name = "chat", kind = "Inference", apiFormat = "OpenAI", hostname = "127.0.0.1", port = 8080 }).ConfigureAwait(false);
+                new { name = "chat", kind = "Inference", apiFormat = "OpenAI", baseUrl = "http://127.0.0.1:8080" }).ConfigureAwait(false);
             ExpectStatus(r, HttpStatusCode.Created, "setup create inference endpoint");
             using JsonDocument doc = await ReadJsonAsync(r).ConfigureAwait(false);
             return doc.RootElement.GetProperty("id").GetString() ?? throw new InvalidOperationException("No endpoint id.");

@@ -173,18 +173,27 @@ public interface IMemoryStore
 
 | Isis | RecallDB | Notes |
 |---|---|---|
-| Tenant | `TenantMetadata` (`ten_`) | 1:1. Isis provisions the RecallDB tenant on tenant create. |
+| Tenant | `TenantMetadata` (`ten_`) | 1:1. Isis provisions the RecallDB tenant on first use and drops it (best-effort) when the Isis tenant is deleted, after its collections are gone. |
 | Scope | `CollectionMetadata` (`col_`) | `Dimensionality` = the scope's embedding model dimension (e.g. 1536/3072/1024/384), fixed at creation. |
 | Category | RecallDB **label** on documents | Category membership = a label string on each memory doc. Category *instructions* live only in Isis DB. |
 | Memory | `DocumentRecord` | `Content`=body, `Embeddings`=vector (len must == collection `Dimensionality`; server validates), `Labels`=[categorySlug, …], `Tags`=metadata (confidence, files, provenance), `DocumentKey`=stable join key, `DocumentId`+`Position` for chunked large memories. |
 | Memory search | `SearchAsync(tid, cid, SearchQuery)` | Per-collection = per-scope. Cross-category recall within a scope via label filter; category filter = `LabelFilter.Required`. |
 
-**Write path (`RecallDbMemoryStore.UpsertAsync`):**
-1. Isis resolves the scope's embedding endpoint, computes `embedding = EmbeddingService.EmbedAsync(body)`.
-2. `RecallDbClient.CreateDocumentAsync(tid, cid, new DocumentRecord { DocumentKey=..., Content=body, Embeddings=embedding.ToList(), Labels=[category], Tags=metadata, ContentType="Text" })` (PUT = upsert; `UpdateDocumentAsync` by key for edits).
-3. Isis writes/updates its index row (`IMemoryIndexMethods.UpsertAsync`) with slug, title, summary, links, salience, `recallDocumentKey`.
+**Chunking.** Before embedding, `MemoryChunker` resolves the scope embedding endpoint's token budget
+**locally** (via `TextChunker`, no model call — e.g. `all-minilm` → 512-token BERT WordPiece) and, per the
+scope's `ChunkingMode` (`OnOverflow` default / `Always` / `Off`), splits an oversized body into ordinal
+chunks that each fit the budget. A small body is a single whole-body chunk (behavior unchanged). Chunk
+sizing is governed by `ChunkStrategy` (`FixedTokenCount` default), `ChunkMaxTokens` (0 = the model budget),
+and `ChunkOverlapTokens`; an endpoint may override the budget with `MaxInputTokens`.
 
-**Search path (`RecallDbMemoryStore.SearchAsync`):** compute query embedding, build `SearchQuery { Vector = new VectorQuery { SearchType="CosineSimilarity", Embeddings=qvec }, FullText = new FullTextQuery { Query=text, TextWeight=0.5 }, LabelFilter = new LabelFilter { Required=[category?] }, MaxResults=k, IncludeNeighbors=n }`. Hybrid score = `(1-TextWeight)*vectorScore + TextWeight*ftsScore` (single knob `TextWeight`). Return ranked `DocumentRecord`s (each carries `Score`, `Distance`, `TextScore`, `Neighbors`); Isis joins back its index rows for slug/title, then truncates to the caller's `token_budget`.
+**Write path (`RecallDbMemoryStore.UpsertAsync`):**
+1. `MemoryService` chunks the body, then computes `embedding = EmbeddingService.EmbedAsync(chunk.Text)` for each chunk, and hands the chunk set to the store.
+2. The store first clears any prior documents for the memory (so a re-chunk that yields a different count leaves no orphans), then writes one `DocumentRecord` per chunk: single chunk → `DocumentKey`=memory id (unchanged); multiple → `DocumentKey`=`{memoryId}#{ordinal}`, all sharing `DocumentId`=slug, `Position`=ordinal, and a `parentKey`=memory-id tag, with `Content`=chunk text, `Embeddings`=chunk vector, `Labels`=[category], `Tags`=metadata.
+3. Isis writes/updates its index row (`IMemoryIndexMethods.UpsertAsync`) with slug, title, summary, links, salience, and `storeKey`=memory id — the atomic full body stays on the index row.
+
+**Search path (`RecallDbMemoryStore.SearchAsync`):** a hybrid query runs a vector-only and a full-text-only search, fused by **reciprocal rank** at the chunk-document level; the fused documents are then rolled up **by parent** (`parentKey` tag, falling back to the document key for legacy/single-chunk docs) keeping the best-scoring chunk per memory, so search returns **one hit per memory**. Non-hybrid modes group the single result list the same way. Because chunks collapse, the store fetches well beyond `topK` before rollup. Each hit carries `StoreKey`=memory id, `Slug`, `Title`, the matching chunk's snippet (truncated to `token_budget`), and the fused `Score`.
+
+**Delete path.** `DeleteAsync` removes every document for a memory: the id-keyed single/legacy document plus contiguous `{memoryId}#{ordinal}` chunk documents (probed in order until one is absent), so no chunk is orphaned regardless of the current chunk count.
 
 **Cosine is the natively HNSW-indexed metric** (`vector_cosine_ops`, m=16, ef_construction=64) — prefer `CosineSimilarity`.
 
@@ -200,8 +209,12 @@ public interface IMemoryStore
 
 Isis lets the operator define **embedding** and **inference** endpoints/models via REST + dashboard, and health-checks them. **Copy Conductor** (cleanest, tested, with dedup); optionally lift Partio's `SharedHealthCheckCoordinator` as the standalone dedup engine.
 
-**Models** (Isis DB tables `embedding_endpoints`, `inference_endpoints`), fields adapted from Conductor `ModelRunnerEndpoint` + Partio `EmbeddingEndpoint`:
-`Id, TenantId, Name, Kind(Embedding|Inference), ApiFormat(Ollama|OpenAI|vLLM|Gemini), Hostname, Port, UseSsl, ApiKey, Model, Dimensionality(embedding only), TimeoutMs, MaxConcurrentRequests, Weight, Active, Labels, Tags, Metadata,` plus health fields `HealthCheckUrl, HealthCheckMethod(GET|HEAD), HealthCheckIntervalMs(5000), HealthCheckTimeoutMs(5000), HealthCheckExpectedStatusCode(200), HealthyThreshold(2), UnhealthyThreshold(2), HealthCheckUseAuth,` and runtime `ServiceState`. `GetBaseUrl()` = `scheme://host:port`. Format-aware default probe path (Ollama `/api/tags`, Gemini `/v1beta/models`, else `/v1/models`).
+**Model** (shipped as a single Isis DB table `model_endpoints`):
+`Id, TenantId, Name, Kind(Embedding|Inference), ApiFormat(Ollama|OpenAI|vLLM|Gemini), BaseUrl, AuthType(None|BearerToken|ApiKeyHeader|QueryParam|BasicAuth|AccessKeySecret), AuthHeaderName, AuthSecretHeaderName, AuthQueryParam, AuthKeyId, AuthSecret, Model, Dimensionality(embedding only), TimeoutMs, Active,` plus health fields `HealthCheckUrl, HealthCheckMethod(GET|HEAD), HealthCheckIntervalMs(5000), HealthCheckTimeoutMs(5000), HealthCheckExpectedStatusCode(200), HealthyThreshold(2), UnhealthyThreshold(2), HealthCheckUseAuth`.
+
+`BaseUrl` is the **full base URL** (e.g. `http://view.homedns.org:8900/v1.0/api/all-minilm-latest`) onto which the format-specific path is appended — `GetBaseUrl()` just trims a trailing slash. This suits gateways like **Conductor**, which exposes a distinct base URL per model. Format-aware default probe path (Ollama `/api/tags`, Gemini `/v1beta/models`, else `/v1/models`).
+
+**Auth is generic and applied by Isis** (`EndpointAuthenticator` / `EndpointAuthHandler`), independent of `ApiFormat`, because the underlying **PolyPrompt** client library has no configurable-auth surface. Supported: `None`; `BearerToken` (`Authorization: Bearer`); `ApiKeyHeader` (operator-named header + value); `QueryParam` (operator-named query parameter, e.g. Gemini's `key`); `BasicAuth` (username/password); `AccessKeySecret` (access key + secret key sent as two operator-named headers). For non-Gemini formats Isis wraps PolyPrompt's transport with a delegating handler that applies the auth (passing a null key so PolyPrompt adds nothing of its own); the Gemini client keeps PolyPrompt's native `?key=` handling. The same `EndpointAuthenticator` applies auth to embedding calls and to health probes, and produces the hashed auth component of the health-check dedup key.
 
 **Health check service** (copy Conductor `HealthCheckService.cs`): one loop **per dedup key**, not per endpoint. Dedup key = **method + normalized scheme/host/port/path + SHA256-hashed auth header** (`BuildHealthCheckKey`). Endpoints sharing a key share one probe per cycle (probe with the group's max timeout, fan the single result to all members with hysteresis). Results are in-RAM (`ConcurrentDictionary`), 24h rolling history, exported as `EndpointHealthStatus` (`IsHealthy, LastCheckUtc, Consecutive*, InFlightRequests, LastError, History, UptimePercentage`) and as OpenTelemetry gauges. **Port the dedup unit test** (`HealthCheckServiceDeduplicationTests`: same URL ⇒ 1 probe, different paths ⇒ 2).
 

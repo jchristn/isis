@@ -208,6 +208,49 @@ namespace Isis.McpServer
             return Uri.EscapeDataString(value);
         }
 
+        private static string BuildEndpointBody(RpcParameters? p)
+        {
+            Dictionary<string, object?> body = new Dictionary<string, object?>();
+            body["name"] = Require(p, "name");
+            body["baseUrl"] = Require(p, "baseUrl");
+            if (p?.GetString("kind") != null) body["kind"] = p.GetString("kind");
+            if (p?.GetString("apiFormat") != null) body["apiFormat"] = p.GetString("apiFormat");
+            if (p?.GetString("authType") != null) body["authType"] = p.GetString("authType");
+            if (p?.GetString("authHeaderName") != null) body["authHeaderName"] = p.GetString("authHeaderName");
+            if (p?.GetString("authSecretHeaderName") != null) body["authSecretHeaderName"] = p.GetString("authSecretHeaderName");
+            if (p?.GetString("authQueryParam") != null) body["authQueryParam"] = p.GetString("authQueryParam");
+            if (p?.GetString("authKeyId") != null) body["authKeyId"] = p.GetString("authKeyId");
+            if (p?.GetString("authSecret") != null) body["authSecret"] = p.GetString("authSecret");
+            if (p?.GetString("model") != null) body["model"] = p.GetString("model");
+            long? dimensionality = p?.GetInt64("dimensionality");
+            if (dimensionality.HasValue) body["dimensionality"] = dimensionality.Value;
+            if (p?.GetString("healthCheckUrl") != null) body["healthCheckUrl"] = p.GetString("healthCheckUrl");
+            bool? active = p?.GetBoolean("active");
+            if (active.HasValue) body["active"] = active.Value;
+            return JsonSerializer.Serialize(body);
+        }
+
+        private static object EndpointProperties()
+        {
+            return new
+            {
+                name = new { type = "string" },
+                kind = new { type = "string", description = "Embedding or Inference." },
+                apiFormat = new { type = "string", description = "Ollama, OpenAI, VLlm, or Gemini." },
+                baseUrl = new { type = "string", description = "Full base URL; the API path is appended (e.g. http://host:11434 or https://api.openai.com)." },
+                authType = new { type = "string", description = "None, BearerToken, ApiKeyHeader, QueryParam, BasicAuth, or AccessKeySecret." },
+                authHeaderName = new { type = "string", description = "Header name for ApiKeyHeader, or access-key header for AccessKeySecret." },
+                authSecretHeaderName = new { type = "string", description = "Secret-key header name for AccessKeySecret." },
+                authQueryParam = new { type = "string", description = "Query-string parameter name for QueryParam auth (e.g. key)." },
+                authKeyId = new { type = "string", description = "Username (BasicAuth) or access key (AccessKeySecret)." },
+                authSecret = new { type = "string", description = "Bearer token / header value / query value / password / secret key." },
+                model = new { type = "string" },
+                dimensionality = new { type = "integer", description = "Embedding vector dimension (embedding endpoints)." },
+                healthCheckUrl = new { type = "string" },
+                active = new { type = "boolean" }
+            };
+        }
+
         private void RegisterTools()
         {
             _Server.RegisterTool(
@@ -222,10 +265,17 @@ namespace Isis.McpServer
 
             _Server.RegisterTool(
                 "instructions",
-                "Get this tenant's standing instructions for how to use its memory — conventions, house rules, and guidance authored by the tenant. Call this after whoami. Required: tenantId.",
-                new { type = "object", properties = new { tenantId = new { type = "string", description = "Tenant identifier." } }, required = new[] { "tenantId" } },
+                "Get standing instructions for how to use memory — conventions, house rules, and guidance. Call this after whoami. Required: tenantId. Optional: scopeId — when provided, returns the scope's EFFECTIVE instructions (the tenant-global set with the scope's own instructions merged in: appended, overriding, or hiding by name); when omitted, returns the tenant-global set.",
+                new { type = "object", properties = new { tenantId = new { type = "string", description = "Tenant identifier." }, scopeId = new { type = "string", description = "Optional scope identifier; resolves that scope's effective instructions." } }, required = new[] { "tenantId" } },
                 async (RpcParameters? p, CancellationToken ct) =>
-                    await ProxyAsync(HttpMethod.Get, "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/instructions", null, "instructions", CurrentCredentials(), ct).ConfigureAwait(false));
+                {
+                    string tenantId = Encode(Require(p, "tenantId"));
+                    string? scopeId = p?.GetString("scopeId");
+                    string path = string.IsNullOrEmpty(scopeId)
+                        ? "/v1.0/api/tenants/" + tenantId + "/instructions"
+                        : "/v1.0/api/tenants/" + tenantId + "/scopes/" + Encode(scopeId) + "/effective-instructions";
+                    return await ProxyAsync(HttpMethod.Get, path, null, "instructions", CurrentCredentials(), ct).ConfigureAwait(false);
+                });
 
             _Server.RegisterTool(
                 "scope_enumerate",
@@ -424,6 +474,212 @@ namespace Isis.McpServer
                 new { type = "object", properties = new { tenantId = new { type = "string" }, scopeId = new { type = "string" }, memoryId = new { type = "string" } }, required = new[] { "tenantId", "scopeId", "memoryId" } },
                 async (RpcParameters? p, CancellationToken ct) =>
                     await ProxyAsync(HttpMethod.Delete, "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/scopes/" + Encode(Require(p, "scopeId")) + "/memories/" + Encode(Require(p, "memoryId")), null, "memory_delete", CurrentCredentials(), ct).ConfigureAwait(false));
+
+            // ---- Scope read/update/delete ----
+
+            _Server.RegisterTool(
+                "scope_read",
+                "Read a single scope by id. Required: tenantId, scopeId.",
+                new { type = "object", properties = new { tenantId = new { type = "string" }, scopeId = new { type = "string" } }, required = new[] { "tenantId", "scopeId" } },
+                async (RpcParameters? p, CancellationToken ct) =>
+                    await ProxyAsync(HttpMethod.Get, "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/scopes/" + Encode(Require(p, "scopeId")), null, "scope_read", CurrentCredentials(), ct).ConfigureAwait(false));
+
+            _Server.RegisterTool(
+                "scope_update",
+                "Update a scope's name/description (store provider and dimensionality are immutable). Required: tenantId, scopeId, name. Optional: description.",
+                new { type = "object", properties = new { tenantId = new { type = "string" }, scopeId = new { type = "string" }, name = new { type = "string" }, description = new { type = "string" } }, required = new[] { "tenantId", "scopeId", "name" } },
+                async (RpcParameters? p, CancellationToken ct) =>
+                {
+                    Dictionary<string, object?> body = new Dictionary<string, object?>();
+                    body["name"] = Require(p, "name");
+                    if (p?.GetString("description") != null) body["description"] = p.GetString("description");
+                    string path = "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/scopes/" + Encode(Require(p, "scopeId"));
+                    return await ProxyAsync(HttpMethod.Put, path, JsonSerializer.Serialize(body), "scope_update", CurrentCredentials(), ct).ConfigureAwait(false);
+                });
+
+            _Server.RegisterTool(
+                "scope_delete",
+                "Delete a scope and cascade its categories, memories, and scope instructions. Required: tenantId, scopeId.",
+                new { type = "object", properties = new { tenantId = new { type = "string" }, scopeId = new { type = "string" } }, required = new[] { "tenantId", "scopeId" } },
+                async (RpcParameters? p, CancellationToken ct) =>
+                    await ProxyAsync(HttpMethod.Delete, "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/scopes/" + Encode(Require(p, "scopeId")), null, "scope_delete", CurrentCredentials(), ct).ConfigureAwait(false));
+
+            // ---- Category read/update/delete ----
+
+            _Server.RegisterTool(
+                "category_read",
+                "Read a single category by id. Required: tenantId, scopeId, categoryId.",
+                new { type = "object", properties = new { tenantId = new { type = "string" }, scopeId = new { type = "string" }, categoryId = new { type = "string" } }, required = new[] { "tenantId", "scopeId", "categoryId" } },
+                async (RpcParameters? p, CancellationToken ct) =>
+                    await ProxyAsync(HttpMethod.Get, "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/scopes/" + Encode(Require(p, "scopeId")) + "/categories/" + Encode(Require(p, "categoryId")), null, "category_read", CurrentCredentials(), ct).ConfigureAwait(false));
+
+            _Server.RegisterTool(
+                "category_update",
+                "Update a category. Required: tenantId, scopeId, categoryId, name. Optional: description, instructions.",
+                new { type = "object", properties = new { tenantId = new { type = "string" }, scopeId = new { type = "string" }, categoryId = new { type = "string" }, name = new { type = "string" }, description = new { type = "string" }, instructions = new { type = "string" } }, required = new[] { "tenantId", "scopeId", "categoryId", "name" } },
+                async (RpcParameters? p, CancellationToken ct) =>
+                {
+                    Dictionary<string, object?> body = new Dictionary<string, object?>();
+                    body["name"] = Require(p, "name");
+                    if (p?.GetString("description") != null) body["description"] = p.GetString("description");
+                    if (p?.GetString("instructions") != null) body["instructions"] = p.GetString("instructions");
+                    string path = "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/scopes/" + Encode(Require(p, "scopeId")) + "/categories/" + Encode(Require(p, "categoryId"));
+                    return await ProxyAsync(HttpMethod.Put, path, JsonSerializer.Serialize(body), "category_update", CurrentCredentials(), ct).ConfigureAwait(false);
+                });
+
+            _Server.RegisterTool(
+                "category_delete",
+                "Delete a category. Required: tenantId, scopeId, categoryId.",
+                new { type = "object", properties = new { tenantId = new { type = "string" }, scopeId = new { type = "string" }, categoryId = new { type = "string" } }, required = new[] { "tenantId", "scopeId", "categoryId" } },
+                async (RpcParameters? p, CancellationToken ct) =>
+                    await ProxyAsync(HttpMethod.Delete, "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/scopes/" + Encode(Require(p, "scopeId")) + "/categories/" + Encode(Require(p, "categoryId")), null, "category_delete", CurrentCredentials(), ct).ConfigureAwait(false));
+
+            // ---- Model endpoint read/create/update/delete/health ----
+
+            _Server.RegisterTool(
+                "endpoint_read",
+                "Read a single model endpoint by id. Required: tenantId, endpointId.",
+                new { type = "object", properties = new { tenantId = new { type = "string" }, endpointId = new { type = "string" } }, required = new[] { "tenantId", "endpointId" } },
+                async (RpcParameters? p, CancellationToken ct) =>
+                    await ProxyAsync(HttpMethod.Get, "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/endpoints/" + Encode(Require(p, "endpointId")), null, "endpoint_read", CurrentCredentials(), ct).ConfigureAwait(false));
+
+            _Server.RegisterTool(
+                "endpoint_create",
+                "Create a model endpoint (embedding or inference). Required: tenantId, name, baseUrl. Optional: kind, apiFormat, authType + auth fields, model, dimensionality, healthCheckUrl, active. Requires tenant administration.",
+                new { type = "object", properties = EndpointProperties(), required = new[] { "tenantId", "name", "baseUrl" } },
+                async (RpcParameters? p, CancellationToken ct) =>
+                {
+                    string path = "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/endpoints";
+                    return await ProxyAsync(HttpMethod.Post, path, BuildEndpointBody(p), "endpoint_create", CurrentCredentials(), ct).ConfigureAwait(false);
+                });
+
+            _Server.RegisterTool(
+                "endpoint_update",
+                "Update a model endpoint. Required: tenantId, endpointId, name, baseUrl. Optional: kind, apiFormat, authType + auth fields, model, dimensionality, healthCheckUrl, active. Requires tenant administration.",
+                new { type = "object", properties = EndpointProperties(), required = new[] { "tenantId", "endpointId", "name", "baseUrl" } },
+                async (RpcParameters? p, CancellationToken ct) =>
+                {
+                    string path = "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/endpoints/" + Encode(Require(p, "endpointId"));
+                    return await ProxyAsync(HttpMethod.Put, path, BuildEndpointBody(p), "endpoint_update", CurrentCredentials(), ct).ConfigureAwait(false);
+                });
+
+            _Server.RegisterTool(
+                "endpoint_delete",
+                "Delete a model endpoint. Required: tenantId, endpointId. Requires tenant administration.",
+                new { type = "object", properties = new { tenantId = new { type = "string" }, endpointId = new { type = "string" } }, required = new[] { "tenantId", "endpointId" } },
+                async (RpcParameters? p, CancellationToken ct) =>
+                    await ProxyAsync(HttpMethod.Delete, "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/endpoints/" + Encode(Require(p, "endpointId")), null, "endpoint_delete", CurrentCredentials(), ct).ConfigureAwait(false));
+
+            _Server.RegisterTool(
+                "endpoint_health",
+                "Probe and return the health of the tenant's model endpoints. Required: tenantId.",
+                new { type = "object", properties = new { tenantId = new { type = "string" } }, required = new[] { "tenantId" } },
+                async (RpcParameters? p, CancellationToken ct) =>
+                    await ProxyAsync(HttpMethod.Get, "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/endpoint-health", null, "endpoint_health", CurrentCredentials(), ct).ConfigureAwait(false));
+
+            // ---- Chat with memory ----
+
+            _Server.RegisterTool(
+                "chat",
+                "Ask a question answered from a scope's memory (retrieval-augmented). Required: tenantId, scopeId, question. Optional: topK (default 5), inferenceEndpointId. Returns the answer plus cited memory ids.",
+                new { type = "object", properties = new { tenantId = new { type = "string" }, scopeId = new { type = "string" }, question = new { type = "string" }, topK = new { type = "integer" }, inferenceEndpointId = new { type = "string" } }, required = new[] { "tenantId", "scopeId", "question" } },
+                async (RpcParameters? p, CancellationToken ct) =>
+                {
+                    Dictionary<string, object?> body = new Dictionary<string, object?>();
+                    body["question"] = Require(p, "question");
+                    long? topK = p?.GetInt64("topK");
+                    if (topK.HasValue) body["topK"] = topK.Value;
+                    if (p?.GetString("inferenceEndpointId") != null) body["inferenceEndpointId"] = p.GetString("inferenceEndpointId");
+                    string path = "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/scopes/" + Encode(Require(p, "scopeId")) + "/chat";
+                    return await ProxyAsync(HttpMethod.Post, path, JsonSerializer.Serialize(body), "chat", CurrentCredentials(), ct).ConfigureAwait(false);
+                });
+
+            // ---- RecallDB collections pass-through ----
+
+            _Server.RegisterTool(
+                "collection_enumerate",
+                "List the RecallDB collections backing this tenant's scopes. Required: tenantId.",
+                new { type = "object", properties = new { tenantId = new { type = "string" } }, required = new[] { "tenantId" } },
+                async (RpcParameters? p, CancellationToken ct) =>
+                    await ProxyAsync(HttpMethod.Get, "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/collections", null, "collection_enumerate", CurrentCredentials(), ct).ConfigureAwait(false));
+
+            _Server.RegisterTool(
+                "collection_read",
+                "Read a single RecallDB collection by id. Required: tenantId, collectionId.",
+                new { type = "object", properties = new { tenantId = new { type = "string" }, collectionId = new { type = "string" } }, required = new[] { "tenantId", "collectionId" } },
+                async (RpcParameters? p, CancellationToken ct) =>
+                    await ProxyAsync(HttpMethod.Get, "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/collections/" + Encode(Require(p, "collectionId")), null, "collection_read", CurrentCredentials(), ct).ConfigureAwait(false));
+
+            _Server.RegisterTool(
+                "collection_create",
+                "Create a RecallDB collection directly. Required: tenantId, name, dimensionality. Optional: description. (Normally scopes provision their own collection.)",
+                new { type = "object", properties = new { tenantId = new { type = "string" }, name = new { type = "string" }, dimensionality = new { type = "integer" }, description = new { type = "string" } }, required = new[] { "tenantId", "name", "dimensionality" } },
+                async (RpcParameters? p, CancellationToken ct) =>
+                {
+                    Dictionary<string, object?> body = new Dictionary<string, object?>();
+                    body["name"] = Require(p, "name");
+                    long? dim = p?.GetInt64("dimensionality");
+                    if (dim.HasValue) body["dimensionality"] = dim.Value;
+                    if (p?.GetString("description") != null) body["description"] = p.GetString("description");
+                    string path = "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/collections";
+                    return await ProxyAsync(HttpMethod.Post, path, JsonSerializer.Serialize(body), "collection_create", CurrentCredentials(), ct).ConfigureAwait(false);
+                });
+
+            _Server.RegisterTool(
+                "collection_delete",
+                "Delete a RecallDB collection by id. Required: tenantId, collectionId.",
+                new { type = "object", properties = new { tenantId = new { type = "string" }, collectionId = new { type = "string" } }, required = new[] { "tenantId", "collectionId" } },
+                async (RpcParameters? p, CancellationToken ct) =>
+                    await ProxyAsync(HttpMethod.Delete, "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/collections/" + Encode(Require(p, "collectionId")), null, "collection_delete", CurrentCredentials(), ct).ConfigureAwait(false));
+
+            // ---- Instruction create/update/delete (tenant-global or scope-specific) ----
+
+            _Server.RegisterTool(
+                "instruction_create",
+                "Create an instruction. Required: tenantId, name, content. Optional: scopeId (omit for a tenant-global instruction), mergeMode (Append|Replace|Hide, for scope instructions), position, active. Requires tenant administration.",
+                new { type = "object", properties = new { tenantId = new { type = "string" }, scopeId = new { type = "string", description = "Omit for tenant-global; set to attach to a scope." }, name = new { type = "string" }, content = new { type = "string" }, mergeMode = new { type = "string", description = "Append, Replace, or Hide (scope instructions)." }, position = new { type = "integer" }, active = new { type = "boolean" } }, required = new[] { "tenantId", "name", "content" } },
+                async (RpcParameters? p, CancellationToken ct) =>
+                {
+                    Dictionary<string, object?> body = new Dictionary<string, object?>();
+                    body["name"] = Require(p, "name");
+                    body["content"] = Require(p, "content");
+                    if (p?.GetString("mergeMode") != null) body["mergeMode"] = p.GetString("mergeMode");
+                    long? position = p?.GetInt64("position");
+                    if (position.HasValue) body["position"] = position.Value;
+                    bool? active = p?.GetBoolean("active");
+                    if (active.HasValue) body["active"] = active.Value;
+                    string tenantId = Encode(Require(p, "tenantId"));
+                    string? scopeId = p?.GetString("scopeId");
+                    string path = string.IsNullOrEmpty(scopeId)
+                        ? "/v1.0/api/tenants/" + tenantId + "/instructions"
+                        : "/v1.0/api/tenants/" + tenantId + "/scopes/" + Encode(scopeId) + "/instructions";
+                    return await ProxyAsync(HttpMethod.Post, path, JsonSerializer.Serialize(body), "instruction_create", CurrentCredentials(), ct).ConfigureAwait(false);
+                });
+
+            _Server.RegisterTool(
+                "instruction_update",
+                "Update an instruction by id (tenant-global or scope-specific; the scope binding is preserved). Required: tenantId, instructionId, name, content. Optional: mergeMode, position, active. Requires tenant administration.",
+                new { type = "object", properties = new { tenantId = new { type = "string" }, instructionId = new { type = "string" }, name = new { type = "string" }, content = new { type = "string" }, mergeMode = new { type = "string" }, position = new { type = "integer" }, active = new { type = "boolean" } }, required = new[] { "tenantId", "instructionId", "name", "content" } },
+                async (RpcParameters? p, CancellationToken ct) =>
+                {
+                    Dictionary<string, object?> body = new Dictionary<string, object?>();
+                    body["name"] = Require(p, "name");
+                    body["content"] = Require(p, "content");
+                    if (p?.GetString("mergeMode") != null) body["mergeMode"] = p.GetString("mergeMode");
+                    long? position = p?.GetInt64("position");
+                    if (position.HasValue) body["position"] = position.Value;
+                    bool? active = p?.GetBoolean("active");
+                    if (active.HasValue) body["active"] = active.Value;
+                    string path = "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/instructions/" + Encode(Require(p, "instructionId"));
+                    return await ProxyAsync(HttpMethod.Put, path, JsonSerializer.Serialize(body), "instruction_update", CurrentCredentials(), ct).ConfigureAwait(false);
+                });
+
+            _Server.RegisterTool(
+                "instruction_delete",
+                "Delete an instruction by id. Required: tenantId, instructionId. Requires tenant administration.",
+                new { type = "object", properties = new { tenantId = new { type = "string" }, instructionId = new { type = "string" } }, required = new[] { "tenantId", "instructionId" } },
+                async (RpcParameters? p, CancellationToken ct) =>
+                    await ProxyAsync(HttpMethod.Delete, "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/instructions/" + Encode(Require(p, "instructionId")), null, "instruction_delete", CurrentCredentials(), ct).ConfigureAwait(false));
         }
 
         #endregion

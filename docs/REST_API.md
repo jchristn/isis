@@ -225,6 +225,28 @@ All require access to the tenant (`tenantId` in the path); the token/credential 
 | GET | `…/endpoint-health` | Aggregate endpoint health |
 | GET/POST/DELETE | `…/collections` | RecallDB collections pass-through |
 
+Instructions are either **tenant-global** (managed at `…/instructions`) or **scope-specific**
+(managed at `…/scopes/{scopeId}/instructions`). A scope-specific instruction carries a `mergeMode`
+of `Append` (add a new instruction), `Replace` (override a same-named global's content in place), or
+`Hide` (suppress a same-named global). `GET …/scopes/{scopeId}/effective-instructions` returns the
+merged, source-annotated result an agent working in that scope should see. Over MCP, the
+`isis_instructions` tool takes an optional `scopeId` and returns that scope's effective set.
+
+A model endpoint is addressed by a full **`baseUrl`** (e.g. `http://host:11434` or
+`http://view.homedns.org:8900/v1.0/api/all-minilm-latest`) onto which the API-format path is
+appended — there is no separate host/port/ssl. Outbound authentication is configured with
+`authType` — one of `None`, `BearerToken`, `ApiKeyHeader` (with `authHeaderName` + `authSecret`),
+`QueryParam` (with `authQueryParam` + `authSecret`), `BasicAuth` (with `authKeyId` + `authSecret`),
+or `AccessKeySecret` (with `authHeaderName`/`authKeyId` + `authSecretHeaderName`/`authSecret`). An
+embedding endpoint may set `maxInputTokens` to override the token budget used when chunking oversized
+memories (0 = resolve the budget automatically from the API format and model name).
+
+Chunking of oversized memories is transparent to the API and configured on the **scope**: `chunkingMode`
+(`OnOverflow` default — split only when a body exceeds the budget — `Always`, or `Off`), `chunkStrategy`
+(`FixedTokenCount` default), `chunkMaxTokens` (0 = use the model budget), and `chunkOverlapTokens` (64).
+A memory that overflows is embedded as several chunks under the hood; upsert, read, search, and delete all
+continue to operate on the whole memory, and search returns one hit per memory regardless of chunking.
+
 ### Instructions (tenant-scoped)
 
 Tenant-wide standing guidance surfaced to agents. Reads are open to any principal in the

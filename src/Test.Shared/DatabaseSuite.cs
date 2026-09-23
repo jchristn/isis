@@ -2,10 +2,13 @@ namespace Test.Shared
 {
     using System;
     using System.Collections.Generic;
+    using System.Data;
+    using System.IO;
     using System.Threading.Tasks;
     using Isis.Core.Database;
     using Isis.Core.Enums;
     using Isis.Core.Models;
+    using Microsoft.Data.Sqlite;
     using Touchstone.Core;
 
     /// <summary>
@@ -95,6 +98,13 @@ namespace Test.Shared
                     TestCase.Async("database", "endpoint-enumerate-by-kind", "Model endpoint enumeration filters by kind", EndpointEnumerateByKindAsync),
                     TestCase.Async("database", "endpoint-update", "Model endpoint update persists changed fields", EndpointUpdateAsync),
                     TestCase.Async("database", "endpoint-delete", "Model endpoint delete removes the record", EndpointDeleteAsync),
+                    TestCase.Async("database", "endpoint-legacy-migration", "Legacy hostname/port/apikey endpoints migrate to baseUrl + auth", EndpointLegacyMigrationAsync),
+
+                    // Instruction scoping
+                    TestCase.Async("database", "instruction-scope-roundtrip", "Instruction enumerate isolates global vs scope by scopeid", InstructionScopeRoundtripAsync),
+                    TestCase.Async("database", "instruction-delete-by-scope", "DeleteByScope removes only that scope's instructions", InstructionDeleteByScopeAsync),
+                    TestCase.Async("database", "instruction-legacy-migration", "Legacy instructions migrate to global (scopeid null, Append)", InstructionLegacyMigrationAsync),
+                    TestCase.Async("database", "migration-idempotent", "Migrations are recorded once and not re-applied across restarts", MigrationIdempotentAsync),
 
                     // Request history
                     TestCase.Async("database", "request-history-create", "Request history create with null and populated tenant", RequestHistoryCreateAsync),
@@ -800,8 +810,7 @@ namespace Test.Shared
                 TenantId = tenant.Id,
                 Name = "embed",
                 Kind = EndpointKindEnum.Embedding,
-                Hostname = "127.0.0.1",
-                Port = 11434,
+                BaseUrl = "http://127.0.0.1:11434",
                 Dimensionality = 768
             }).ConfigureAwait(false);
             TestCase.Require(created.Id.StartsWith("eep_", StringComparison.Ordinal), "Embedding endpoint id should start with eep_, got " + created.Id + ".");
@@ -818,8 +827,7 @@ namespace Test.Shared
                 TenantId = tenant.Id,
                 Name = "chat",
                 Kind = EndpointKindEnum.Inference,
-                Hostname = "127.0.0.1",
-                Port = 8080
+                BaseUrl = "http://127.0.0.1:8080"
             }).ConfigureAwait(false);
             TestCase.Require(created.Id.StartsWith("iep_", StringComparison.Ordinal), "Inference endpoint id should start with iep_, got " + created.Id + ".");
         }
@@ -838,8 +846,7 @@ namespace Test.Shared
                 Name = "mismatch-embed",
                 Kind = EndpointKindEnum.Embedding,
                 Id = "iep_manually_wrong_prefix",
-                Hostname = "127.0.0.1",
-                Port = 11434
+                BaseUrl = "http://127.0.0.1:11434"
             }).ConfigureAwait(false);
             TestCase.Require(embedding.Id.StartsWith("eep_", StringComparison.Ordinal), "Create should correct a mismatched id to eep_ for an embedding endpoint, got " + embedding.Id + ".");
 
@@ -850,8 +857,7 @@ namespace Test.Shared
                 Name = "mismatch-infer",
                 Kind = EndpointKindEnum.Inference,
                 Id = "eep_manually_wrong_prefix",
-                Hostname = "127.0.0.1",
-                Port = 8080
+                BaseUrl = "http://127.0.0.1:8080"
             }).ConfigureAwait(false);
             TestCase.Require(inference.Id.StartsWith("iep_", StringComparison.Ordinal), "Create should correct a mismatched id to iep_ for an inference endpoint, got " + inference.Id + ".");
         }
@@ -869,7 +875,7 @@ namespace Test.Shared
                 Kind = EndpointKindEnum.Embedding,
                 Model = "nomic-embed-text",
                 Dimensionality = 768,
-                Port = 11434
+                BaseUrl = "http://127.0.0.1:11434"
             }).ConfigureAwait(false);
 
             ModelEndpoint? read = await db.ModelEndpoints.ReadAsync(tenant.Id, created.Id).ConfigureAwait(false);
@@ -882,8 +888,8 @@ namespace Test.Shared
             DatabaseDriverBase db = t.Db;
 
             Tenant tenant = await db.Tenants.CreateAsync(new Tenant { Name = "Acme" }).ConfigureAwait(false);
-            await db.ModelEndpoints.CreateAsync(new ModelEndpoint { TenantId = tenant.Id, Name = "embed", Kind = EndpointKindEnum.Embedding, Port = 11434 }).ConfigureAwait(false);
-            await db.ModelEndpoints.CreateAsync(new ModelEndpoint { TenantId = tenant.Id, Name = "chat", Kind = EndpointKindEnum.Inference, Port = 8080 }).ConfigureAwait(false);
+            await db.ModelEndpoints.CreateAsync(new ModelEndpoint { TenantId = tenant.Id, Name = "embed", Kind = EndpointKindEnum.Embedding, BaseUrl = "http://127.0.0.1:11434" }).ConfigureAwait(false);
+            await db.ModelEndpoints.CreateAsync(new ModelEndpoint { TenantId = tenant.Id, Name = "chat", Kind = EndpointKindEnum.Inference, BaseUrl = "http://127.0.0.1:8080" }).ConfigureAwait(false);
 
             EnumerationResult<ModelEndpoint> embeddings = await db.ModelEndpoints.EnumerateAsync(tenant.Id, EndpointKindEnum.Embedding, new EnumerationQuery { MaxResults = 100 }).ConfigureAwait(false);
             TestCase.Require(embeddings.TotalRecords == 1, "Kind filter should return only the 1 embedding endpoint, got " + embeddings.TotalRecords + ".");
@@ -899,7 +905,7 @@ namespace Test.Shared
             DatabaseDriverBase db = t.Db;
 
             Tenant tenant = await db.Tenants.CreateAsync(new Tenant { Name = "Acme" }).ConfigureAwait(false);
-            ModelEndpoint created = await db.ModelEndpoints.CreateAsync(new ModelEndpoint { TenantId = tenant.Id, Name = "embed", Kind = EndpointKindEnum.Embedding, Dimensionality = 768, Port = 11434 }).ConfigureAwait(false);
+            ModelEndpoint created = await db.ModelEndpoints.CreateAsync(new ModelEndpoint { TenantId = tenant.Id, Name = "embed", Kind = EndpointKindEnum.Embedding, Dimensionality = 768, BaseUrl = "http://127.0.0.1:11434" }).ConfigureAwait(false);
             created.Dimensionality = 1024;
             await db.ModelEndpoints.UpdateAsync(created).ConfigureAwait(false);
 
@@ -913,12 +919,166 @@ namespace Test.Shared
             DatabaseDriverBase db = t.Db;
 
             Tenant tenant = await db.Tenants.CreateAsync(new Tenant { Name = "Acme" }).ConfigureAwait(false);
-            ModelEndpoint created = await db.ModelEndpoints.CreateAsync(new ModelEndpoint { TenantId = tenant.Id, Name = "chat", Kind = EndpointKindEnum.Inference, Port = 8080 }).ConfigureAwait(false);
+            ModelEndpoint created = await db.ModelEndpoints.CreateAsync(new ModelEndpoint { TenantId = tenant.Id, Name = "chat", Kind = EndpointKindEnum.Inference, BaseUrl = "http://127.0.0.1:8080" }).ConfigureAwait(false);
 
             bool deleted = await db.ModelEndpoints.DeleteAsync(tenant.Id, created.Id).ConfigureAwait(false);
             TestCase.Require(deleted, "Deleting an existing endpoint should return true.");
             ModelEndpoint? read = await db.ModelEndpoints.ReadAsync(tenant.Id, created.Id).ConfigureAwait(false);
             TestCase.Require(read == null, "Deleted endpoint should read as null.");
+        }
+
+        private static async Task EndpointLegacyMigrationAsync()
+        {
+            // Stand up a driver on a fresh file, hand-create the OLD model_endpoints schema with a few rows,
+            // then run InitializeAsync — which detects the legacy shape, migrates it to baseUrl + typed auth,
+            // recreates the table in the new shape, and re-inserts the rows.
+            string file = Path.Combine(Path.GetTempPath(), "isis-mig-" + Guid.NewGuid().ToString("N") + ".db");
+            DatabaseDriverBase db = DatabaseDriverFactory.Create(new DatabaseSettings { Type = DatabaseTypeEnum.Sqlite, Filename = file });
+            try
+            {
+                await db.ExecuteQueryAsync(
+                    "CREATE TABLE model_endpoints (id TEXT PRIMARY KEY, tenantid TEXT NOT NULL, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'Embedding', " +
+                    "apiformat TEXT NOT NULL DEFAULT 'OpenAI', hostname TEXT NOT NULL, port INTEGER NOT NULL DEFAULT 0, usessl INTEGER NOT NULL DEFAULT 0, apikey TEXT, model TEXT, " +
+                    "dimensionality INTEGER NOT NULL DEFAULT 0, timeoutms INTEGER NOT NULL DEFAULT 60000, active INTEGER NOT NULL DEFAULT 1, healthcheckurl TEXT NOT NULL DEFAULT '/', " +
+                    "healthcheckmethod TEXT NOT NULL DEFAULT 'GET', healthcheckintervalms INTEGER NOT NULL DEFAULT 5000, healthchecktimeoutms INTEGER NOT NULL DEFAULT 5000, " +
+                    "healthcheckexpectedstatuscode INTEGER NOT NULL DEFAULT 200, healthythreshold INTEGER NOT NULL DEFAULT 2, unhealthythreshold INTEGER NOT NULL DEFAULT 2, " +
+                    "healthcheckuseauth INTEGER NOT NULL DEFAULT 0, createdutc TEXT NOT NULL, lastupdateutc TEXT NOT NULL);", true).ConfigureAwait(false);
+
+                string ts = "'2026-01-01 00:00:00.000000Z'";
+                // OpenAI + apikey -> bearer; usessl=1, port 443 -> https://example.com:443
+                await db.ExecuteQueryAsync("INSERT INTO model_endpoints (id, tenantid, name, kind, apiformat, hostname, port, usessl, apikey, model, dimensionality, createdutc, lastupdateutc) VALUES " +
+                    "('eep_legacyopenai', 'ten_mig', 'Legacy OpenAI', 'Embedding', 'OpenAI', 'example.com', 443, 1, 'sk-legacy', 'text-embed', 1536, " + ts + ", " + ts + ");", true).ConfigureAwait(false);
+                // Gemini + apikey -> query 'key'
+                await db.ExecuteQueryAsync("INSERT INTO model_endpoints (id, tenantid, name, kind, apiformat, hostname, port, usessl, apikey, createdutc, lastupdateutc) VALUES " +
+                    "('eep_legacygemini', 'ten_mig', 'Legacy Gemini', 'Embedding', 'Gemini', 'gen.googleapis.com', 0, 1, 'gkey', " + ts + ", " + ts + ");", true).ConfigureAwait(false);
+                // No apikey -> None; http, port 11434
+                await db.ExecuteQueryAsync("INSERT INTO model_endpoints (id, tenantid, name, kind, apiformat, hostname, port, usessl, createdutc, lastupdateutc) VALUES " +
+                    "('iep_legacyollama', 'ten_mig', 'Legacy Ollama', 'Inference', 'Ollama', 'localhost', 11434, 0, " + ts + ", " + ts + ");", true).ConfigureAwait(false);
+
+                await db.InitializeAsync().ConfigureAwait(false);
+
+                ModelEndpoint? openai = await db.ModelEndpoints.ReadAsync("ten_mig", "eep_legacyopenai").ConfigureAwait(false);
+                TestCase.Require(openai != null, "Legacy OpenAI endpoint should survive migration.");
+                TestCase.Require(openai!.BaseUrl == "https://example.com:443", "usessl+host+port must compose to a https base URL, got " + openai.BaseUrl + ".");
+                TestCase.Require(openai.AuthType == EndpointAuthTypeEnum.BearerToken && openai.AuthSecret == "sk-legacy", "A legacy non-Gemini apikey must become a bearer token.");
+                TestCase.Require(openai.Dimensionality == 1536, "Dimensionality must survive migration.");
+
+                ModelEndpoint? gemini = await db.ModelEndpoints.ReadAsync("ten_mig", "eep_legacygemini").ConfigureAwait(false);
+                TestCase.Require(gemini != null && gemini!.AuthType == EndpointAuthTypeEnum.QueryParam && gemini.AuthQueryParam == "key" && gemini.AuthSecret == "gkey", "A legacy Gemini apikey must become a 'key' query parameter.");
+                TestCase.Require(gemini!.BaseUrl == "https://gen.googleapis.com", "A legacy row with port 0 must compose a base URL without a port.");
+
+                ModelEndpoint? ollama = await db.ModelEndpoints.ReadAsync("ten_mig", "iep_legacyollama").ConfigureAwait(false);
+                TestCase.Require(ollama != null && ollama!.AuthType == EndpointAuthTypeEnum.None, "A legacy row without an apikey must migrate to no auth.");
+                TestCase.Require(ollama!.BaseUrl == "http://localhost:11434", "A non-SSL legacy row must compose an http base URL.");
+            }
+            finally
+            {
+                try { db.Dispose(); } catch (Exception) { }
+                SqliteConnection.ClearAllPools();
+                try { if (File.Exists(file)) File.Delete(file); } catch (Exception) { }
+            }
+        }
+
+        private static async Task InstructionScopeRoundtripAsync()
+        {
+            using TempSqlite t = await TempSqlite.CreateAsync().ConfigureAwait(false);
+            DatabaseDriverBase db = t.Db;
+
+            Tenant tenant = await db.Tenants.CreateAsync(new Tenant { Name = "Acme" }).ConfigureAwait(false);
+            await db.Instructions.CreateAsync(new Instruction { TenantId = tenant.Id, Name = "Global", Content = "g" }).ConfigureAwait(false);
+            Instruction scoped = await db.Instructions.CreateAsync(new Instruction { TenantId = tenant.Id, ScopeId = "scp_1", Name = "ScopeRule", Content = "s", MergeMode = InstructionMergeModeEnum.Replace }).ConfigureAwait(false);
+
+            EnumerationResult<Instruction> globals = await db.Instructions.EnumerateAsync(tenant.Id, null, new EnumerationQuery { MaxResults = 100 }).ConfigureAwait(false);
+            TestCase.Require(globals.TotalRecords == 1 && globals.Objects[0].Name == "Global", "Enumerating with null scope returns only tenant-global instructions.");
+            TestCase.Require(globals.Objects[0].ScopeId == null, "A tenant-global instruction has a null scope id.");
+
+            EnumerationResult<Instruction> scopeSet = await db.Instructions.EnumerateAsync(tenant.Id, "scp_1", new EnumerationQuery { MaxResults = 100 }).ConfigureAwait(false);
+            TestCase.Require(scopeSet.TotalRecords == 1 && scopeSet.Objects[0].Name == "ScopeRule", "Enumerating with a scope returns only that scope's instructions.");
+            TestCase.Require(scopeSet.Objects[0].ScopeId == "scp_1" && scopeSet.Objects[0].MergeMode == InstructionMergeModeEnum.Replace, "Scope id and merge mode round-trip.");
+
+            Instruction? read = await db.Instructions.ReadAsync(tenant.Id, scoped.Id).ConfigureAwait(false);
+            TestCase.Require(read != null && read!.MergeMode == InstructionMergeModeEnum.Replace, "Merge mode round-trips on read by id.");
+        }
+
+        private static async Task InstructionDeleteByScopeAsync()
+        {
+            using TempSqlite t = await TempSqlite.CreateAsync().ConfigureAwait(false);
+            DatabaseDriverBase db = t.Db;
+
+            Tenant tenant = await db.Tenants.CreateAsync(new Tenant { Name = "Acme" }).ConfigureAwait(false);
+            await db.Instructions.CreateAsync(new Instruction { TenantId = tenant.Id, Name = "Global", Content = "g" }).ConfigureAwait(false);
+            await db.Instructions.CreateAsync(new Instruction { TenantId = tenant.Id, ScopeId = "scp_1", Name = "A", Content = "a" }).ConfigureAwait(false);
+            await db.Instructions.CreateAsync(new Instruction { TenantId = tenant.Id, ScopeId = "scp_1", Name = "B", Content = "b" }).ConfigureAwait(false);
+            await db.Instructions.CreateAsync(new Instruction { TenantId = tenant.Id, ScopeId = "scp_2", Name = "C", Content = "c" }).ConfigureAwait(false);
+
+            int removed = await db.Instructions.DeleteByScopeAsync(tenant.Id, "scp_1").ConfigureAwait(false);
+            TestCase.Require(removed == 2, "DeleteByScope should remove exactly scp_1's two instructions, got " + removed + ".");
+
+            EnumerationResult<Instruction> scope1 = await db.Instructions.EnumerateAsync(tenant.Id, "scp_1", new EnumerationQuery { MaxResults = 100 }).ConfigureAwait(false);
+            TestCase.Require(scope1.TotalRecords == 0, "scp_1 instructions should be gone.");
+            EnumerationResult<Instruction> scope2 = await db.Instructions.EnumerateAsync(tenant.Id, "scp_2", new EnumerationQuery { MaxResults = 100 }).ConfigureAwait(false);
+            TestCase.Require(scope2.TotalRecords == 1, "scp_2 instructions must be untouched.");
+            EnumerationResult<Instruction> globals = await db.Instructions.EnumerateAsync(tenant.Id, null, new EnumerationQuery { MaxResults = 100 }).ConfigureAwait(false);
+            TestCase.Require(globals.TotalRecords == 1, "Tenant-global instructions must be untouched.");
+        }
+
+        private static async Task MigrationIdempotentAsync()
+        {
+            string file = Path.Combine(Path.GetTempPath(), "isis-mid-" + Guid.NewGuid().ToString("N") + ".db");
+            DatabaseDriverBase db = DatabaseDriverFactory.Create(new DatabaseSettings { Type = DatabaseTypeEnum.Sqlite, Filename = file });
+            try
+            {
+                // Fresh database: migrations run (as no-ops, since already latest-shape) and are recorded.
+                await db.InitializeAsync().ConfigureAwait(false);
+                // Restart: the runner must skip already-recorded migrations rather than re-applying them.
+                await db.InitializeAsync().ConfigureAwait(false);
+
+                DataTable table = await db.ExecuteQueryAsync("SELECT name FROM schemamigrations;").ConfigureAwait(false);
+                Dictionary<string, int> counts = new Dictionary<string, int>();
+                foreach (DataRow row in table.Rows)
+                {
+                    string name = row["name"]?.ToString() ?? string.Empty;
+                    counts[name] = counts.TryGetValue(name, out int c) ? c + 1 : 1;
+                }
+
+                TestCase.Require(counts.TryGetValue("2026-09-22-model-endpoints-baseurl-auth", out int endpointCount) && endpointCount == 1, "The endpoint migration must be recorded exactly once, got " + (counts.TryGetValue("2026-09-22-model-endpoints-baseurl-auth", out int e) ? e : 0) + ".");
+                TestCase.Require(counts.TryGetValue("2026-09-22-instructions-scope-merge", out int instructionCount) && instructionCount == 1, "The instruction migration must be recorded exactly once, got " + (counts.TryGetValue("2026-09-22-instructions-scope-merge", out int i) ? i : 0) + ".");
+            }
+            finally
+            {
+                try { db.Dispose(); } catch (Exception) { }
+                SqliteConnection.ClearAllPools();
+                try { if (File.Exists(file)) File.Delete(file); } catch (Exception) { }
+            }
+        }
+
+        private static async Task InstructionLegacyMigrationAsync()
+        {
+            string file = Path.Combine(Path.GetTempPath(), "isis-imig-" + Guid.NewGuid().ToString("N") + ".db");
+            DatabaseDriverBase db = DatabaseDriverFactory.Create(new DatabaseSettings { Type = DatabaseTypeEnum.Sqlite, Filename = file });
+            try
+            {
+                await db.ExecuteQueryAsync(
+                    "CREATE TABLE instructions (id TEXT PRIMARY KEY, tenantid TEXT NOT NULL, name TEXT NOT NULL, content TEXT NOT NULL DEFAULT '', " +
+                    "position INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1, isprotected INTEGER NOT NULL DEFAULT 0, createdutc TEXT NOT NULL, lastupdateutc TEXT NOT NULL);", true).ConfigureAwait(false);
+                string ts = "'2026-01-01 00:00:00.000000Z'";
+                await db.ExecuteQueryAsync("INSERT INTO instructions (id, tenantid, name, content, position, active, isprotected, createdutc, lastupdateutc) VALUES " +
+                    "('ins_legacy', 'ten_mig', 'Legacy', 'legacy content', 3, 1, 0, " + ts + ", " + ts + ");", true).ConfigureAwait(false);
+
+                await db.InitializeAsync().ConfigureAwait(false);
+
+                Instruction? read = await db.Instructions.ReadAsync("ten_mig", "ins_legacy").ConfigureAwait(false);
+                TestCase.Require(read != null, "Legacy instruction should survive migration.");
+                TestCase.Require(read!.ScopeId == null, "A legacy instruction migrates to tenant-global (null scope).");
+                TestCase.Require(read.MergeMode == InstructionMergeModeEnum.Append, "A legacy instruction defaults to Append merge mode.");
+                TestCase.Require(read.Content == "legacy content" && read.Position == 3, "Content and position survive migration.");
+            }
+            finally
+            {
+                try { db.Dispose(); } catch (Exception) { }
+                SqliteConnection.ClearAllPools();
+                try { if (File.Exists(file)) File.Delete(file); } catch (Exception) { }
+            }
         }
 
         #endregion

@@ -48,6 +48,19 @@ export const SEARCH_MODES = ['Keyword', 'Semantic', 'Hybrid'];
 export const ENDPOINT_KINDS = ['Embedding', 'Inference'];
 export const API_FORMATS = ['Ollama', 'OpenAI', 'VLlm', 'Gemini'];
 export const HEALTH_METHODS = ['GET', 'HEAD'];
+export const AUTH_TYPES = ['None', 'BearerToken', 'ApiKeyHeader', 'QueryParam', 'BasicAuth', 'AccessKeySecret'];
+export const INSTRUCTION_MERGE_MODES = ['Append', 'Replace', 'Hide'];
+
+// Chunking of oversized memory bodies (embedding scopes).
+export const CHUNKING_MODES = ['OnOverflow', 'Always', 'Off'];
+export const CHUNK_STRATEGIES = ['FixedTokenCount', 'SentenceBased', 'ParagraphBased', 'Recursive'];
+
+// Friendly labels for the chunking mode options.
+export const CHUNKING_MODE_LABELS = {
+  OnOverflow: 'On overflow (only when a body exceeds the model budget)',
+  Always: 'Always (chunk every memory)',
+  Off: 'Off (never chunk; embed the whole body)'
+};
 
 // External observability services surfaced on the Home page (local dev defaults).
 export const EXTERNAL_SERVICES = [

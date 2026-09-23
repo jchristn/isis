@@ -101,6 +101,10 @@ CREATE TABLE IF NOT EXISTS scopes (
     embeddingendpointid TEXT,
     filesystemlayout TEXT NOT NULL DEFAULT 'Hierarchy',
     targetpath TEXT,
+    chunkingmode TEXT NOT NULL DEFAULT 'OnOverflow',
+    chunkstrategy TEXT NOT NULL DEFAULT 'FixedTokenCount',
+    chunkmaxtokens INTEGER NOT NULL DEFAULT 0,
+    chunkoverlaptokens INTEGER NOT NULL DEFAULT 64,
     active INTEGER NOT NULL DEFAULT 1,
     createdutc TEXT NOT NULL,
     lastupdateutc TEXT NOT NULL
@@ -149,10 +153,14 @@ CREATE TABLE IF NOT EXISTS model_endpoints (
     name TEXT NOT NULL,
     kind TEXT NOT NULL DEFAULT 'Embedding',
     apiformat TEXT NOT NULL DEFAULT 'OpenAI',
-    hostname TEXT NOT NULL,
-    port INTEGER NOT NULL DEFAULT 0,
-    usessl INTEGER NOT NULL DEFAULT 0,
-    apikey TEXT,
+    maxinputtokens INTEGER NOT NULL DEFAULT 0,
+    baseurl TEXT NOT NULL DEFAULT '',
+    authtype TEXT NOT NULL DEFAULT 'None',
+    authheadername TEXT,
+    authsecretheadername TEXT,
+    authqueryparam TEXT,
+    authkeyid TEXT,
+    authsecret TEXT,
     model TEXT,
     dimensionality INTEGER NOT NULL DEFAULT 0,
     timeoutms INTEGER NOT NULL DEFAULT 60000,
@@ -217,8 +225,10 @@ CREATE TABLE IF NOT EXISTS permissions (
 CREATE TABLE IF NOT EXISTS instructions (
     id TEXT PRIMARY KEY,
     tenantid TEXT NOT NULL,
+    scopeid TEXT,
     name TEXT NOT NULL,
     content TEXT NOT NULL DEFAULT '',
+    mergemode TEXT NOT NULL DEFAULT 'Append',
     position INTEGER NOT NULL DEFAULT 0,
     active INTEGER NOT NULL DEFAULT 1,
     isprotected INTEGER NOT NULL DEFAULT 0,
@@ -252,7 +262,7 @@ CREATE INDEX IF NOT EXISTS idx_reqhistory_tenant_created ON request_history(tena
 CREATE INDEX IF NOT EXISTS idx_opevents_tenant_created ON operation_events(tenantid, createdutc);
 CREATE INDEX IF NOT EXISTS idx_opevents_resource_created ON operation_events(resourcetype, createdutc);
 CREATE INDEX IF NOT EXISTS idx_permissions_tenant_user ON permissions(tenantid, userid);
-CREATE INDEX IF NOT EXISTS idx_instructions_tenantid ON instructions(tenantid, position);
+CREATE INDEX IF NOT EXISTS idx_instructions_tenantid ON instructions(tenantid, scopeid, position);
 ";
         }
 

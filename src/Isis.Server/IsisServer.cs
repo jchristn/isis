@@ -44,7 +44,7 @@ namespace Isis.Server
         private readonly AuthorizationService _AuthorizationService;
         private readonly MemoryService _MemoryService;
         private readonly HttpClient _ProbeClient;
-        private readonly HttpClient _InferenceClient;
+        private readonly SocketsHttpHandler _InferenceHandler;
         private readonly HealthCheckService _HealthCheck;
         private readonly InferenceService _InferenceService;
         private readonly MemoryChatService _ChatService;
@@ -92,10 +92,11 @@ namespace Isis.Server
 
             _ProbeClient = new HttpClient();
             _HealthCheck = new HealthCheckService(_ProbeClient);
-            // Inference streams can run far longer than the default 100s HttpClient timeout; rely on the
-            // per-request cancellation token rather than a hard client timeout.
-            _InferenceClient = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
-            _InferenceService = new InferenceService(_InferenceClient);
+            // Shared transport for inference; the service wraps it per-endpoint for auth and sets an infinite
+            // per-client timeout (inference streams can run far longer than the default 100s), relying on the
+            // per-request cancellation token instead.
+            _InferenceHandler = new SocketsHttpHandler();
+            _InferenceService = new InferenceService(_InferenceHandler);
             _ChatService = new MemoryChatService(_MemoryService, _InferenceService);
             _RetentionService = new RetentionService(_Database, Settings.Retention, _Log);
 
@@ -344,7 +345,7 @@ namespace Isis.Server
                 _RetentionService.Dispose();
                 if (_Server is IDisposable disposableServer) disposableServer.Dispose();
                 _ProbeClient.Dispose();
-                _InferenceClient.Dispose();
+                _InferenceHandler.Dispose();
             }
 
             _Disposed = true;

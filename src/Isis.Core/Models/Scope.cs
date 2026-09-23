@@ -108,6 +108,51 @@ namespace Isis.Core.Models
         public string? TargetPath { get; set; } = null;
 
         /// <summary>
+        /// When memory bodies in this scope are chunked for embedding. Default OnOverflow (only when a body
+        /// exceeds the embedding model's token budget).
+        /// </summary>
+        public ChunkingModeEnum ChunkingMode { get; set; } = ChunkingModeEnum.OnOverflow;
+
+        /// <summary>
+        /// The chunking strategy name (maps to the chunking library's strategy, e.g. FixedTokenCount, Recursive,
+        /// SentenceBased, ParagraphBased). Default FixedTokenCount, which packs each chunk to the token budget
+        /// with the configured overlap — the predictable choice for embedding regardless of body structure.
+        /// </summary>
+        public string ChunkStrategy { get; set; } = "FixedTokenCount";
+
+        /// <summary>
+        /// The per-chunk token budget. Zero means use the embedding endpoint's resolved input budget.
+        /// </summary>
+        public int ChunkMaxTokens
+        {
+            get
+            {
+                return _ChunkMaxTokens;
+            }
+            set
+            {
+                if (value < 0) throw new ArgumentOutOfRangeException(nameof(ChunkMaxTokens), "ChunkMaxTokens may not be negative.");
+                _ChunkMaxTokens = value;
+            }
+        }
+
+        /// <summary>
+        /// The number of tokens of overlap between adjacent chunks. Default 64.
+        /// </summary>
+        public int ChunkOverlapTokens
+        {
+            get
+            {
+                return _ChunkOverlapTokens;
+            }
+            set
+            {
+                if (value < 0) throw new ArgumentOutOfRangeException(nameof(ChunkOverlapTokens), "ChunkOverlapTokens may not be negative.");
+                _ChunkOverlapTokens = value;
+            }
+        }
+
+        /// <summary>
         /// Indicates whether the scope is active.
         /// </summary>
         public bool Active { get; set; } = true;
@@ -130,6 +175,8 @@ namespace Isis.Core.Models
         private string _TenantId = String.Empty;
         private string _Name = String.Empty;
         private int _Dimensionality = 0;
+        private int _ChunkMaxTokens = 0;
+        private int _ChunkOverlapTokens = 64;
 
         #endregion
 

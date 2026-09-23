@@ -1,12 +1,15 @@
 namespace Isis.Core.Models
 {
     using System;
+    using Isis.Core.Enums;
     using Isis.Core.Helpers;
 
     /// <summary>
-    /// A tenant-scoped instruction surfaced to agents over MCP (via the isis_instructions tool). Instructions
-    /// convey how an agent should use this tenant's memory — conventions, house rules, and standing guidance —
-    /// and are returned in ascending Position order.
+    /// An instruction surfaced to agents over MCP (via the isis_instructions tool). Instructions convey how an
+    /// agent should use memory — conventions, house rules, and standing guidance — and are returned in
+    /// ascending Position order. An instruction is either <b>tenant-global</b> (<see cref="ScopeId"/> null) or
+    /// <b>scope-specific</b> (<see cref="ScopeId"/> set); a scope-specific instruction merges onto the global
+    /// set per its <see cref="MergeMode"/>, keyed by <see cref="Name"/>.
     /// </summary>
     public class Instruction
     {
@@ -59,6 +62,19 @@ namespace Isis.Core.Models
                 _Name = value;
             }
         }
+
+        /// <summary>
+        /// The scope this instruction belongs to; null means it is a tenant-global (default) instruction that
+        /// applies to every scope unless a scope-specific instruction overrides it.
+        /// </summary>
+        public string? ScopeId { get; set; } = null;
+
+        /// <summary>
+        /// How a scope-specific instruction merges onto the tenant-global set (matched by <see cref="Name"/>):
+        /// append a new instruction, replace a same-named global one, or hide a same-named global one. Ignored
+        /// for tenant-global instructions (<see cref="ScopeId"/> null).
+        /// </summary>
+        public InstructionMergeModeEnum MergeMode { get; set; } = InstructionMergeModeEnum.Append;
 
         /// <summary>
         /// The instruction content conveyed to the agent.

@@ -8,6 +8,7 @@ namespace Isis.Core.Database.Postgresql
     using System.Threading.Tasks;
     using Isis.Core.Database.Sqlite.Implementations;
     using Isis.Core.Database.Sqlite.Queries;
+    using Isis.Core.Models;
     using Npgsql;
 
     /// <summary>
@@ -58,7 +59,15 @@ namespace Isis.Core.Database.Postgresql
         /// <inheritdoc />
         public override async Task InitializeAsync(CancellationToken token = default)
         {
-            await ExecuteQueryAsync(SetupQueries.CreateTables(), true, token).ConfigureAwait(false);
+            // Create tables first, then run migrations, then indices — indices reference latest-shape columns
+            // and must not be created against a not-yet-migrated legacy table.
+            async Task EnsureTablesAsync(CancellationToken t)
+            {
+                await ExecuteQueryAsync(SetupQueries.CreateTables(), true, t).ConfigureAwait(false);
+            }
+
+            await EnsureTablesAsync(token).ConfigureAwait(false);
+            await MigrationRunner.ApplyAllAsync(this, EnsureTablesAsync, token).ConfigureAwait(false);
             await ExecuteQueryAsync(SetupQueries.CreateIndices(), true, token).ConfigureAwait(false);
         }
 

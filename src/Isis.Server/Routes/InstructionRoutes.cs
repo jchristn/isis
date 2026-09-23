@@ -4,6 +4,7 @@ namespace Isis.Server.Routes
     using System.Collections.Generic;
     using System.Threading.Tasks;
     using Isis.Core.Database;
+    using Isis.Core.Helpers;
     using Isis.Core.Models;
     using Isis.Core.Security;
     using Isis.Server.Models;
@@ -57,6 +58,15 @@ namespace Isis.Server.Routes
             server.Routes.PostAuthentication.Parameter.Add(HttpMethod.POST, "/v1.0/api/tenants/{tenantId}/instructions/batch-get", BatchGetAsync, null, openApiMetadata: OpenApiRouteMetadata.Create("Batch-get instructions", "Instructions"));
             server.Routes.PostAuthentication.Parameter.Add(HttpMethod.POST, "/v1.0/api/tenants/{tenantId}/instructions/batch", BatchCreateAsync, null, openApiMetadata: OpenApiRouteMetadata.Create("Batch-create instructions", "Instructions"));
             server.Routes.PostAuthentication.Parameter.Add(HttpMethod.POST, "/v1.0/api/tenants/{tenantId}/instructions/batch-delete", BatchDeleteAsync, null, openApiMetadata: OpenApiRouteMetadata.Create("Batch-delete instructions", "Instructions"));
+
+            // Scope-scoped instructions: same handlers, distinguished by the {scopeId} route parameter. A
+            // scope's instructions merge onto the tenant-global set per each instruction's merge mode.
+            server.Routes.PostAuthentication.Parameter.Add(HttpMethod.GET, "/v1.0/api/tenants/{tenantId}/scopes/{scopeId}/instructions", ListAsync, null, openApiMetadata: OpenApiRouteMetadata.Create("List a scope's instructions", "Instructions"));
+            server.Routes.PostAuthentication.Parameter.Add(HttpMethod.POST, "/v1.0/api/tenants/{tenantId}/scopes/{scopeId}/instructions", CreateAsync, null, openApiMetadata: OpenApiRouteMetadata.Create("Create a scope instruction", "Instructions"));
+            server.Routes.PostAuthentication.Parameter.Add(HttpMethod.GET, "/v1.0/api/tenants/{tenantId}/scopes/{scopeId}/effective-instructions", ResolvedAsync, null, openApiMetadata: OpenApiRouteMetadata.Create("Resolve a scope's effective instructions", "Instructions"));
+            server.Routes.PostAuthentication.Parameter.Add(HttpMethod.GET, "/v1.0/api/tenants/{tenantId}/scopes/{scopeId}/instructions/{instructionId}", ReadAsync, null, openApiMetadata: OpenApiRouteMetadata.Create("Read a scope instruction", "Instructions"));
+            server.Routes.PostAuthentication.Parameter.Add(HttpMethod.PUT, "/v1.0/api/tenants/{tenantId}/scopes/{scopeId}/instructions/{instructionId}", UpdateAsync, null, openApiMetadata: OpenApiRouteMetadata.Create("Update a scope instruction", "Instructions"));
+            server.Routes.PostAuthentication.Parameter.Add(HttpMethod.DELETE, "/v1.0/api/tenants/{tenantId}/scopes/{scopeId}/instructions/{instructionId}", DeleteAsync, null, openApiMetadata: OpenApiRouteMetadata.Create("Delete a scope instruction", "Instructions"));
         }
 
         #endregion
@@ -73,8 +83,30 @@ namespace Isis.Server.Routes
                 return;
             }
 
-            EnumerationResult<Instruction> result = await _Database.Instructions.EnumerateAsync(tenantId, RouteHelpers.Enumeration(context), context.Token).ConfigureAwait(false);
+            string? scopeId = RouteHelpers.Param(context, "scopeId");
+            EnumerationResult<Instruction> result = await _Database.Instructions.EnumerateAsync(tenantId, scopeId, RouteHelpers.Enumeration(context), context.Token).ConfigureAwait(false);
             await RouteHelpers.JsonAsync(context, 200, result).ConfigureAwait(false);
+        }
+
+        private async Task ResolvedAsync(HttpContextBase context)
+        {
+            RequestContext ctx = RouteHelpers.Context(context);
+            string tenantId = RouteHelpers.Param(context, "tenantId") ?? string.Empty;
+            if (!_Authorization.CanAccessTenant(ctx, tenantId))
+            {
+                await RouteHelpers.ErrorAsync(context, 403, "Forbidden", "Not permitted for this tenant.").ConfigureAwait(false);
+                return;
+            }
+
+            string scopeId = RouteHelpers.Param(context, "scopeId") ?? string.Empty;
+            EnumerationQuery all = new EnumerationQuery { MaxResults = 1000 };
+            EnumerationResult<Instruction> globals = await _Database.Instructions.EnumerateAsync(tenantId, null, all, context.Token).ConfigureAwait(false);
+            EnumerationResult<Instruction> scoped = await _Database.Instructions.EnumerateAsync(tenantId, scopeId, all, context.Token).ConfigureAwait(false);
+
+            List<ResolvedInstruction> effective = InstructionResolver.Resolve(globals.Objects, scoped.Objects, scopeId);
+            Dictionary<string, object?> body = new Dictionary<string, object?>();
+            body["objects"] = effective;
+            await RouteHelpers.JsonAsync(context, 200, body).ConfigureAwait(false);
         }
 
         private async Task CreateAsync(HttpContextBase context)
@@ -94,7 +126,19 @@ namespace Isis.Server.Routes
                 return;
             }
 
+            string? scopeId = RouteHelpers.Param(context, "scopeId");
+            if (!string.IsNullOrEmpty(scopeId))
+            {
+                Scope? scope = await _Database.Scopes.ReadAsync(tenantId, scopeId, context.Token).ConfigureAwait(false);
+                if (scope == null)
+                {
+                    await RouteHelpers.ErrorAsync(context, 404, "NotFound", "Scope not found.").ConfigureAwait(false);
+                    return;
+                }
+            }
+
             instruction.TenantId = tenantId;
+            instruction.ScopeId = string.IsNullOrEmpty(scopeId) ? null : scopeId;
             Instruction created = await _Database.Instructions.CreateAsync(instruction, context.Token).ConfigureAwait(false);
             await RouteHelpers.JsonAsync(context, 201, created).ConfigureAwait(false);
         }
@@ -147,6 +191,7 @@ namespace Isis.Server.Routes
 
             update.Id = instructionId;
             update.TenantId = tenantId;
+            update.ScopeId = existing.ScopeId;
             update.CreatedUtc = existing.CreatedUtc;
             Instruction saved = await _Database.Instructions.UpdateAsync(update, context.Token).ConfigureAwait(false);
             await RouteHelpers.JsonAsync(context, 200, saved).ConfigureAwait(false);
@@ -206,11 +251,16 @@ namespace Isis.Server.Routes
                 return;
             }
 
+            string? scopeId = RouteHelpers.Param(context, "scopeId");
             BatchInstructionRequest? request = RouteHelpers.Body<BatchInstructionRequest>(context);
             List<Instruction> objects = new List<Instruction>();
             if (request != null && request.Items != null && request.Items.Count > 0)
             {
-                foreach (Instruction item in request.Items) item.TenantId = tenantId;
+                foreach (Instruction item in request.Items)
+                {
+                    item.TenantId = tenantId;
+                    item.ScopeId = string.IsNullOrEmpty(scopeId) ? null : scopeId;
+                }
                 objects = await _Database.Instructions.CreateManyAsync(request.Items, context.Token).ConfigureAwait(false);
             }
 

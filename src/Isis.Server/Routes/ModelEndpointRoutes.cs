@@ -107,6 +107,12 @@ namespace Isis.Server.Routes
                 return;
             }
 
+            if (string.IsNullOrWhiteSpace(endpoint.BaseUrl))
+            {
+                await RouteHelpers.ErrorAsync(context, 400, "BadRequest", "A base URL is required (for example http://host:11434 or https://api.openai.com).").ConfigureAwait(false);
+                return;
+            }
+
             endpoint.TenantId = tenantId;
             endpoint.Id = IdGenerator.Endpoint(endpoint.Kind);
             ModelEndpoint created = await _Database.ModelEndpoints.CreateAsync(endpoint, context.Token).ConfigureAwait(false);

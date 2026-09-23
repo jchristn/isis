@@ -12,14 +12,16 @@ import CodeViewer from '../components/CodeViewer';
 import StatusBadge from '../components/StatusBadge';
 import HealthHistogram from '../components/HealthHistogram';
 import { ErrorBanner } from '../components/States';
-import { API_FORMATS, HEALTH_METHODS } from '../utils/constants';
+import { API_FORMATS, HEALTH_METHODS, AUTH_TYPES } from '../utils/constants';
 import { formatDateTime } from '../i18n/formatters';
 
+// Per-format presets applied when the API format changes. baseUrl is a full URL onto which the
+// format-specific path is appended; authType seeds the auth block appropriately for the provider.
 const FORMAT_DEFAULTS = {
-  Ollama: { port: 11434, useSsl: false, healthCheckUrl: '/api/tags', healthCheckUseAuth: false },
-  OpenAI: { port: 443, useSsl: true, healthCheckUrl: '/v1/models', healthCheckUseAuth: true },
-  VLlm: { port: 8000, useSsl: false, healthCheckUrl: '/v1/models', healthCheckUseAuth: false },
-  Gemini: { port: 443, useSsl: true, healthCheckUrl: '/v1beta/models', healthCheckUseAuth: true }
+  Ollama: { baseUrl: 'http://localhost:11434', healthCheckUrl: '/api/tags', healthCheckUseAuth: false, authType: 'None' },
+  OpenAI: { baseUrl: 'https://api.openai.com', healthCheckUrl: '/v1/models', healthCheckUseAuth: true, authType: 'BearerToken' },
+  VLlm: { baseUrl: 'http://localhost:8000', healthCheckUrl: '/v1/models', healthCheckUseAuth: false, authType: 'None' },
+  Gemini: { baseUrl: 'https://generativelanguage.googleapis.com', healthCheckUrl: '/v1beta/models', healthCheckUseAuth: true, authType: 'QueryParam', authQueryParam: 'key' }
 };
 
 function emptyForm(kind) {
@@ -27,12 +29,16 @@ function emptyForm(kind) {
     name: '',
     kind,
     apiFormat: 'Ollama',
-    hostname: '127.0.0.1',
-    port: 11434,
-    useSsl: false,
-    apiKey: '',
+    baseUrl: 'http://localhost:11434',
+    authType: 'None',
+    authHeaderName: '',
+    authSecretHeaderName: '',
+    authQueryParam: '',
+    authKeyId: '',
+    authSecret: '',
     model: '',
     dimensionality: kind === 'Embedding' ? 1536 : '',
+    maxInputTokens: kind === 'Embedding' ? 0 : '',
     healthCheckUrl: '/api/tags',
     healthCheckMethod: 'GET',
     healthCheckIntervalMs: 5000,
@@ -49,12 +55,16 @@ function EndpointForm({ kind, initial, onSubmit, onClose, t }) {
           name: initial.name || '',
           kind,
           apiFormat: initial.apiFormat || 'Ollama',
-          hostname: initial.hostname || '',
-          port: initial.port ?? 11434,
-          useSsl: initial.useSsl ?? false,
-          apiKey: initial.apiKey || '',
+          baseUrl: initial.baseUrl || '',
+          authType: initial.authType || 'None',
+          authHeaderName: initial.authHeaderName || '',
+          authSecretHeaderName: initial.authSecretHeaderName || '',
+          authQueryParam: initial.authQueryParam || '',
+          authKeyId: initial.authKeyId || '',
+          authSecret: initial.authSecret || '',
           model: initial.model || '',
           dimensionality: initial.dimensionality ?? (kind === 'Embedding' ? 1536 : ''),
+          maxInputTokens: initial.maxInputTokens ?? (kind === 'Embedding' ? 0 : ''),
           healthCheckUrl: initial.healthCheckUrl || '/',
           healthCheckMethod: initial.healthCheckMethod || 'GET',
           healthCheckIntervalMs: initial.healthCheckIntervalMs ?? 5000,
@@ -70,7 +80,8 @@ function EndpointForm({ kind, initial, onSubmit, onClose, t }) {
 
   const changeFormat = (fmt) => {
     const d = FORMAT_DEFAULTS[fmt] || {};
-    setForm((f) => ({ ...f, apiFormat: fmt, ...d }));
+    // Reset the auth-name fields before applying the format preset so stale names don't leak across formats.
+    setForm((f) => ({ ...f, apiFormat: fmt, authHeaderName: '', authSecretHeaderName: '', authQueryParam: '', ...d }));
   };
 
   const submit = async (e) => {
@@ -82,12 +93,16 @@ function EndpointForm({ kind, initial, onSubmit, onClose, t }) {
         name: form.name,
         kind,
         apiFormat: form.apiFormat,
-        hostname: form.hostname,
-        port: Number(form.port),
-        useSsl: form.useSsl,
-        apiKey: form.apiKey || undefined,
+        baseUrl: form.baseUrl,
+        authType: form.authType,
+        authHeaderName: form.authHeaderName || undefined,
+        authSecretHeaderName: form.authSecretHeaderName || undefined,
+        authQueryParam: form.authQueryParam || undefined,
+        authKeyId: form.authKeyId || undefined,
+        authSecret: form.authSecret || undefined,
         model: form.model,
         dimensionality: kind === 'Embedding' ? Number(form.dimensionality) || undefined : undefined,
+        maxInputTokens: kind === 'Embedding' ? Number(form.maxInputTokens) || 0 : undefined,
         healthCheckUrl: form.healthCheckUrl,
         healthCheckMethod: form.healthCheckMethod,
         healthCheckIntervalMs: Number(form.healthCheckIntervalMs),
@@ -114,7 +129,7 @@ function EndpointForm({ kind, initial, onSubmit, onClose, t }) {
           <button className="btn-secondary" onClick={onClose} disabled={busy}>
             {t('common.cancel')}
           </button>
-          <button className="btn-primary" onClick={submit} disabled={busy || !form.name || !form.hostname}>
+          <button className="btn-primary" onClick={submit} disabled={busy || !form.name || !form.baseUrl}>
             {t('common.save')}
           </button>
         </>
@@ -147,25 +162,96 @@ function EndpointForm({ kind, initial, onSubmit, onClose, t }) {
               <input type="number" value={form.dimensionality} onChange={(e) => set('dimensionality', e.target.value)} />
             </div>
           )}
-        </div>
-        <div className="field-row">
-          <div className="field">
-            <label>{t('endpoints.hostname')}</label>
-            <input value={form.hostname} onChange={(e) => set('hostname', e.target.value)} required />
-          </div>
-          <div className="field" style={{ maxWidth: 120 }}>
-            <label>{t('endpoints.port')}</label>
-            <input type="number" value={form.port} onChange={(e) => set('port', e.target.value)} />
-          </div>
-          <div className="field checkbox-field" style={{ maxWidth: 140, alignSelf: 'flex-end' }}>
-            <input id="useSsl" type="checkbox" checked={form.useSsl} onChange={(e) => set('useSsl', e.target.checked)} />
-            <label htmlFor="useSsl">{t('endpoints.useSsl')}</label>
-          </div>
+          {kind === 'Embedding' && (
+            <div className="field">
+              <label>{t('endpoints.maxInputTokens')}</label>
+              <input type="number" min={0} value={form.maxInputTokens} onChange={(e) => set('maxInputTokens', e.target.value)} />
+            </div>
+          )}
         </div>
         <div className="field">
-          <label>{t('endpoints.apiKey')} ({t('common.optional')})</label>
-          <input type="password" value={form.apiKey} onChange={(e) => set('apiKey', e.target.value)} autoComplete="new-password" />
+          <label>{t('endpoints.baseUrl')}</label>
+          <input value={form.baseUrl} onChange={(e) => set('baseUrl', e.target.value)} required placeholder="http://view.homedns.org:8900/v1.0/api/all-minilm-latest" />
+          <span className="field-hint">{t('endpoints.baseUrlHint')}</span>
         </div>
+
+        <h3 style={{ margin: 'var(--spacing-md) 0 var(--spacing-sm)' }}>{t('endpoints.authSection')}</h3>
+        <div className="field">
+          <label>{t('endpoints.authType')}</label>
+          <select value={form.authType} onChange={(e) => set('authType', e.target.value)}>
+            {AUTH_TYPES.map((a) => (
+              <option key={a} value={a}>
+                {t(`endpoints.auth_${a}`)}
+              </option>
+            ))}
+          </select>
+        </div>
+        {form.authType === 'BearerToken' && (
+          <div className="field">
+            <label>{t('endpoints.authToken')}</label>
+            <input type="password" value={form.authSecret} onChange={(e) => set('authSecret', e.target.value)} autoComplete="new-password" />
+          </div>
+        )}
+        {form.authType === 'ApiKeyHeader' && (
+          <div className="field-row">
+            <div className="field">
+              <label>{t('endpoints.authHeaderName')}</label>
+              <input value={form.authHeaderName} onChange={(e) => set('authHeaderName', e.target.value)} placeholder="x-api-key" />
+            </div>
+            <div className="field">
+              <label>{t('endpoints.authHeaderValue')}</label>
+              <input type="password" value={form.authSecret} onChange={(e) => set('authSecret', e.target.value)} autoComplete="new-password" />
+            </div>
+          </div>
+        )}
+        {form.authType === 'QueryParam' && (
+          <div className="field-row">
+            <div className="field">
+              <label>{t('endpoints.authQueryParam')}</label>
+              <input value={form.authQueryParam} onChange={(e) => set('authQueryParam', e.target.value)} placeholder="key" />
+            </div>
+            <div className="field">
+              <label>{t('endpoints.authQueryValue')}</label>
+              <input type="password" value={form.authSecret} onChange={(e) => set('authSecret', e.target.value)} autoComplete="new-password" />
+            </div>
+          </div>
+        )}
+        {form.authType === 'BasicAuth' && (
+          <div className="field-row">
+            <div className="field">
+              <label>{t('endpoints.authUsername')}</label>
+              <input value={form.authKeyId} onChange={(e) => set('authKeyId', e.target.value)} autoComplete="off" />
+            </div>
+            <div className="field">
+              <label>{t('endpoints.authPassword')}</label>
+              <input type="password" value={form.authSecret} onChange={(e) => set('authSecret', e.target.value)} autoComplete="new-password" />
+            </div>
+          </div>
+        )}
+        {form.authType === 'AccessKeySecret' && (
+          <>
+            <div className="field-row">
+              <div className="field">
+                <label>{t('endpoints.authAccessHeader')}</label>
+                <input value={form.authHeaderName} onChange={(e) => set('authHeaderName', e.target.value)} placeholder="x-access-key" />
+              </div>
+              <div className="field">
+                <label>{t('endpoints.authAccessKey')}</label>
+                <input value={form.authKeyId} onChange={(e) => set('authKeyId', e.target.value)} autoComplete="off" />
+              </div>
+            </div>
+            <div className="field-row">
+              <div className="field">
+                <label>{t('endpoints.authSecretHeader')}</label>
+                <input value={form.authSecretHeaderName} onChange={(e) => set('authSecretHeaderName', e.target.value)} placeholder="x-secret-key" />
+              </div>
+              <div className="field">
+                <label>{t('endpoints.authSecretKey')}</label>
+                <input type="password" value={form.authSecret} onChange={(e) => set('authSecret', e.target.value)} autoComplete="new-password" />
+              </div>
+            </div>
+          </>
+        )}
 
         <h3 style={{ margin: 'var(--spacing-md) 0 var(--spacing-sm)' }}>{t('endpoints.healthConfig')}</h3>
         <div className="field-row">
@@ -330,8 +416,10 @@ function HealthDetailBody({ endpoint: ep, health, history, t, lang }) {
         <dt>{t('endpoints.apiFormat')}</dt><dd>{dash(ep.apiFormat)}</dd>
         <dt>{t('endpoints.model')}</dt><dd className="cell-mono">{dash(ep.model)}</dd>
         {ep.kind === 'Embedding' && (<><dt>{t('endpoints.dimensionality')}</dt><dd>{dash(ep.dimensionality)}</dd></>)}
+        {ep.kind === 'Embedding' && (<><dt>{t('endpoints.maxInputTokens')}</dt><dd>{ep.maxInputTokens ? ep.maxInputTokens : t('endpoints.maxInputTokensAuto')}</dd></>)}
         <dt>{t('endpoints.endpointUrl')}</dt>
-        <dd className="cell-mono">{health?.baseUrl || `${ep.useSsl ? 'https' : 'http'}://${ep.hostname}:${ep.port}`}</dd>
+        <dd className="cell-mono">{health?.baseUrl || ep.baseUrl || '—'}</dd>
+        <dt>{t('endpoints.authType')}</dt><dd>{dash(t(`endpoints.auth_${ep.authType || 'None'}`))}</dd>
       </dl>
     </div>
   );
@@ -451,7 +539,7 @@ function EndpointsView({ kind }) {
       label: 'Endpoint',
       sortable: false,
       cellClass: 'cell-mono',
-      render: (e) => `${e.useSsl ? 'https' : 'http'}://${e.hostname}:${e.port}`
+      render: (e) => e.baseUrl || '—'
     },
     {
       key: 'health',

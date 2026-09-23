@@ -88,23 +88,50 @@ When the REST call fails, `success` is `false`, `statusCode` carries the upstrea
 
 ## Tool Inventory
 
-Isis exposes thirteen MCP tools.
+Isis exposes **32** MCP tools at parity with the tenant-scoped REST surface. Each tool proxies the
+REST route shown, forwarding the caller's credential; the write/CRUD tools accept the same fields as
+the corresponding REST request body. (Voltaic also auto-registers `ping`, `echo`, `getTime`, and
+`getSessions`.)
 
-| Tool | Purpose |
-|------|---------|
-| `whoami` | Resolve the tenant and principal the caller's credential maps to |
-| `scope_enumerate` | List the memory scopes in a tenant |
-| `scope_create` | Create a memory scope for a project when none exists |
-| `instructions` | Get the tenant's standing instructions |
-| `endpoint_enumerate` | List a tenant's model endpoints (embedding / inference) |
-| `guide` | Get the operating guide for a scope: categories, usage instructions, capabilities |
-| `category_enumerate` | List categories in a scope, including usage instructions |
-| `category_create` | Create a category in a scope |
-| `memory_enumerate` | List memory summaries in a scope (token-cheap) |
-| `memory_read` | Read a single memory by id, returning the full body |
-| `memory_upsert` | Create or update a memory; idempotent on `(scope, category, slug)` |
-| `memory_search` | Search a scope's memory (keyword, semantic, or hybrid) |
-| `memory_delete` | Delete a memory by id |
+| Tool | REST route proxied | Purpose |
+|------|--------------------|---------|
+| `whoami` | `GET /whoami` | Resolve the tenant and principal the caller's credential maps to |
+| `instructions` | `GET .../instructions` or `.../scopes/{sid}/effective-instructions` | Standing instructions; pass `scopeId` for a scope's effective (merged) set |
+| `guide` | `GET .../scopes/{sid}/guide` | A scope's categories, usage instructions, and store capabilities |
+| `scope_enumerate` | `GET .../scopes` | List the memory scopes in a tenant |
+| `scope_create` | `POST .../scopes` | Create a memory scope |
+| `scope_read` | `GET .../scopes/{sid}` | Read a scope by id |
+| `scope_update` | `PUT .../scopes/{sid}` | Update a scope's name/description |
+| `scope_delete` | `DELETE .../scopes/{sid}` | Delete a scope (cascades categories, memories, scope instructions) |
+| `category_enumerate` | `GET .../categories` | List categories in a scope |
+| `category_create` | `POST .../categories` | Create a category |
+| `category_read` | `GET .../categories/{cid}` | Read a category by id |
+| `category_update` | `PUT .../categories/{cid}` | Update a category |
+| `category_delete` | `DELETE .../categories/{cid}` | Delete a category |
+| `memory_enumerate` | `GET .../memories` | List memory summaries in a scope (token-cheap) |
+| `memory_read` | `GET .../memories/{mid}` | Read a single memory by id (full body) |
+| `memory_upsert` | `POST .../memories` | Create or update a memory; idempotent on `(scope, category, slug)` |
+| `memory_search` | `POST .../memories/search` | Search a scope's memory (keyword, semantic, or hybrid) |
+| `memory_delete` | `DELETE .../memories/{mid}` | Delete a memory by id |
+| `endpoint_enumerate` | `GET .../endpoints` | List a tenant's model endpoints |
+| `endpoint_read` | `GET .../endpoints/{eid}` | Read a model endpoint by id |
+| `endpoint_create` | `POST .../endpoints` | Create a model endpoint (base URL + auth) |
+| `endpoint_update` | `PUT .../endpoints/{eid}` | Update a model endpoint |
+| `endpoint_delete` | `DELETE .../endpoints/{eid}` | Delete a model endpoint |
+| `endpoint_health` | `GET .../endpoint-health` | Probe and return endpoint health |
+| `chat` | `POST .../scopes/{sid}/chat` | Ask a question answered from a scope's memory (RAG); returns answer + citations |
+| `collection_enumerate` | `GET .../collections` | List the RecallDB collections backing scopes |
+| `collection_read` | `GET .../collections/{cid}` | Read a RecallDB collection by id |
+| `collection_create` | `POST .../collections` | Create a RecallDB collection directly |
+| `collection_delete` | `DELETE .../collections/{cid}` | Delete a RecallDB collection |
+| `instruction_create` | `POST .../instructions` or `.../scopes/{sid}/instructions` | Create a tenant-global or scope-specific instruction |
+| `instruction_update` | `PUT .../instructions/{iid}` | Update an instruction by id |
+| `instruction_delete` | `DELETE .../instructions/{iid}` | Delete an instruction by id |
+
+Routes are shown relative to `/v1.0/api/tenants/{tenantId}` (except `whoami`). Management operations
+(endpoint and instruction writes) require tenant administration; the REST server enforces this.
+Deliberately **not** exposed over MCP (dashboard/REST-only): tenant, user, and credential management,
+server settings, session/token login, and the raw request-history / operation-event feeds.
 
 ## Recommended Agent Workflow
 
@@ -247,6 +274,10 @@ Proxies `POST /v1.0/api/tenants/{tenantId}/scopes`.
 | `dimensionality` | integer | No | null | Embedding vector dimension |
 | `filesystemLayout` | string | No | null | Layout for a `Filesystem` scope: `SingleFile`, `Hierarchy`, or `OkfBundle` |
 | `targetPath` | string | No | null | Root path for a `Filesystem` scope |
+| `chunkingMode` | string | No | `OnOverflow` | When to chunk oversized memory bodies for embedding: `OnOverflow`, `Always`, or `Off` |
+| `chunkStrategy` | string | No | `FixedTokenCount` | Chunk splitting strategy (e.g. `FixedTokenCount`, `SentenceBased`, `ParagraphBased`, `Recursive`) |
+| `chunkMaxTokens` | integer | No | 0 | Per-chunk token budget (0 = use the embedding model's resolved budget) |
+| `chunkOverlapTokens` | integer | No | 64 | Token overlap between adjacent chunks |
 
 #### Example Request
 

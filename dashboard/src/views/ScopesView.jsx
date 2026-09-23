@@ -12,7 +12,14 @@ import CopyableId from '../components/CopyableId';
 import CodeViewer from '../components/CodeViewer';
 import StatusBadge from '../components/StatusBadge';
 import { ErrorBanner } from '../components/States';
-import { STORE_PROVIDERS, FILESYSTEM_LAYOUTS, FILESYSTEM_LAYOUT_LABELS } from '../utils/constants';
+import {
+  STORE_PROVIDERS,
+  FILESYSTEM_LAYOUTS,
+  FILESYSTEM_LAYOUT_LABELS,
+  CHUNKING_MODES,
+  CHUNKING_MODE_LABELS,
+  CHUNK_STRATEGIES
+} from '../utils/constants';
 
 const EMPTY = {
   name: '',
@@ -22,11 +29,15 @@ const EMPTY = {
   targetPath: '',
   dimensionality: 1536,
   recallCollectionId: '',
-  embeddingEndpointId: ''
+  embeddingEndpointId: '',
+  chunkingMode: 'OnOverflow',
+  chunkStrategy: 'FixedTokenCount',
+  chunkMaxTokens: 0,
+  chunkOverlapTokens: 64
 };
 
 function ScopeForm({ initial, onSubmit, onClose, endpoints, t }) {
-  const [form, setForm] = useState(initial || EMPTY);
+  const [form, setForm] = useState({ ...EMPTY, ...(initial || {}) });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -45,7 +56,11 @@ function ScopeForm({ initial, onSubmit, onClose, endpoints, t }) {
         targetPath: form.storeProvider === 'Filesystem' ? form.targetPath : undefined,
         dimensionality: Number(form.dimensionality) || undefined,
         recallCollectionId: form.recallCollectionId || undefined,
-        embeddingEndpointId: form.embeddingEndpointId || undefined
+        embeddingEndpointId: form.embeddingEndpointId || undefined,
+        chunkingMode: form.chunkingMode,
+        chunkStrategy: form.chunkStrategy,
+        chunkMaxTokens: Number(form.chunkMaxTokens) || 0,
+        chunkOverlapTokens: Number(form.chunkOverlapTokens) || 0
       });
       onClose();
     } catch (e2) {
@@ -142,6 +157,53 @@ function ScopeForm({ initial, onSubmit, onClose, endpoints, t }) {
           </select>
           <div className="field-hint">{t('scopes.dimensionLocked')}</div>
         </div>
+        {form.storeProvider === 'RecallDb' && (
+          <>
+            <div className="field-row">
+              <div className="field">
+                <label>{t('scopes.chunkingMode')}</label>
+                <select value={form.chunkingMode} onChange={(e) => set('chunkingMode', e.target.value)}>
+                  {CHUNKING_MODES.map((m) => (
+                    <option key={m} value={m}>
+                      {CHUNKING_MODE_LABELS[m] || m}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
+                <label>{t('scopes.chunkStrategy')}</label>
+                <select value={form.chunkStrategy} onChange={(e) => set('chunkStrategy', e.target.value)}>
+                  {CHUNK_STRATEGIES.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="field-row">
+              <div className="field">
+                <label>{t('scopes.chunkMaxTokens')}</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={form.chunkMaxTokens}
+                  onChange={(e) => set('chunkMaxTokens', e.target.value)}
+                />
+              </div>
+              <div className="field">
+                <label>{t('scopes.chunkOverlapTokens')}</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={form.chunkOverlapTokens}
+                  onChange={(e) => set('chunkOverlapTokens', e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="field-hint">{t('scopes.chunkingHint')}</div>
+          </>
+        )}
       </form>
     </Modal>
   );

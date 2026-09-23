@@ -73,11 +73,7 @@ namespace Isis.Core.Recall
 
                 using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, endpoint.GetBaseUrl() + path);
                 request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-                if (!string.IsNullOrEmpty(endpoint.ApiKey))
-                {
-                    if (endpoint.ApiFormat == ApiFormatEnum.Gemini) request.Headers.TryAddWithoutValidation("x-goog-api-key", endpoint.ApiKey);
-                    else request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + endpoint.ApiKey);
-                }
+                EndpointAuthenticator.Apply(request, endpoint);
 
                 HttpResponseMessage response = await _HttpClient.SendAsync(request, cts.Token).ConfigureAwait(false);
                 string body = await response.Content.ReadAsStringAsync(cts.Token).ConfigureAwait(false);

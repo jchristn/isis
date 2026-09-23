@@ -270,6 +270,23 @@ class ApiClient {
     return this.del(`${API_BASE}/tenants/${this._tid(tid)}/instructions/${encodeURIComponent(iid)}`);
   }
 
+  // Scope-scoped instructions (merge onto the tenant-global set) + resolved effective view.
+  listScopeInstructions(tid, sid, query = {}) {
+    return this.get(`${API_BASE}/tenants/${this._tid(tid)}/scopes/${encodeURIComponent(sid)}/instructions`, query).then(normalizePaged);
+  }
+  createScopeInstruction(tid, sid, body) {
+    return this.post(`${API_BASE}/tenants/${this._tid(tid)}/scopes/${encodeURIComponent(sid)}/instructions`, body);
+  }
+  updateScopeInstruction(tid, sid, iid, body) {
+    return this.put(`${API_BASE}/tenants/${this._tid(tid)}/scopes/${encodeURIComponent(sid)}/instructions/${encodeURIComponent(iid)}`, body);
+  }
+  deleteScopeInstruction(tid, sid, iid) {
+    return this.del(`${API_BASE}/tenants/${this._tid(tid)}/scopes/${encodeURIComponent(sid)}/instructions/${encodeURIComponent(iid)}`);
+  }
+  resolveInstructions(tid, sid) {
+    return this.get(`${API_BASE}/tenants/${this._tid(tid)}/scopes/${encodeURIComponent(sid)}/effective-instructions`).then(normalizePaged);
+  }
+
   // ------------------------------------------------------------------
   // Scopes
   // ------------------------------------------------------------------

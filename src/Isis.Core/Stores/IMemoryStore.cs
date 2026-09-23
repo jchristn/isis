@@ -1,5 +1,6 @@
 namespace Isis.Core.Stores
 {
+    using System.Collections.Generic;
     using System.Threading;
     using System.Threading.Tasks;
     using Isis.Core.Models;
@@ -24,14 +25,18 @@ namespace Isis.Core.Stores
         Task EnsureScopeAsync(Scope scope, CancellationToken token = default);
 
         /// <summary>
-        /// Create or update a memory's content in the store.
+        /// Create or update a memory's content in the store. The body is supplied as one or more chunks: a
+        /// small memory is a single chunk carrying the whole body, while an oversized memory is split into
+        /// ordinal chunks that each fit the embedding budget. Embedding-based providers store one document per
+        /// chunk (sharing the parent memory's identity) so that retrieval can roll chunks back up to a single
+        /// hit per memory; providers that do not embed may treat the memory as a whole and ignore the split.
         /// </summary>
         /// <param name="scope">The owning scope.</param>
         /// <param name="memory">The memory whose body is being stored.</param>
-        /// <param name="embedding">The embedding vector, when the provider requires one; otherwise null.</param>
+        /// <param name="chunks">The ordered body chunks, each carrying its embedding when the provider requires one.</param>
         /// <param name="token">Cancellation token.</param>
-        /// <returns>The store key identifying the stored content.</returns>
-        Task<string> UpsertAsync(Scope scope, Memory memory, float[]? embedding, CancellationToken token = default);
+        /// <returns>The store key identifying the stored content (the parent memory key).</returns>
+        Task<string> UpsertAsync(Scope scope, Memory memory, IReadOnlyList<MemoryChunk> chunks, CancellationToken token = default);
 
         /// <summary>
         /// Delete a memory's content from the store.
@@ -51,6 +56,17 @@ namespace Isis.Core.Stores
         /// <param name="token">Cancellation token.</param>
         /// <returns>Task.</returns>
         Task DeleteScopeAsync(Scope scope, CancellationToken token = default);
+
+        /// <summary>
+        /// Tear down any tenant-level container this provider maintains (for example, the RecallDB tenant that
+        /// holds a tenant's collections). Called once when a tenant is deleted, after its scopes have already
+        /// been torn down. Best-effort: implementations must not throw for a missing/absent container (or when
+        /// the provider keeps no tenant-level state), so that cascading deletes are not blocked.
+        /// </summary>
+        /// <param name="tenantId">The tenant whose backing container is being removed.</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>Task.</returns>
+        Task DeleteTenantAsync(string tenantId, CancellationToken token = default);
 
         /// <summary>
         /// Search the scope's memory content.

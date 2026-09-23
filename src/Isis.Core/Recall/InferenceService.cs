@@ -23,7 +23,7 @@ namespace Isis.Core.Recall
     {
         #region Private-Members
 
-        private readonly HttpClient _HttpClient;
+        private readonly HttpMessageHandler _Transport;
 
         #endregion
 
@@ -32,11 +32,14 @@ namespace Isis.Core.Recall
         /// <summary>
         /// Instantiate the inference service.
         /// </summary>
-        /// <param name="httpClient">The HTTP client PolyPrompt uses as its transport.</param>
-        /// <exception cref="ArgumentNullException">Thrown when httpClient is null.</exception>
-        public InferenceService(HttpClient httpClient)
+        /// <param name="transport">The shared transport handler PolyPrompt calls through. Isis wraps it
+        /// per-endpoint with an <see cref="EndpointAuthHandler"/> to apply the endpoint's configured auth
+        /// (except for the Gemini format, whose key is presented via PolyPrompt's native query handling).
+        /// The service never disposes this handler; the owner does.</param>
+        /// <exception cref="ArgumentNullException">Thrown when transport is null.</exception>
+        public InferenceService(HttpMessageHandler transport)
         {
-            _HttpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+            _Transport = transport ?? throw new ArgumentNullException(nameof(transport));
         }
 
         #endregion
@@ -194,20 +197,24 @@ namespace Isis.Core.Recall
         private CompletionClientBase CreateClient(ModelEndpoint endpoint)
         {
             string baseUrl = endpoint.GetBaseUrl();
-            string apiKey = endpoint.ApiKey ?? string.Empty;
 
             CompletionClientBase client;
-            switch (endpoint.ApiFormat)
+            if (endpoint.ApiFormat == ApiFormatEnum.Gemini)
             {
-                case ApiFormatEnum.Ollama:
-                    client = new OllamaClient(baseUrl, apiKey, null, _HttpClient);
-                    break;
-                case ApiFormatEnum.Gemini:
-                    client = new GeminiClient(baseUrl, apiKey, null, _HttpClient);
-                    break;
-                default:
-                    client = new OpenAiClient(baseUrl, apiKey, null, _HttpClient);
-                    break;
+                // Gemini presents its credential via PolyPrompt's native "?key=" query handling, so hand the
+                // secret to the client directly rather than through the generic auth handler.
+                HttpClient transport = new HttpClient(_Transport, false) { Timeout = Timeout.InfiniteTimeSpan };
+                client = new GeminiClient(baseUrl, endpoint.AuthSecret ?? string.Empty, null, transport);
+            }
+            else
+            {
+                // All other formats: apply Isis's generic auth (bearer / header / query / basic / access-secret)
+                // via a per-endpoint delegating handler over the shared transport, and pass a null key so
+                // PolyPrompt does not also add its own Authorization header.
+                HttpClient transport = new HttpClient(new EndpointAuthHandler(endpoint, _Transport), false) { Timeout = Timeout.InfiniteTimeSpan };
+                client = endpoint.ApiFormat == ApiFormatEnum.Ollama
+                    ? new OllamaClient(baseUrl, null, null, transport)
+                    : new OpenAiClient(baseUrl, null, null, transport);
             }
 
             if (!string.IsNullOrEmpty(endpoint.Model)) client.Model = endpoint.Model;

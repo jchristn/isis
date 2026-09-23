@@ -42,7 +42,7 @@ namespace Isis.Core.Database.Sqlite.Implementations
             scope.LastUpdateUtc = DateTime.UtcNow;
 
             string query =
-                "INSERT INTO scopes (id, tenantid, name, description, storeprovider, recallcollectionid, dimensionality, embeddingendpointid, filesystemlayout, targetpath, active, createdutc, lastupdateutc) VALUES (" +
+                "INSERT INTO scopes (id, tenantid, name, description, storeprovider, recallcollectionid, dimensionality, embeddingendpointid, filesystemlayout, targetpath, chunkingmode, chunkstrategy, chunkmaxtokens, chunkoverlaptokens, active, createdutc, lastupdateutc) VALUES (" +
                 SqliteHelpers.ToSqlRequired(scope.Id) + ", " +
                 SqliteHelpers.ToSqlRequired(scope.TenantId) + ", " +
                 SqliteHelpers.ToSqlRequired(scope.Name) + ", " +
@@ -53,6 +53,10 @@ namespace Isis.Core.Database.Sqlite.Implementations
                 SqliteHelpers.ToSql(scope.EmbeddingEndpointId) + ", " +
                 SqliteHelpers.ToSqlRequired(scope.FilesystemLayout.ToString()) + ", " +
                 SqliteHelpers.ToSql(scope.TargetPath) + ", " +
+                SqliteHelpers.ToSqlRequired(scope.ChunkingMode.ToString()) + ", " +
+                SqliteHelpers.ToSqlRequired(scope.ChunkStrategy) + ", " +
+                scope.ChunkMaxTokens + ", " +
+                scope.ChunkOverlapTokens + ", " +
                 SqliteHelpers.ToSql(scope.Active) + ", " +
                 SqliteHelpers.ToSqlRequired(scope.CreatedUtc) + ", " +
                 SqliteHelpers.ToSqlRequired(scope.LastUpdateUtc) + ");";
@@ -132,6 +136,10 @@ namespace Isis.Core.Database.Sqlite.Implementations
                 "embeddingendpointid = " + SqliteHelpers.ToSql(scope.EmbeddingEndpointId) + ", " +
                 "filesystemlayout = " + SqliteHelpers.ToSqlRequired(scope.FilesystemLayout.ToString()) + ", " +
                 "targetpath = " + SqliteHelpers.ToSql(scope.TargetPath) + ", " +
+                "chunkingmode = " + SqliteHelpers.ToSqlRequired(scope.ChunkingMode.ToString()) + ", " +
+                "chunkstrategy = " + SqliteHelpers.ToSqlRequired(scope.ChunkStrategy) + ", " +
+                "chunkmaxtokens = " + scope.ChunkMaxTokens + ", " +
+                "chunkoverlaptokens = " + scope.ChunkOverlapTokens + ", " +
                 "active = " + SqliteHelpers.ToSql(scope.Active) + ", " +
                 "lastupdateutc = " + SqliteHelpers.ToSqlRequired(scope.LastUpdateUtc) + " " +
                 "WHERE tenantid = " + SqliteHelpers.ToSqlRequired(scope.TenantId) +
@@ -210,6 +218,11 @@ namespace Isis.Core.Database.Sqlite.Implementations
             scope.EmbeddingEndpointId = SqliteHelpers.NullIfEmpty(SqliteHelpers.GetString(row["embeddingendpointid"]));
             scope.FilesystemLayout = Enum.TryParse(SqliteHelpers.GetString(row["filesystemlayout"]), out FilesystemLayoutEnum layout) ? layout : FilesystemLayoutEnum.Hierarchy;
             scope.TargetPath = SqliteHelpers.NullIfEmpty(SqliteHelpers.GetString(row["targetpath"]));
+            scope.ChunkingMode = Enum.TryParse(SqliteHelpers.GetString(row["chunkingmode"]), out ChunkingModeEnum chunkingMode) ? chunkingMode : ChunkingModeEnum.OnOverflow;
+            string chunkStrategy = SqliteHelpers.GetString(row["chunkstrategy"]);
+            scope.ChunkStrategy = String.IsNullOrEmpty(chunkStrategy) ? "FixedTokenCount" : chunkStrategy;
+            scope.ChunkMaxTokens = SqliteHelpers.GetInt(row["chunkmaxtokens"]);
+            scope.ChunkOverlapTokens = SqliteHelpers.GetInt(row["chunkoverlaptokens"], 64);
             scope.Active = SqliteHelpers.GetBool(row["active"]);
             scope.CreatedUtc = SqliteHelpers.ParseTimestamp(row["createdutc"]);
             scope.LastUpdateUtc = SqliteHelpers.ParseTimestamp(row["lastupdateutc"]);

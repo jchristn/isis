@@ -8,6 +8,7 @@ namespace Isis.Core.Database.Sqlite
     using System.Threading.Tasks;
     using Isis.Core.Database.Sqlite.Implementations;
     using Isis.Core.Database.Sqlite.Queries;
+    using Isis.Core.Models;
     using Microsoft.Data.Sqlite;
 
     /// <summary>
@@ -69,7 +70,17 @@ namespace Isis.Core.Database.Sqlite
             await ExecuteQueryAsync("PRAGMA journal_mode = WAL;", false, token).ConfigureAwait(false);
             await ExecuteQueryAsync("PRAGMA synchronous = NORMAL;", false, token).ConfigureAwait(false);
             await ExecuteQueryAsync("PRAGMA foreign_keys = ON;", false, token).ConfigureAwait(false);
-            await ExecuteQueryAsync(SetupQueries.CreateTables(), true, token).ConfigureAwait(false);
+
+            // Create tables first, then run migrations, then indices. Indices reference the latest-shape
+            // columns, so they must be created only after migrations have brought every table current
+            // (creating them against a not-yet-migrated legacy table would fail on a missing column).
+            async Task EnsureTablesAsync(CancellationToken t)
+            {
+                await ExecuteQueryAsync(SetupQueries.CreateTables(), true, t).ConfigureAwait(false);
+            }
+
+            await EnsureTablesAsync(token).ConfigureAwait(false);
+            await MigrationRunner.ApplyAllAsync(this, EnsureTablesAsync, token).ConfigureAwait(false);
             await ExecuteQueryAsync(SetupQueries.CreateIndices(), true, token).ConfigureAwait(false);
         }
 

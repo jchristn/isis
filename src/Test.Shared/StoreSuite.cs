@@ -91,12 +91,15 @@ namespace Test.Shared
                     TestCase.Async("store", "recalldb-unconfigured-upsert-throws", "Unconfigured RecallDB Upsert throws NotSupported", RecallDbUnconfiguredUpsertThrowsAsync),
                     TestCase.Async("store", "recalldb-unconfigured-search-throws", "Unconfigured RecallDB Search throws NotSupported", RecallDbUnconfiguredSearchThrowsAsync),
                     TestCase.Async("store", "recalldb-unconfigured-delete-throws", "Unconfigured RecallDB Delete throws NotSupported", RecallDbUnconfiguredDeleteThrowsAsync),
+                    TestCase.Async("store", "recalldb-unconfigured-deletetenant-noop", "Unconfigured RecallDB DeleteTenant is a best-effort no-op", RecallDbUnconfiguredDeleteTenantNoopAsync),
 
                     // Verbex (not wired).
                     TestCase.Async("store", "verbex-ensure-throws", "Verbex EnsureScope throws NotSupported", VerbexEnsureThrowsAsync),
                     TestCase.Async("store", "verbex-upsert-throws", "Verbex Upsert throws NotSupported", VerbexUpsertThrowsAsync),
                     TestCase.Async("store", "verbex-search-throws", "Verbex Search throws NotSupported", VerbexSearchThrowsAsync),
-                    TestCase.Async("store", "verbex-delete-throws", "Verbex Delete throws NotSupported", VerbexDeleteThrowsAsync)
+                    TestCase.Async("store", "verbex-delete-throws", "Verbex Delete throws NotSupported", VerbexDeleteThrowsAsync),
+                    TestCase.Async("store", "verbex-deletetenant-noop", "Verbex DeleteTenant is a best-effort no-op", VerbexDeleteTenantNoopAsync),
+                    TestCase.Async("store", "filesystem-deletetenant-noop", "Filesystem DeleteTenant is a no-op (no tenant container)", FilesystemDeleteTenantNoopAsync)
                 });
         }
 
@@ -131,7 +134,7 @@ namespace Test.Shared
                 await store.EnsureScopeAsync(scope).ConfigureAwait(false);
 
                 Memory memory = Mem(scope, "grip", "Grip", "Win the grip; control the sleeve and collar.");
-                string key = await store.UpsertAsync(scope, memory, null).ConfigureAwait(false);
+                string key = await store.UpsertAsync(scope, memory, One(memory)).ConfigureAwait(false);
 
                 TestCase.Require(!string.IsNullOrEmpty(key), "Upsert should return a non-empty store key.");
                 TestCase.Require(File.Exists(key), "The store key should point at an existing file.");
@@ -152,8 +155,8 @@ namespace Test.Shared
                 IMemoryStore store = MemoryStoreFactory.Create(scope);
                 await store.EnsureScopeAsync(scope).ConfigureAwait(false);
 
-                await store.UpsertAsync(scope, Mem(scope, "grip", "Grip", "Win the grip; control the collar."), null).ConfigureAwait(false);
-                await store.UpsertAsync(scope, Mem(scope, "grip", "Grip", "Win the grip; control the sleeve and collar."), null).ConfigureAwait(false);
+                await store.UpsertAsync(scope, Mem(scope, "grip", "Grip", "Win the grip; control the collar."), One(Mem(scope, "grip", "Grip", "Win the grip; control the collar."))).ConfigureAwait(false);
+                await store.UpsertAsync(scope, Mem(scope, "grip", "Grip", "Win the grip; control the sleeve and collar."), One(Mem(scope, "grip", "Grip", "Win the grip; control the sleeve and collar."))).ConfigureAwait(false);
 
                 string categoryDir = Path.Combine(work, "cat_1");
                 string[] files = Directory.GetFiles(categoryDir, "*.md", SearchOption.AllDirectories);
@@ -175,7 +178,7 @@ namespace Test.Shared
                 await store.EnsureScopeAsync(scope).ConfigureAwait(false);
 
                 Memory memory = Mem(scope, "grip", "Grip", "Win the grip; control the sleeve and collar.");
-                string key = await store.UpsertAsync(scope, memory, null).ConfigureAwait(false);
+                string key = await store.UpsertAsync(scope, memory, One(memory)).ConfigureAwait(false);
                 TestCase.Require(File.Exists(key), "The memory file should exist after upsert.");
 
                 await store.DeleteAsync(scope, memory).ConfigureAwait(false);
@@ -195,7 +198,7 @@ namespace Test.Shared
                 Scope scope = HierScope(work);
                 IMemoryStore store = MemoryStoreFactory.Create(scope);
                 await store.EnsureScopeAsync(scope).ConfigureAwait(false);
-                await store.UpsertAsync(scope, Mem(scope, "grip", "Grip", "Win the grip; control the sleeve and collar."), null).ConfigureAwait(false);
+                await store.UpsertAsync(scope, Mem(scope, "grip", "Grip", "Win the grip; control the sleeve and collar."), One(Mem(scope, "grip", "Grip", "Win the grip; control the sleeve and collar."))).ConfigureAwait(false);
 
                 MemorySearchResult result = await store.SearchAsync(scope, new MemorySearchQuery { QueryText = "sleeve collar", Mode = SearchModeEnum.Keyword, TopK = 5 }, null).ConfigureAwait(false);
                 TestCase.Require(result.Hits.Count >= 1, "Expected at least one hit for an overlapping keyword.");
@@ -218,7 +221,7 @@ namespace Test.Shared
                 Scope scope = HierScope(work);
                 IMemoryStore store = MemoryStoreFactory.Create(scope);
                 await store.EnsureScopeAsync(scope).ConfigureAwait(false);
-                await store.UpsertAsync(scope, Mem(scope, "grip", "Grip", "Win the grip; control the sleeve and collar."), null).ConfigureAwait(false);
+                await store.UpsertAsync(scope, Mem(scope, "grip", "Grip", "Win the grip; control the sleeve and collar."), One(Mem(scope, "grip", "Grip", "Win the grip; control the sleeve and collar."))).ConfigureAwait(false);
 
                 MemorySearchResult result = await store.SearchAsync(scope, new MemorySearchQuery { QueryText = "grip", Mode = SearchModeEnum.Keyword, TopK = 5 }, null).ConfigureAwait(false);
                 TestCase.Require(result.EffectiveMode == SearchModeEnum.Keyword, "Filesystem search should report keyword as the effective mode.");
@@ -237,7 +240,7 @@ namespace Test.Shared
                 Scope scope = HierScope(work);
                 IMemoryStore store = MemoryStoreFactory.Create(scope);
                 await store.EnsureScopeAsync(scope).ConfigureAwait(false);
-                await store.UpsertAsync(scope, Mem(scope, "grip", "Grip", "Win the grip; control the sleeve and collar."), null).ConfigureAwait(false);
+                await store.UpsertAsync(scope, Mem(scope, "grip", "Grip", "Win the grip; control the sleeve and collar."), One(Mem(scope, "grip", "Grip", "Win the grip; control the sleeve and collar."))).ConfigureAwait(false);
 
                 MemorySearchResult result = await store.SearchAsync(scope, new MemorySearchQuery { QueryText = "grip", Mode = SearchModeEnum.Hybrid, TopK = 5 }, null).ConfigureAwait(false);
                 TestCase.Require(result.EffectiveMode == SearchModeEnum.Keyword, "A hybrid request should still be served as keyword.");
@@ -257,7 +260,7 @@ namespace Test.Shared
                 Scope scope = HierScope(work);
                 IMemoryStore store = MemoryStoreFactory.Create(scope);
                 await store.EnsureScopeAsync(scope).ConfigureAwait(false);
-                await store.UpsertAsync(scope, Mem(scope, "grip", "Grip", "Win the grip; control the sleeve and collar."), null).ConfigureAwait(false);
+                await store.UpsertAsync(scope, Mem(scope, "grip", "Grip", "Win the grip; control the sleeve and collar."), One(Mem(scope, "grip", "Grip", "Win the grip; control the sleeve and collar."))).ConfigureAwait(false);
 
                 MemorySearchResult result = await store.SearchAsync(scope, new MemorySearchQuery { QueryText = "grip", Mode = SearchModeEnum.Keyword, CategoryFilter = "cat_nomatch", TopK = 5 }, null).ConfigureAwait(false);
                 TestCase.Require(result.Hits.Count == 0, "A non-matching category filter should return zero hits, got " + result.Hits.Count + ".");
@@ -276,7 +279,7 @@ namespace Test.Shared
                 Scope scope = HierScope(work);
                 IMemoryStore store = MemoryStoreFactory.Create(scope);
                 await store.EnsureScopeAsync(scope).ConfigureAwait(false);
-                await store.UpsertAsync(scope, Mem(scope, "grip", "Grip", "Win the grip; control the sleeve and collar."), null).ConfigureAwait(false);
+                await store.UpsertAsync(scope, Mem(scope, "grip", "Grip", "Win the grip; control the sleeve and collar."), One(Mem(scope, "grip", "Grip", "Win the grip; control the sleeve and collar."))).ConfigureAwait(false);
 
                 MemorySearchResult result = await store.SearchAsync(scope, new MemorySearchQuery { QueryText = "zzznotpresentanywhere", Mode = SearchModeEnum.Keyword, TopK = 5 }, null).ConfigureAwait(false);
                 TestCase.Require(result.Hits.Count == 0, "A query that matches nothing should return zero hits, got " + result.Hits.Count + ".");
@@ -296,7 +299,7 @@ namespace Test.Shared
                 IMemoryStore store = MemoryStoreFactory.Create(scope);
                 await store.EnsureScopeAsync(scope).ConfigureAwait(false);
                 string body = "Win the grip; control the sleeve and collar to dominate the exchange completely.";
-                await store.UpsertAsync(scope, Mem(scope, "grip", "Grip", body), null).ConfigureAwait(false);
+                await store.UpsertAsync(scope, Mem(scope, "grip", "Grip", body), One(Mem(scope, "grip", "Grip", body))).ConfigureAwait(false);
 
                 MemorySearchResult result = await store.SearchAsync(scope, new MemorySearchQuery { QueryText = "grip", Mode = SearchModeEnum.Keyword, TokenBudget = 20, TopK = 5 }, null).ConfigureAwait(false);
                 TestCase.Require(result.Hits.Count >= 1, "Expected a hit for the token-budget case.");
@@ -322,8 +325,8 @@ namespace Test.Shared
                 await store.EnsureScopeAsync(scope).ConfigureAwait(false);
 
                 // 'double' mentions grip twice; 'single' mentions it once.
-                await store.UpsertAsync(scope, Mem(scope, "double", "Double", "Grip and grip again to win the exchange."), null).ConfigureAwait(false);
-                await store.UpsertAsync(scope, Mem(scope, "single", "Single", "Grip the collar tightly."), null).ConfigureAwait(false);
+                await store.UpsertAsync(scope, Mem(scope, "double", "Double", "Grip and grip again to win the exchange."), One(Mem(scope, "double", "Double", "Grip and grip again to win the exchange."))).ConfigureAwait(false);
+                await store.UpsertAsync(scope, Mem(scope, "single", "Single", "Grip the collar tightly."), One(Mem(scope, "single", "Single", "Grip the collar tightly."))).ConfigureAwait(false);
 
                 MemorySearchResult result = await store.SearchAsync(scope, new MemorySearchQuery { QueryText = "grip", Mode = SearchModeEnum.Keyword, TopK = 5 }, null).ConfigureAwait(false);
                 TestCase.Require(result.Hits.Count == 2, "Expected two hits, got " + result.Hits.Count + ".");
@@ -350,8 +353,8 @@ namespace Test.Shared
                 IMemoryStore store = MemoryStoreFactory.Create(scope);
                 await store.EnsureScopeAsync(scope).ConfigureAwait(false);
 
-                await store.UpsertAsync(scope, Mem(scope, "grip-a", "Grip A", "Win the grip; control the collar."), null).ConfigureAwait(false);
-                await store.UpsertAsync(scope, Mem(scope, "grip-b", "Grip B", "Grip the collar tightly to win."), null).ConfigureAwait(false);
+                await store.UpsertAsync(scope, Mem(scope, "grip-a", "Grip A", "Win the grip; control the collar."), One(Mem(scope, "grip-a", "Grip A", "Win the grip; control the collar."))).ConfigureAwait(false);
+                await store.UpsertAsync(scope, Mem(scope, "grip-b", "Grip B", "Grip the collar tightly to win."), One(Mem(scope, "grip-b", "Grip B", "Grip the collar tightly to win."))).ConfigureAwait(false);
 
                 string[] files = Directory.GetFiles(work);
                 TestCase.Require(files.Length == 1, "Single-file layout should produce exactly one file, found " + files.Length + ".");
@@ -372,8 +375,8 @@ namespace Test.Shared
                 IMemoryStore store = MemoryStoreFactory.Create(scope);
                 await store.EnsureScopeAsync(scope).ConfigureAwait(false);
 
-                await store.UpsertAsync(scope, Mem(scope, "grip-a", "Grip A", "Win the grip; control the collar."), null).ConfigureAwait(false);
-                await store.UpsertAsync(scope, Mem(scope, "grip-b", "Grip B", "Grip the collar tightly to win."), null).ConfigureAwait(false);
+                await store.UpsertAsync(scope, Mem(scope, "grip-a", "Grip A", "Win the grip; control the collar."), One(Mem(scope, "grip-a", "Grip A", "Win the grip; control the collar."))).ConfigureAwait(false);
+                await store.UpsertAsync(scope, Mem(scope, "grip-b", "Grip B", "Grip the collar tightly to win."), One(Mem(scope, "grip-b", "Grip B", "Grip the collar tightly to win."))).ConfigureAwait(false);
 
                 MemorySearchResult result = await store.SearchAsync(scope, new MemorySearchQuery { QueryText = "collar", Mode = SearchModeEnum.Keyword, TopK = 10 }, null).ConfigureAwait(false);
                 TestCase.Require(result.Hits.Count == 2, "Both single-file memories should be searchable, got " + result.Hits.Count + " hits.");
@@ -395,11 +398,11 @@ namespace Test.Shared
                 IMemoryStore store = MemoryStoreFactory.Create(scope);
                 await store.EnsureScopeAsync(scope).ConfigureAwait(false);
 
-                await store.UpsertAsync(scope, Mem(scope, "grip-a", "Grip A", "Win the grip; control the collar."), null).ConfigureAwait(false);
-                await store.UpsertAsync(scope, Mem(scope, "grip-b", "Grip B", "Grip the collar tightly to win."), null).ConfigureAwait(false);
+                await store.UpsertAsync(scope, Mem(scope, "grip-a", "Grip A", "Win the grip; control the collar."), One(Mem(scope, "grip-a", "Grip A", "Win the grip; control the collar."))).ConfigureAwait(false);
+                await store.UpsertAsync(scope, Mem(scope, "grip-b", "Grip B", "Grip the collar tightly to win."), One(Mem(scope, "grip-b", "Grip B", "Grip the collar tightly to win."))).ConfigureAwait(false);
 
                 // Re-upsert grip-a with new content; it must replace, not duplicate.
-                await store.UpsertAsync(scope, Mem(scope, "grip-a", "Grip A", "Fight for the collar and win the grip."), null).ConfigureAwait(false);
+                await store.UpsertAsync(scope, Mem(scope, "grip-a", "Grip A", "Fight for the collar and win the grip."), One(Mem(scope, "grip-a", "Grip A", "Fight for the collar and win the grip."))).ConfigureAwait(false);
 
                 string[] files = Directory.GetFiles(work);
                 TestCase.Require(files.Length == 1, "Re-upsert should not create additional files, found " + files.Length + ".");
@@ -424,8 +427,8 @@ namespace Test.Shared
 
                 Memory a = Mem(scope, "grip-a", "Grip A", "Win the grip; control the collar.");
                 Memory b = Mem(scope, "grip-b", "Grip B", "Grip the collar tightly to win.");
-                await store.UpsertAsync(scope, a, null).ConfigureAwait(false);
-                await store.UpsertAsync(scope, b, null).ConfigureAwait(false);
+                await store.UpsertAsync(scope, a, One(a)).ConfigureAwait(false);
+                await store.UpsertAsync(scope, b, One(b)).ConfigureAwait(false);
 
                 await store.DeleteAsync(scope, a).ConfigureAwait(false);
 
@@ -452,7 +455,7 @@ namespace Test.Shared
                 IMemoryStore store = MemoryStoreFactory.Create(scope);
                 await store.EnsureScopeAsync(scope).ConfigureAwait(false);
 
-                string key = await store.UpsertAsync(scope, Mem(scope, "orders", "Orders", "One row per completed order."), null).ConfigureAwait(false);
+                string key = await store.UpsertAsync(scope, Mem(scope, "orders", "Orders", "One row per completed order."), One(Mem(scope, "orders", "Orders", "One row per completed order."))).ConfigureAwait(false);
                 TestCase.Require(File.Exists(key), "OKF upsert should write the memory file.");
                 TestCase.Require(key.Replace('\\', '/').EndsWith("cat_1/orders.md", StringComparison.OrdinalIgnoreCase), "The file should live under <category>/<slug>.md, got '" + key + "'.");
 
@@ -478,7 +481,7 @@ namespace Test.Shared
                 Scope scope = OkfScope(work);
                 IMemoryStore store = MemoryStoreFactory.Create(scope);
                 await store.EnsureScopeAsync(scope).ConfigureAwait(false);
-                await store.UpsertAsync(scope, Mem(scope, "orders", "Orders", "One row per completed order."), null).ConfigureAwait(false);
+                await store.UpsertAsync(scope, Mem(scope, "orders", "Orders", "One row per completed order."), One(Mem(scope, "orders", "Orders", "One row per completed order."))).ConfigureAwait(false);
 
                 string indexPath = Path.Combine(work, "index.md");
                 TestCase.Require(File.Exists(indexPath), "OKF upsert should generate a root index.md.");
@@ -548,7 +551,7 @@ namespace Test.Shared
                 Scope scope = OkfScope(work);
                 IMemoryStore store = MemoryStoreFactory.Create(scope);
                 await store.EnsureScopeAsync(scope).ConfigureAwait(false);
-                await store.UpsertAsync(scope, Mem(scope, "orders", "Orders", "One row per completed customer order."), null).ConfigureAwait(false);
+                await store.UpsertAsync(scope, Mem(scope, "orders", "Orders", "One row per completed customer order."), One(Mem(scope, "orders", "Orders", "One row per completed customer order."))).ConfigureAwait(false);
 
                 MemorySearchResult result = await store.SearchAsync(scope, new MemorySearchQuery { QueryText = "completed order", Mode = SearchModeEnum.Keyword, TopK = 5 }, null).ConfigureAwait(false);
                 TestCase.Require(result.Hits.Count >= 1, "Expected at least one hit reading OKF frontmatter files.");
@@ -571,7 +574,7 @@ namespace Test.Shared
                 await store.EnsureScopeAsync(scope).ConfigureAwait(false);
                 // "Orders" appears both in the memory (title) AND in the generated index.md (as a link label),
                 // so a single hit proves the reserved index.md is excluded from search.
-                await store.UpsertAsync(scope, Mem(scope, "orders", "Orders", "One row per completed order."), null).ConfigureAwait(false);
+                await store.UpsertAsync(scope, Mem(scope, "orders", "Orders", "One row per completed order."), One(Mem(scope, "orders", "Orders", "One row per completed order."))).ConfigureAwait(false);
                 string indexText = await File.ReadAllTextAsync(Path.Combine(work, "index.md")).ConfigureAwait(false);
                 TestCase.Require(indexText.Contains("Orders"), "The index.md should mention 'Orders' for this test to be meaningful.");
 
@@ -594,8 +597,8 @@ namespace Test.Shared
                 IMemoryStore store = MemoryStoreFactory.Create(scope);
                 await store.EnsureScopeAsync(scope).ConfigureAwait(false);
 
-                await store.UpsertAsync(scope, Mem(scope, "orders", "Orders", "Original body."), null).ConfigureAwait(false);
-                await store.UpsertAsync(scope, Mem(scope, "orders", "Orders", "Revised body with more detail."), null).ConfigureAwait(false);
+                await store.UpsertAsync(scope, Mem(scope, "orders", "Orders", "Original body."), One(Mem(scope, "orders", "Orders", "Original body."))).ConfigureAwait(false);
+                await store.UpsertAsync(scope, Mem(scope, "orders", "Orders", "Revised body with more detail."), One(Mem(scope, "orders", "Orders", "Revised body with more detail."))).ConfigureAwait(false);
 
                 string categoryDir = Path.Combine(work, "cat_1");
                 string[] files = Directory.GetFiles(categoryDir, "*.md", SearchOption.AllDirectories);
@@ -621,8 +624,8 @@ namespace Test.Shared
 
                 Memory keep = Mem(scope, "orders", "Orders", "One row per order.");
                 Memory drop = Mem(scope, "customers", "Customers", "One row per customer.");
-                await store.UpsertAsync(scope, keep, null).ConfigureAwait(false);
-                string dropKey = await store.UpsertAsync(scope, drop, null).ConfigureAwait(false);
+                await store.UpsertAsync(scope, keep, One(keep)).ConfigureAwait(false);
+                string dropKey = await store.UpsertAsync(scope, drop, One(drop)).ConfigureAwait(false);
 
                 await store.DeleteAsync(scope, drop).ConfigureAwait(false);
                 TestCase.Require(!File.Exists(dropKey), "Delete should remove the memory file.");
@@ -687,7 +690,7 @@ namespace Test.Shared
             IMemoryStore store = MemoryStoreFactory.Create(scope);
             Memory memory = Mem(scope, "orders", "Orders", "One row per order.");
             await TestCase.ThrowsAsync<InvalidOperationException>(
-                () => store.UpsertAsync(scope, memory, null),
+                () => store.UpsertAsync(scope, memory, One(memory)),
                 "OKF upsert on a filesystem scope with no target path should throw InvalidOperationException.").ConfigureAwait(false);
         }
 
@@ -746,7 +749,7 @@ namespace Test.Shared
             IMemoryStore store = MemoryStoreFactory.Create(scope);
             Memory memory = Mem(scope, "grip", "Grip", "Win the grip; control the sleeve and collar.");
             await TestCase.ThrowsAsync<InvalidOperationException>(
-                () => store.UpsertAsync(scope, memory, null),
+                () => store.UpsertAsync(scope, memory, One(memory)),
                 "Upsert on a filesystem scope with no target path should throw InvalidOperationException.").ConfigureAwait(false);
         }
 
@@ -845,7 +848,7 @@ namespace Test.Shared
             Scope scope = RecallScope();
             Memory memory = new Memory { TenantId = "ten_x", ScopeId = scope.Id, CategoryId = "cat_1", Slug = "grip", Title = "Grip", Body = "Win the grip." };
             await TestCase.ThrowsAsync<NotSupportedException>(
-                () => store.UpsertAsync(scope, memory, new float[] { 0.1f, 0.2f }),
+                () => store.UpsertAsync(scope, memory, One(memory)),
                 "An unconfigured RecallDB store should throw NotSupportedException from Upsert.").ConfigureAwait(false);
         }
 
@@ -868,6 +871,14 @@ namespace Test.Shared
                 "An unconfigured RecallDB store should throw NotSupportedException from Delete.").ConfigureAwait(false);
         }
 
+        private static async Task RecallDbUnconfiguredDeleteTenantNoopAsync()
+        {
+            // Tenant teardown is best-effort during a cascade: an unconfigured store must not throw (unlike the
+            // memory-level Delete, which does), so a missing external store never blocks a tenant nuke.
+            IMemoryStore store = new RecallDbMemoryStore();
+            await store.DeleteTenantAsync("ten_x").ConfigureAwait(false);
+        }
+
         #endregion
 
         #region Private-Methods-Verbex
@@ -887,7 +898,7 @@ namespace Test.Shared
             Scope scope = new Scope { TenantId = "ten_x", Name = "s", StoreProvider = StoreProviderEnum.Verbex };
             Memory memory = new Memory { TenantId = "ten_x", ScopeId = scope.Id, CategoryId = "cat_1", Slug = "grip", Title = "Grip", Body = "Win the grip." };
             await TestCase.ThrowsAsync<NotSupportedException>(
-                () => store.UpsertAsync(scope, memory, null),
+                () => store.UpsertAsync(scope, memory, One(memory)),
                 "The Verbex store should throw NotSupportedException from Upsert.").ConfigureAwait(false);
         }
 
@@ -908,6 +919,18 @@ namespace Test.Shared
             await TestCase.ThrowsAsync<NotSupportedException>(
                 () => store.DeleteAsync(scope, memory),
                 "The Verbex store should throw NotSupportedException from Delete.").ConfigureAwait(false);
+        }
+
+        private static async Task VerbexDeleteTenantNoopAsync()
+        {
+            IMemoryStore store = new VerbexMemoryStore();
+            await store.DeleteTenantAsync("ten_x").ConfigureAwait(false);
+        }
+
+        private static async Task FilesystemDeleteTenantNoopAsync()
+        {
+            IMemoryStore store = new FilesystemMemoryStore();
+            await store.DeleteTenantAsync("ten_x").ConfigureAwait(false);
         }
 
         #endregion
@@ -942,6 +965,12 @@ namespace Test.Shared
         private static Memory Mem(Scope scope, string slug, string title, string body, string categoryId = "cat_1")
         {
             return new Memory { TenantId = "ten_x", ScopeId = scope.Id, CategoryId = categoryId, Slug = slug, Title = title, Body = body };
+        }
+
+        // A single whole-body chunk, as the memory service supplies for non-oversized memories and non-embedding stores.
+        private static IReadOnlyList<MemoryChunk> One(Memory memory)
+        {
+            return new List<MemoryChunk> { new MemoryChunk { Ordinal = 0, Text = memory.Body, StartOffset = 0, EndOffset = memory.Body.Length } };
         }
 
         private static void TryDeleteDir(string dir)

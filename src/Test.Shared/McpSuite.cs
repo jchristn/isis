@@ -54,7 +54,10 @@ namespace Test.Shared
                     TestCase.Async("mcp2", "access-key-only", "the access key alone (no secret) authorizes", AccessKeyOnlyAuthorizesAsync),
                     TestCase.Async("mcp2", "wrong-secret-rejected", "a present but wrong secret is rejected with 401", WrongSecretRejectedAsync),
                     TestCase.Async("mcp2", "bearer-access-key", "raw MCP initialize authenticates with a bearer access key", BearerAccessKeyHandshakeAsync),
-                    TestCase.Async("mcp2", "mcp-handshake", "raw MCP initialize returns serverInfo", HandshakeAsync)
+                    TestCase.Async("mcp2", "mcp-handshake", "raw MCP initialize returns serverInfo", HandshakeAsync),
+                    TestCase.Async("mcp2", "tools-parity", "tools/list exposes the full REST-parity tool set", ToolsParityAsync),
+                    TestCase.Async("mcp2", "endpoint-crud", "endpoint_create/read/update/delete proxy round-trips", EndpointCrudAsync),
+                    TestCase.Async("mcp2", "scope-update-delete", "scope_update and scope_delete proxy round-trips", ScopeUpdateDeleteAsync)
                 });
         }
 
@@ -296,6 +299,88 @@ namespace Test.Shared
             if (response.StatusCode != HttpStatusCode.OK) throw new InvalidOperationException("Expected HTTP 200 from the MCP initialize handshake, got " + (int)response.StatusCode + " (" + text + ").");
             if (!text.Contains("serverInfo", StringComparison.Ordinal)) throw new InvalidOperationException("Expected the initialize response to contain serverInfo: " + text);
             if (!text.Contains("Isis.McpServer", StringComparison.Ordinal)) throw new InvalidOperationException("Expected the initialize response to name the Isis.McpServer: " + text);
+        }
+
+        private static async Task ToolsParityAsync()
+        {
+            using McpContext ctx = await McpContext.StartAsync().ConfigureAwait(false);
+
+            using HttpClient client = new HttpClient { BaseAddress = new Uri("http://127.0.0.1:" + ctx.McpPort) };
+
+            // Initialize first (capture the session id if the transport issues one), then list tools.
+            using HttpRequestMessage init = new HttpRequestMessage(HttpMethod.Post, "/mcp");
+            init.Headers.Authorization = new AuthenticationHeaderValue("Bearer", ctx.Harness.AccessKey);
+            init.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            init.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
+            init.Content = new StringContent("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"clientInfo\":{\"name\":\"t\",\"version\":\"1\"}}}", Encoding.UTF8, "application/json");
+            HttpResponseMessage initResp = await client.SendAsync(init).ConfigureAwait(false);
+            string? session = initResp.Headers.TryGetValues("Mcp-Session-Id", out IEnumerable<string>? ids) ? System.Linq.Enumerable.FirstOrDefault(ids) : null;
+
+            using HttpRequestMessage list = new HttpRequestMessage(HttpMethod.Post, "/mcp");
+            list.Headers.Authorization = new AuthenticationHeaderValue("Bearer", ctx.Harness.AccessKey);
+            list.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            list.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
+            if (!string.IsNullOrEmpty(session)) list.Headers.Add("Mcp-Session-Id", session);
+            list.Content = new StringContent("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{}}", Encoding.UTF8, "application/json");
+            HttpResponseMessage listResp = await client.SendAsync(list).ConfigureAwait(false);
+            string text = await listResp.Content.ReadAsStringAsync().ConfigureAwait(false);
+
+            if (listResp.StatusCode != HttpStatusCode.OK) throw new InvalidOperationException("tools/list returned " + (int)listResp.StatusCode + ": " + text);
+
+            string[] expected = new[]
+            {
+                "whoami", "instructions", "guide",
+                "scope_enumerate", "scope_create", "scope_read", "scope_update", "scope_delete",
+                "category_enumerate", "category_create", "category_read", "category_update", "category_delete",
+                "memory_enumerate", "memory_read", "memory_upsert", "memory_search", "memory_delete",
+                "endpoint_enumerate", "endpoint_read", "endpoint_create", "endpoint_update", "endpoint_delete", "endpoint_health",
+                "chat",
+                "collection_enumerate", "collection_read", "collection_create", "collection_delete",
+                "instruction_create", "instruction_update", "instruction_delete"
+            };
+            foreach (string tool in expected)
+            {
+                if (!text.Contains("\"" + tool + "\"", StringComparison.Ordinal)) throw new InvalidOperationException("tools/list is missing the '" + tool + "' tool (REST parity gap): " + text);
+            }
+        }
+
+        private static async Task EndpointCrudAsync()
+        {
+            using McpContext ctx = await McpContext.StartAsync().ConfigureAwait(false);
+            string basePath = "/v1.0/api/tenants/ten_default/endpoints";
+
+            string createBody = JsonSerializer.Serialize(new { name = "mcp-embed", kind = "Embedding", apiFormat = "Ollama", baseUrl = "http://127.0.0.1:11434", authType = "None", model = "all-minilm", dimensionality = 384 });
+            JsonElement created = Data(await ctx.Mcp.ProxyAsync(HttpMethod.Post, basePath, createBody, "endpoint_create", ctx.Admin).ConfigureAwait(false), "endpoint_create");
+            string id = created.GetProperty("id").GetString() ?? throw new InvalidOperationException("No endpoint id.");
+            if (created.GetProperty("baseUrl").GetString() != "http://127.0.0.1:11434") throw new InvalidOperationException("baseUrl did not persist.");
+
+            JsonElement read = Data(await ctx.Mcp.ProxyAsync(HttpMethod.Get, basePath + "/" + id, null, "endpoint_read", ctx.Admin).ConfigureAwait(false), "endpoint_read");
+            if (read.GetProperty("id").GetString() != id) throw new InvalidOperationException("endpoint_read returned the wrong id.");
+
+            string updateBody = JsonSerializer.Serialize(new { name = "mcp-embed-2", baseUrl = "http://127.0.0.1:11434", authType = "BearerToken", authSecret = "tok" });
+            JsonElement updated = Data(await ctx.Mcp.ProxyAsync(HttpMethod.Put, basePath + "/" + id, updateBody, "endpoint_update", ctx.Admin).ConfigureAwait(false), "endpoint_update");
+            if (updated.GetProperty("name").GetString() != "mcp-embed-2") throw new InvalidOperationException("endpoint_update did not persist the name.");
+            if (updated.GetProperty("authType").GetString() != "BearerToken") throw new InvalidOperationException("endpoint_update did not persist authType.");
+
+            Envelope del = Unpack(await ctx.Mcp.ProxyAsync(HttpMethod.Delete, basePath + "/" + id, null, "endpoint_delete", ctx.Admin).ConfigureAwait(false));
+            if (!del.Success) throw new InvalidOperationException("endpoint_delete failed with status " + del.StatusCode + ".");
+        }
+
+        private static async Task ScopeUpdateDeleteAsync()
+        {
+            using McpContext ctx = await McpContext.StartAsync().ConfigureAwait(false);
+            string scopeId = await CreateScopeAsync(ctx).ConfigureAwait(false);
+            string basePath = "/v1.0/api/tenants/ten_default/scopes/" + scopeId;
+
+            string updateBody = JsonSerializer.Serialize(new { name = "mcpproj-renamed", description = "updated" });
+            JsonElement updated = Data(await ctx.Mcp.ProxyAsync(HttpMethod.Put, basePath, updateBody, "scope_update", ctx.Admin).ConfigureAwait(false), "scope_update");
+            if (updated.GetProperty("name").GetString() != "mcpproj-renamed") throw new InvalidOperationException("scope_update did not persist the name.");
+
+            Envelope del = Unpack(await ctx.Mcp.ProxyAsync(HttpMethod.Delete, basePath, null, "scope_delete", ctx.Admin).ConfigureAwait(false));
+            if (!del.Success) throw new InvalidOperationException("scope_delete failed with status " + del.StatusCode + ".");
+
+            Envelope read = Unpack(await ctx.Mcp.ProxyAsync(HttpMethod.Get, basePath, null, "scope_read", ctx.Admin).ConfigureAwait(false));
+            if (read.Success || read.StatusCode != 404) throw new InvalidOperationException("Expected the deleted scope to be gone (404), got " + read.StatusCode + ".");
         }
 
         #endregion

@@ -11,6 +11,7 @@ namespace Isis.Server.Services
     using Isis.Core.Observability;
     using Isis.Core.Recall;
     using Isis.Core.Stores;
+    using Isis.Core.Stores.RecallDb;
 
     /// <summary>
     /// Coordinates the memory index (relational metadata) with the scope's memory store (content and
@@ -96,13 +97,22 @@ namespace Isis.Server.Services
                     incoming.CategoryId = category.Id;
                 }
 
-                float[]? embedding = null;
+                IReadOnlyList<MemoryChunk> chunks;
                 if (store.Capabilities.RequiresEmbedding)
                 {
-                    embedding = await EmbedAsync(scope, target.Body, token).ConfigureAwait(false);
+                    ModelEndpoint endpoint = await ResolveEmbeddingEndpointAsync(scope, token).ConfigureAwait(false);
+                    chunks = await MemoryChunker.ChunkAsync(scope, endpoint, target.Body, token).ConfigureAwait(false);
+                    foreach (MemoryChunk chunk in chunks)
+                    {
+                        chunk.Embedding = await _EmbeddingService!.EmbedAsync(endpoint, chunk.Text, token).ConfigureAwait(false);
+                    }
+                }
+                else
+                {
+                    chunks = new List<MemoryChunk> { new MemoryChunk { Ordinal = 0, Text = target.Body, StartOffset = 0, EndOffset = target.Body.Length } };
                 }
 
-                target.StoreKey = await store.UpsertAsync(scope, target, embedding, token).ConfigureAwait(false);
+                target.StoreKey = await store.UpsertAsync(scope, target, chunks, token).ConfigureAwait(false);
 
                 return existing != null
                     ? await _Database.Memories.UpdateAsync(target, token).ConfigureAwait(false)
@@ -195,6 +205,7 @@ namespace Isis.Server.Services
                     await _Database.Categories.DeleteManyAsync(scope.TenantId, page.Objects.Select(c => c.Id).ToList(), token).ConfigureAwait(false);
                 }
 
+                await _Database.Instructions.DeleteByScopeAsync(scope.TenantId, scope.Id, token).ConfigureAwait(false);
                 await _Database.Scopes.DeleteAsync(scope.TenantId, scope.Id, token).ConfigureAwait(false);
             }
             catch (Exception e)
@@ -207,6 +218,24 @@ namespace Isis.Server.Services
             {
                 RecordMemoryDelete("scope", telemetryStart, telemetryOutcome);
             }
+        }
+
+        /// <summary>
+        /// Tear down any tenant-level external store container after a tenant's scopes have been deleted. Only
+        /// RecallDB maintains a tenant-level container (the RecallDB tenant that Isis provisions on first use);
+        /// filesystem and Verbex keep no such state. Best-effort: a missing container or unconfigured store is a
+        /// no-op so the tenant cascade is never blocked. Virtual to allow the cascade to be observed in tests.
+        /// </summary>
+        /// <param name="tenantId">The tenant whose external container is being removed.</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>Task.</returns>
+        public virtual async Task DeleteTenantStoreAsync(string tenantId, CancellationToken token = default)
+        {
+            if (string.IsNullOrEmpty(tenantId)) throw new ArgumentNullException(nameof(tenantId));
+            if (_StoreOptions == null || string.IsNullOrEmpty(_StoreOptions.RecallDbEndpoint) || string.IsNullOrEmpty(_StoreOptions.RecallDbAdminKey)) return;
+
+            IMemoryStore store = new RecallDbMemoryStore(_StoreOptions.RecallDbEndpoint!, _StoreOptions.RecallDbAdminKey!);
+            await store.DeleteTenantAsync(tenantId, token).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -390,13 +419,19 @@ namespace Isis.Server.Services
 
         private async Task<float[]> EmbedAsync(Scope scope, string text, CancellationToken token)
         {
+            ModelEndpoint endpoint = await ResolveEmbeddingEndpointAsync(scope, token).ConfigureAwait(false);
+            return await _EmbeddingService!.EmbedAsync(endpoint, text, token).ConfigureAwait(false);
+        }
+
+        private async Task<ModelEndpoint> ResolveEmbeddingEndpointAsync(Scope scope, CancellationToken token)
+        {
             if (_EmbeddingService == null) throw new InvalidOperationException("This scope requires embeddings but no embedding service is configured on the server.");
             if (string.IsNullOrEmpty(scope.EmbeddingEndpointId)) throw new InvalidOperationException("This scope requires embeddings but has no embedding endpoint configured.");
 
             ModelEndpoint? endpoint = await _Database.ModelEndpoints.ReadAsync(scope.TenantId, scope.EmbeddingEndpointId, token).ConfigureAwait(false);
             if (endpoint == null) throw new InvalidOperationException("The scope's configured embedding endpoint was not found.");
 
-            return await _EmbeddingService.EmbedAsync(endpoint, text, token).ConfigureAwait(false);
+            return endpoint;
         }
 
         #endregion

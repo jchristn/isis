@@ -61,7 +61,7 @@ namespace Isis.Core.Stores.Filesystem
         }
 
         /// <inheritdoc />
-        public async Task<string> UpsertAsync(Scope scope, Memory memory, float[]? embedding, CancellationToken token = default)
+        public async Task<string> UpsertAsync(Scope scope, Memory memory, IReadOnlyList<MemoryChunk> chunks, CancellationToken token = default)
         {
             if (scope == null) throw new ArgumentNullException(nameof(scope));
             if (memory == null) throw new ArgumentNullException(nameof(memory));
@@ -137,6 +137,14 @@ namespace Isis.Core.Stores.Filesystem
             }
 
             await Task.CompletedTask.ConfigureAwait(false);
+        }
+
+        /// <inheritdoc />
+        public Task DeleteTenantAsync(string tenantId, CancellationToken token = default)
+        {
+            // The filesystem store keeps no tenant-level container; per-scope target paths are removed by
+            // DeleteScopeAsync during the cascade.
+            return Task.CompletedTask;
         }
 
         /// <inheritdoc />

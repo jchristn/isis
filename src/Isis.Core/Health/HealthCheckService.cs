@@ -54,12 +54,7 @@ namespace Isis.Core.Health
 
             string method = endpoint.HealthCheckMethod == HealthCheckMethodEnum.HEAD ? "HEAD" : "GET";
 
-            string auth = "none";
-            if (endpoint.HealthCheckUseAuth && !string.IsNullOrEmpty(endpoint.ApiKey))
-            {
-                string headerName = endpoint.ApiFormat == ApiFormatEnum.Gemini ? "x-goog-api-key" : "Authorization";
-                auth = headerName + ":" + HashSecret(endpoint.ApiKey);
-            }
+            string auth = endpoint.HealthCheckUseAuth ? Isis.Core.Recall.EndpointAuthenticator.DedupDescriptor(endpoint) : "none";
 
             Uri uri = new Uri(BuildProbeUrl(endpoint));
             string normalized = uri.Scheme.ToLowerInvariant() + "://" + uri.Host.ToLowerInvariant() + ":" + uri.Port + uri.PathAndQuery;
@@ -143,11 +138,7 @@ namespace Isis.Core.Health
             {
                 HttpMethod method = endpoint.HealthCheckMethod == HealthCheckMethodEnum.HEAD ? HttpMethod.Head : HttpMethod.Get;
                 using HttpRequestMessage request = new HttpRequestMessage(method, BuildProbeUrl(endpoint));
-                if (endpoint.HealthCheckUseAuth && !string.IsNullOrEmpty(endpoint.ApiKey))
-                {
-                    if (endpoint.ApiFormat == ApiFormatEnum.Gemini) request.Headers.TryAddWithoutValidation("x-goog-api-key", endpoint.ApiKey);
-                    else request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + endpoint.ApiKey);
-                }
+                if (endpoint.HealthCheckUseAuth) Isis.Core.Recall.EndpointAuthenticator.Apply(request, endpoint);
 
                 HttpResponseMessage response = await _HttpClient.SendAsync(request, cts.Token).ConfigureAwait(false);
                 outcome.StatusCode = (int)response.StatusCode;
@@ -218,12 +209,6 @@ namespace Isis.Core.Health
             string path = string.IsNullOrEmpty(endpoint.HealthCheckUrl) ? "/" : endpoint.HealthCheckUrl;
             if (!path.StartsWith("/", StringComparison.Ordinal)) path = "/" + path;
             return baseUrl + path;
-        }
-
-        private static string HashSecret(string secret)
-        {
-            byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(secret));
-            return Convert.ToBase64String(hash);
         }
 
         #endregion
