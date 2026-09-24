@@ -490,7 +490,7 @@ Proxies `POST /v1.0/api/tenants/{tenantId}/scopes/{scopeId}/categories`.
 |-------|------|----------|---------|-------------|
 | `tenantId` | string | Yes | n/a | Tenant identifier |
 | `scopeId` | string | Yes | n/a | Scope identifier |
-| `name` | string | Yes | n/a | Category name (also used as the RecallDB label) |
+| `name` | string | Yes | n/a | Category name (unique within the scope; accepted by `memory_search` as a filter) |
 | `description` | string | No | null | What the category holds |
 | `instructions` | string | No | null | When and how to write memories in this category |
 
@@ -695,7 +695,7 @@ Proxies `POST /v1.0/api/tenants/{tenantId}/scopes/{scopeId}/memories/search`.
 | `queryText` | string | Yes | n/a | The search query |
 | `mode` | string | No | server default | `Keyword`, `Semantic`, or `Hybrid` |
 | `topK` | integer | No | server default | Maximum results to return |
-| `categoryName` | string | No | null | Optional category **name** filter (sent as `categoryFilter`) |
+| `categoryName` | string | No | null | Optional category filter: name or `cat_` id (sent as `categoryFilter`). An unknown category returns 400. |
 
 #### Example Request
 

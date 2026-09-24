@@ -1,0 +1,52 @@
+# Isis benchmark infrastructure: an isolated pgvector + RecallDB pair on non-default ports, so a benchmark
+# never touches the development stack (docker/compose.yaml) or a live deployment. Isis itself runs from
+# source against this stack (see benchmarks/README.md) so benchmarks always measure the working tree.
+#
+#   docker compose -f benchmarks/docker/compose.yaml up -d
+#   docker compose -f benchmarks/docker/compose.yaml down -v     # discard all benchmark data
+
+name: isis-bench
+
+services:
+
+  postgres:
+    container_name: 'isis-bench-postgres'
+    image: 'ankane/pgvector:v0.5.1'
+    ports:
+      - '127.0.0.1:15432:5432'
+    environment:
+      POSTGRES_DB: 'isis'
+      POSTGRES_USER: 'isis'
+      POSTGRES_PASSWORD: 'isis'
+    command: ['postgres', '-c', 'shared_buffers=1GB', '-c', 'max_connections=300']
+    volumes:
+      - isis-bench-postgres:/var/lib/postgresql/data
+      - ../../docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -p 5432 -U isis -d isis']
+      interval: 5s
+      timeout: 2s
+      retries: 10
+      start_period: 30s
+
+  recalldb-server:
+    container_name: 'isis-bench-recalldb'
+    image: 'jchristn77/recalldb-server:v0.2.1'
+    ports:
+      - '127.0.0.1:18600:8600'
+    environment:
+      RECALLDB_DB_HOST: 'postgres'
+      RECALLDB_DB_PORT: '5432'
+      RECALLDB_DB_NAME: 'recalldb'
+      RECALLDB_DB_USER: 'isis'
+      RECALLDB_DB_PASS: 'isis'
+      RECALLDB_MCP_ENABLED: 'false'
+      RECALLDB_OBS_ENABLED: 'false'
+    volumes:
+      - ../../docker/recalldb/recalldb.json:/app/recalldb.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  isis-bench-postgres:

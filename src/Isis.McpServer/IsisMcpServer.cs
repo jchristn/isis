@@ -357,7 +357,7 @@ namespace Isis.McpServer
                     {
                         tenantId = new { type = "string" },
                         scopeId = new { type = "string" },
-                        name = new { type = "string", description = "Category name (also used as the RecallDB label)." },
+                        name = new { type = "string", description = "Category name (unique within the scope; accepted by memory_search as a filter)." },
                         description = new { type = "string" },
                         instructions = new { type = "string", description = "When and how to write memories in this category." }
                     },
@@ -441,7 +441,7 @@ namespace Isis.McpServer
 
             _Server.RegisterTool(
                 "memory_search",
-                "Search a scope's memory. Required: tenantId, scopeId, queryText. Optional: mode (Keyword|Semantic|Hybrid), topK, category.",
+                "Search a scope's memory. Required: tenantId, scopeId, queryText. Optional: mode (Keyword|Semantic|Hybrid), topK, categoryName.",
                 new
                 {
                     type = "object",
@@ -452,7 +452,7 @@ namespace Isis.McpServer
                         queryText = new { type = "string" },
                         mode = new { type = "string", description = "Keyword, Semantic, or Hybrid. Semantic/Hybrid require a RecallDB scope." },
                         topK = new { type = "integer" },
-                        categoryName = new { type = "string", description = "Optional filter by category NAME (search filters by name; enumerate/read use the cat_ id)." }
+                        categoryName = new { type = "string", description = "Optional category filter: the category's name or its cat_ id. An unknown category is an error, not an empty result." }
                     },
                     required = new[] { "tenantId", "scopeId", "queryText" }
                 },

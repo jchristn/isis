@@ -12,6 +12,7 @@ namespace Isis.Server.Routes
     using WatsonWebserver;
     using WatsonWebserver.Core;
     using WatsonWebserver.Core.OpenApi;
+    using HttpRequestException = System.Net.Http.HttpRequestException;
 
     /// <summary>
     /// Memory routes, scoped to a tenant and scope. Includes create/upsert, read, delete, list, and search.
@@ -165,7 +166,12 @@ namespace Isis.Server.Routes
                 return;
             }
 
-            MemorySearchQuery query = RouteHelpers.Body<MemorySearchQuery>(context) ?? new MemorySearchQuery();
+            MemorySearchQuery? query = RouteHelpers.Body<MemorySearchQuery>(context);
+            if (query == null || string.IsNullOrWhiteSpace(query.QueryText))
+            {
+                await RouteHelpers.ErrorAsync(context, 400, "BadRequest", "A search requires a non-empty queryText.").ConfigureAwait(false);
+                return;
+            }
 
             try
             {
@@ -268,15 +274,33 @@ namespace Isis.Server.Routes
                     return;
                 }
 
-                foreach (Memory item in request.Items)
+                try
                 {
-                    if (item == null || string.IsNullOrWhiteSpace(item.Slug) || string.IsNullOrWhiteSpace(item.CategoryId)) continue;
+                    foreach (Memory item in request.Items)
+                    {
+                        if (item == null || string.IsNullOrWhiteSpace(item.Slug) || string.IsNullOrWhiteSpace(item.CategoryId)) continue;
 
-                    Category? category = await _Database.Categories.ReadAsync(tenantId, item.CategoryId, context.Token).ConfigureAwait(false);
-                    if (category == null || category.ScopeId != scopeId) continue;
+                        Category? category = await _Database.Categories.ReadAsync(tenantId, item.CategoryId, context.Token).ConfigureAwait(false);
+                        if (category == null || category.ScopeId != scopeId) continue;
 
-                    Memory saved = await _MemoryService.UpsertAsync(scope, category, item, context.Token).ConfigureAwait(false);
-                    objects.Add(saved);
+                        Memory saved = await _MemoryService.UpsertAsync(scope, category, item, context.Token).ConfigureAwait(false);
+                        objects.Add(saved);
+                    }
+                }
+                catch (NotSupportedException ex)
+                {
+                    await RouteHelpers.ErrorAsync(context, 501, "NotImplemented", ex.Message).ConfigureAwait(false);
+                    return;
+                }
+                catch (InvalidOperationException ex)
+                {
+                    await RouteHelpers.ErrorAsync(context, 400, "BadRequest", ex.Message + " (" + objects.Count + " item(s) were saved before the failure).").ConfigureAwait(false);
+                    return;
+                }
+                catch (HttpRequestException ex)
+                {
+                    await RouteHelpers.ErrorAsync(context, 503, "ServiceUnavailable", "A backing service could not be reached after " + objects.Count + " item(s) were saved: " + ex.Message).ConfigureAwait(false);
+                    return;
                 }
             }
 

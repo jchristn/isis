@@ -160,6 +160,7 @@ namespace Isis.Server
             _Server.Routes.AuthenticateRequest = _AuthenticationService.AuthenticateRequestAsync;
             _Server.Routes.Preflight = PreflightRouteAsync;
             _Server.Routes.PostRouting = PostRoutingRouteAsync;
+            _Server.Routes.Exception = ExceptionRouteAsync;
 
             _Server.UseOpenApi(openApi =>
             {
@@ -206,6 +207,55 @@ namespace Isis.Server
             context.Response.Headers.Add("Access-Control-Allow-Headers", "Content-Type, Authorization, x-access-key, x-secret-key, x-token");
             context.Response.Headers.Add("Access-Control-Max-Age", "86400");
             await context.Response.Send().ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Last-resort handler for any exception a route did not handle. Without it Watson answers with its own HTML
+        /// error page, which API clients (and MCP tool proxies) cannot parse. Maps well-known exception types to the
+        /// status codes routes use for them, and everything else to a JSON 500 (details are logged, not returned).
+        /// </summary>
+        private async Task ExceptionRouteAsync(HttpContextBase context, Exception e)
+        {
+            int status;
+            string error;
+            string message;
+            if (e is ArgumentException || e is InvalidOperationException || e is FormatException)
+            {
+                status = 400;
+                error = "BadRequest";
+                message = e.Message;
+            }
+            else if (e is NotSupportedException || e is NotImplementedException)
+            {
+                status = 501;
+                error = "NotImplemented";
+                message = e.Message;
+            }
+            else if (e is HttpRequestException || (e is TaskCanceledException && !context.Token.IsCancellationRequested) || e is TimeoutException)
+            {
+                status = 503;
+                error = "ServiceUnavailable";
+                message = "A backing service (memory store, database, or model endpoint) could not be reached or timed out.";
+            }
+            else
+            {
+                status = 500;
+                error = "InternalError";
+                message = "An unexpected error occurred. It has been logged.";
+            }
+
+            _Log?.Invoke("unhandled " + e.GetType().Name + " on " + context.Request.Method + " " + context.Request.Url.RawWithQuery + ": " + e);
+            if (context.Response.ResponseSent) return;
+
+            try
+            {
+                await RouteHelpers.ErrorAsync(context, status, error, message).ConfigureAwait(false);
+            }
+            catch (Exception sendFailure)
+            {
+                // The connection is gone or the response was partially written; nothing more can be sent.
+                _Log?.Invoke("could not send error response: " + sendFailure.Message);
+            }
         }
 
         private async Task PostRoutingRouteAsync(HttpContextBase context)

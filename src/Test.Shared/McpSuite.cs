@@ -56,6 +56,9 @@ namespace Test.Shared
                     TestCase.Async("mcp2", "bearer-access-key", "raw MCP initialize authenticates with a bearer access key", BearerAccessKeyHandshakeAsync),
                     TestCase.Async("mcp2", "mcp-handshake", "raw MCP initialize returns serverInfo", HandshakeAsync),
                     TestCase.Async("mcp2", "tools-parity", "tools/list exposes the full REST-parity tool set", ToolsParityAsync),
+                    TestCase.Async("mcp2", "stateless-claude-sequence", "The Claude Code 2.1.x stateless 2026-07-28 discover, list, and call sequence works with a bearer access key", StatelessClaudeSequenceAsync),
+                    TestCase.Async("mcp2", "stateless-unauthorized", "A stateless 2026-07-28 request without credentials is rejected with 401", StatelessUnauthorizedAsync),
+                    TestCase.Async("mcp2", "initialize-caps-stateless-version", "initialize requesting 2026-07-28 negotiates the newest handshake revision", InitializeCapsStatelessVersionAsync),
                     TestCase.Async("mcp2", "endpoint-crud", "endpoint_create/read/update/delete proxy round-trips", EndpointCrudAsync),
                     TestCase.Async("mcp2", "scope-update-delete", "scope_update and scope_delete proxy round-trips", ScopeUpdateDeleteAsync)
                 });
@@ -299,6 +302,115 @@ namespace Test.Shared
             if (response.StatusCode != HttpStatusCode.OK) throw new InvalidOperationException("Expected HTTP 200 from the MCP initialize handshake, got " + (int)response.StatusCode + " (" + text + ").");
             if (!text.Contains("serverInfo", StringComparison.Ordinal)) throw new InvalidOperationException("Expected the initialize response to contain serverInfo: " + text);
             if (!text.Contains("Isis.McpServer", StringComparison.Ordinal)) throw new InvalidOperationException("Expected the initialize response to name the Isis.McpServer: " + text);
+        }
+
+        private static async Task StatelessClaudeSequenceAsync()
+        {
+            // Regression for the "Claude Code sees no Isis tools" bug (Voltaic before 1.1.0): Claude Code 2.1.x never
+            // sends initialize. It opens with server/discover, picks the stateless 2026-07-28 revision, and rejects any
+            // result missing resultType, or a list result missing ttlMs/cacheScope.
+            using McpContext ctx = await McpContext.StartAsync().ConfigureAwait(false);
+            using HttpClient client = new HttpClient { BaseAddress = new Uri("http://127.0.0.1:" + ctx.McpPort) };
+
+            using JsonDocument discover = await SendStatelessAsync(client, ctx.Harness.AccessKey, "server/discover", "discover-1", null, null, HttpStatusCode.OK).ConfigureAwait(false)
+                ?? throw new InvalidOperationException("Stateless request returned no body.");
+            JsonElement discoverResult = discover.RootElement.GetProperty("result");
+            RequireResultType(discoverResult, "server/discover");
+            bool offersStateless = false;
+            foreach (JsonElement version in discoverResult.GetProperty("supportedVersions").EnumerateArray())
+            {
+                if (version.GetString() == "2026-07-28") offersStateless = true;
+            }
+
+            if (!offersStateless) throw new InvalidOperationException("server/discover should offer the stateless 2026-07-28 revision: " + discoverResult.GetRawText());
+
+            using JsonDocument tools = await SendStatelessAsync(client, ctx.Harness.AccessKey, "tools/list", 2, null, null, HttpStatusCode.OK).ConfigureAwait(false)
+                ?? throw new InvalidOperationException("Stateless request returned no body.");
+            JsonElement toolsResult = tools.RootElement.GetProperty("result");
+            RequireResultType(toolsResult, "tools/list");
+            if (!toolsResult.TryGetProperty("ttlMs", out JsonElement ttl) || ttl.ValueKind != JsonValueKind.Number) throw new InvalidOperationException("tools/list must carry a numeric ttlMs under 2026-07-28: " + toolsResult.GetRawText());
+            if (!toolsResult.TryGetProperty("cacheScope", out JsonElement scope) || string.IsNullOrEmpty(scope.GetString())) throw new InvalidOperationException("tools/list must carry a cacheScope under 2026-07-28: " + toolsResult.GetRawText());
+
+            bool hasSearch = false;
+            foreach (JsonElement tool in toolsResult.GetProperty("tools").EnumerateArray())
+            {
+                if (tool.GetProperty("name").GetString() == "memory_search") hasSearch = true;
+            }
+
+            if (!hasSearch) throw new InvalidOperationException("tools/list should return the Isis tools (memory_search missing).");
+
+            Dictionary<string, object?> callParams = new Dictionary<string, object?> { { "name", "whoami" }, { "arguments", new Dictionary<string, object?>() } };
+            using JsonDocument call = await SendStatelessAsync(client, ctx.Harness.AccessKey, "tools/call", 3, callParams, "whoami", HttpStatusCode.OK).ConfigureAwait(false)
+                ?? throw new InvalidOperationException("Stateless request returned no body.");
+            JsonElement callResult = call.RootElement.GetProperty("result");
+            RequireResultType(callResult, "tools/call");
+            if (!callResult.GetRawText().Contains("ten_default", StringComparison.Ordinal)) throw new InvalidOperationException("tools/call whoami should reach REST as the authenticated caller and return tenant ten_default: " + callResult.GetRawText());
+        }
+
+        private static async Task StatelessUnauthorizedAsync()
+        {
+            using McpContext ctx = await McpContext.StartAsync().ConfigureAwait(false);
+            using HttpClient client = new HttpClient { BaseAddress = new Uri("http://127.0.0.1:" + ctx.McpPort) };
+            using JsonDocument? rejected = await SendStatelessAsync(client, null, "tools/list", 1, null, null, HttpStatusCode.Unauthorized).ConfigureAwait(false);
+        }
+
+        private static async Task InitializeCapsStatelessVersionAsync()
+        {
+            using McpContext ctx = await McpContext.StartAsync().ConfigureAwait(false);
+            using HttpClient client = new HttpClient { BaseAddress = new Uri("http://127.0.0.1:" + ctx.McpPort) };
+
+            using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, "/mcp");
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", ctx.Harness.AccessKey);
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
+            request.Content = new StringContent("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2026-07-28\",\"capabilities\":{},\"clientInfo\":{\"name\":\"t\",\"version\":\"1\"}}}", Encoding.UTF8, "application/json");
+
+            HttpResponseMessage response = await client.SendAsync(request).ConfigureAwait(false);
+            string text = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+            if (response.StatusCode != HttpStatusCode.OK) throw new InvalidOperationException("initialize returned " + (int)response.StatusCode + ": " + text);
+
+            using JsonDocument doc = JsonDocument.Parse(text);
+            string? negotiated = doc.RootElement.GetProperty("result").GetProperty("protocolVersion").GetString();
+            if (negotiated != "2025-11-25") throw new InvalidOperationException("initialize must not agree to the stateless 2026-07-28 revision; expected 2025-11-25, got " + negotiated + ".");
+        }
+
+        private static async Task<JsonDocument?> SendStatelessAsync(HttpClient client, string? accessKey, string method, object id, Dictionary<string, object?>? parameters, string? nameHeader, HttpStatusCode expected)
+        {
+            // Mirrors the request shape Claude Code 2.1.x sends on the stateless revision: protocol-version and
+            // Mcp-Method headers (plus Mcp-Name for tools/call), no session id, and the client identity in _meta.
+            Dictionary<string, object?> withMeta = parameters != null ? new Dictionary<string, object?>(parameters) : new Dictionary<string, object?>();
+            withMeta["_meta"] = new Dictionary<string, object?>
+            {
+                { "io.modelcontextprotocol/protocolVersion", "2026-07-28" },
+                { "io.modelcontextprotocol/clientInfo", new Dictionary<string, object?> { { "name", "claude-code" }, { "version", "2.1.281" } } },
+                { "io.modelcontextprotocol/clientCapabilities", new Dictionary<string, object?>() }
+            };
+
+            Dictionary<string, object?> body = new Dictionary<string, object?> { { "jsonrpc", "2.0" }, { "id", id }, { "method", method }, { "params", withMeta } };
+
+            using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, "/mcp");
+            if (accessKey != null) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessKey);
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
+            request.Headers.Add("MCP-Protocol-Version", "2026-07-28");
+            request.Headers.Add("Mcp-Method", method);
+            if (nameHeader != null) request.Headers.Add("Mcp-Name", nameHeader);
+            request.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+
+            HttpResponseMessage response = await client.SendAsync(request).ConfigureAwait(false);
+            string text = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+            if (response.StatusCode != expected) throw new InvalidOperationException("Stateless " + method + " expected HTTP " + (int)expected + " but got " + (int)response.StatusCode + ": " + text);
+            if (expected != HttpStatusCode.OK) return null;
+
+            JsonDocument parsed = JsonDocument.Parse(text);
+            if (parsed.RootElement.TryGetProperty("error", out JsonElement error)) throw new InvalidOperationException("Stateless " + method + " returned a JSON-RPC error: " + error.GetRawText());
+            return parsed;
+        }
+
+        private static void RequireResultType(JsonElement result, string method)
+        {
+            if (!result.TryGetProperty("resultType", out JsonElement resultType) || resultType.GetString() != "complete")
+                throw new InvalidOperationException(method + " must carry resultType \"complete\" under 2026-07-28: " + result.GetRawText());
         }
 
         private static async Task ToolsParityAsync()

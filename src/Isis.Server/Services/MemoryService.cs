@@ -1,6 +1,7 @@
 namespace Isis.Server.Services
 {
     using System;
+    using System.Collections.Concurrent;
     using System.Collections.Generic;
     using System.Diagnostics;
     using System.Linq;
@@ -24,6 +25,9 @@ namespace Isis.Server.Services
 
         private readonly DatabaseDriverBase _Database;
         private readonly EmbeddingService? _EmbeddingService;
+        private const int _ChunkEmbeddingParallelism = 4;
+        private static readonly KeyedAsyncLock _MemoryLocks = new KeyedAsyncLock();
+        private static readonly ConcurrentDictionary<string, SemaphoreSlim> _ProvisioningLocks = new ConcurrentDictionary<string, SemaphoreSlim>(StringComparer.Ordinal);
         private readonly StoreOptions? _StoreOptions;
 
         #endregion
@@ -73,50 +77,59 @@ namespace Isis.Server.Services
                 IMemoryStore store = MemoryStoreFactory.Create(scope, _StoreOptions);
                 await EnsureScopeAsync(store, scope, token).ConfigureAwait(false);
 
-                Memory? existing = await _Database.Memories.ReadBySlugAsync(scope.TenantId, scope.Id, category.Id, incoming.Slug, token).ConfigureAwait(false);
-                Memory target = existing ?? incoming;
+                // Concurrent writes of the same memory would race: both read "no existing row", both clear and
+                // recreate the store documents (duplicate document keys), and both insert an index row. Serialize
+                // per memory (scope, category, slug); writes to different memories still run in parallel.
+                string memoryKey = MemoryLockKey(scope.Id, category.Id, incoming.Slug);
+                await _MemoryLocks.WaitAsync(memoryKey, token).ConfigureAwait(false);
+                try
+                {
+                    Memory? existing = await _Database.Memories.ReadBySlugAsync(scope.TenantId, scope.Id, category.Id, incoming.Slug, token).ConfigureAwait(false);
+                    Memory target = existing ?? incoming;
 
-                if (existing != null)
-                {
-                    existing.Title = incoming.Title;
-                    existing.Summary = incoming.Summary;
-                    existing.Body = incoming.Body;
-                    existing.Type = incoming.Type;
-                    existing.Tags = incoming.Tags;
-                    existing.Links = incoming.Links;
-                    existing.Metadata = incoming.Metadata;
-                    existing.Author = incoming.Author;
-                    existing.SessionId = incoming.SessionId;
-                    existing.Model = incoming.Model;
-                    existing.Version = existing.Version + 1;
-                }
-                else
-                {
-                    incoming.TenantId = scope.TenantId;
-                    incoming.ScopeId = scope.Id;
-                    incoming.CategoryId = category.Id;
-                }
-
-                IReadOnlyList<MemoryChunk> chunks;
-                if (store.Capabilities.RequiresEmbedding)
-                {
-                    ModelEndpoint endpoint = await ResolveEmbeddingEndpointAsync(scope, token).ConfigureAwait(false);
-                    chunks = await MemoryChunker.ChunkAsync(scope, endpoint, target.Body, token).ConfigureAwait(false);
-                    foreach (MemoryChunk chunk in chunks)
+                    if (existing != null)
                     {
-                        chunk.Embedding = await _EmbeddingService!.EmbedAsync(endpoint, chunk.Text, token).ConfigureAwait(false);
+                        existing.Title = incoming.Title;
+                        existing.Summary = incoming.Summary;
+                        existing.Body = incoming.Body;
+                        existing.Type = incoming.Type;
+                        existing.Tags = incoming.Tags;
+                        existing.Links = incoming.Links;
+                        existing.Metadata = incoming.Metadata;
+                        existing.Author = incoming.Author;
+                        existing.SessionId = incoming.SessionId;
+                        existing.Model = incoming.Model;
+                        existing.Version = existing.Version + 1;
                     }
+                    else
+                    {
+                        incoming.TenantId = scope.TenantId;
+                        incoming.ScopeId = scope.Id;
+                        incoming.CategoryId = category.Id;
+                    }
+
+                    IReadOnlyList<MemoryChunk> chunks;
+                    if (store.Capabilities.RequiresEmbedding)
+                    {
+                        ModelEndpoint endpoint = await ResolveEmbeddingEndpointAsync(scope, token).ConfigureAwait(false);
+                        chunks = await MemoryChunker.ChunkAsync(scope, endpoint, target.Body, token).ConfigureAwait(false);
+                        chunks = await EmbedWithBudgetFallbackAsync(scope, endpoint, target.Body, chunks, token).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        chunks = new List<MemoryChunk> { new MemoryChunk { Ordinal = 0, Text = target.Body, StartOffset = 0, EndOffset = target.Body.Length } };
+                    }
+
+                    target.StoreKey = await store.UpsertAsync(scope, target, chunks, token).ConfigureAwait(false);
+
+                    return existing != null
+                        ? await _Database.Memories.UpdateAsync(target, token).ConfigureAwait(false)
+                        : await _Database.Memories.CreateAsync(target, token).ConfigureAwait(false);
                 }
-                else
+                finally
                 {
-                    chunks = new List<MemoryChunk> { new MemoryChunk { Ordinal = 0, Text = target.Body, StartOffset = 0, EndOffset = target.Body.Length } };
+                    _MemoryLocks.Release(memoryKey);
                 }
-
-                target.StoreKey = await store.UpsertAsync(scope, target, chunks, token).ConfigureAwait(false);
-
-                return existing != null
-                    ? await _Database.Memories.UpdateAsync(target, token).ConfigureAwait(false)
-                    : await _Database.Memories.CreateAsync(target, token).ConfigureAwait(false);
             }
             catch (Exception e)
             {
@@ -154,8 +167,17 @@ namespace Isis.Server.Services
             try
             {
                 IMemoryStore store = MemoryStoreFactory.Create(scope, _StoreOptions);
-                await store.DeleteAsync(scope, memory, token).ConfigureAwait(false);
-                return await _Database.Memories.DeleteAsync(scope.TenantId, memory.Id, token).ConfigureAwait(false);
+                string memoryKey = MemoryLockKey(scope.Id, memory.CategoryId, memory.Slug);
+                await _MemoryLocks.WaitAsync(memoryKey, token).ConfigureAwait(false);
+                try
+                {
+                    await store.DeleteAsync(scope, memory, token).ConfigureAwait(false);
+                    return await _Database.Memories.DeleteAsync(scope.TenantId, memory.Id, token).ConfigureAwait(false);
+                }
+                finally
+                {
+                    _MemoryLocks.Release(memoryKey);
+                }
             }
             catch (Exception e)
             {
@@ -304,6 +326,7 @@ namespace Isis.Server.Services
         {
             if (scope == null) throw new ArgumentNullException(nameof(scope));
             if (query == null) throw new ArgumentNullException(nameof(query));
+            if (string.IsNullOrWhiteSpace(query.QueryText)) throw new ArgumentException("A search requires queryText.", nameof(query));
 
             string mode = query.Mode.ToString();
             long telemetryStart = Stopwatch.GetTimestamp();
@@ -316,6 +339,22 @@ namespace Isis.Server.Services
             try
             {
                 IMemoryStore store = MemoryStoreFactory.Create(scope, _StoreOptions);
+
+                // Stores label documents with the category id; callers (agents especially) usually know the
+                // name. Resolve either form to the id so a name filter does not silently match nothing.
+                string? categoryId = await ResolveCategoryFilterAsync(scope, query.CategoryFilter, token).ConfigureAwait(false);
+                if (!string.Equals(categoryId, query.CategoryFilter, StringComparison.Ordinal))
+                {
+                    query = new MemorySearchQuery
+                    {
+                        QueryText = query.QueryText,
+                        Mode = query.Mode,
+                        CategoryFilter = categoryId,
+                        TopK = query.TopK,
+                        TokenBudget = query.TokenBudget,
+                        TextWeight = query.TextWeight
+                    };
+                }
 
                 float[]? queryEmbedding = null;
                 if (store.Capabilities.RequiresEmbedding && query.Mode != Isis.Core.Enums.SearchModeEnum.Keyword)
@@ -409,12 +448,122 @@ namespace Isis.Server.Services
 
         private async Task EnsureScopeAsync(IMemoryStore store, Scope scope, CancellationToken token)
         {
-            string? before = scope.RecallCollectionId;
-            await store.EnsureScopeAsync(scope, token).ConfigureAwait(false);
-            if (!string.Equals(before, scope.RecallCollectionId, StringComparison.Ordinal))
+            if (!string.IsNullOrEmpty(scope.RecallCollectionId))
             {
-                await _Database.Scopes.UpdateAsync(scope, token).ConfigureAwait(false);
+                await store.EnsureScopeAsync(scope, token).ConfigureAwait(false);
+                return;
             }
+
+            // First write to a scope provisions its store collection. Concurrent first writes would each create
+            // one (splitting the scope's memories across collections, or failing on the store's unique keys), so
+            // provisioning is serialized per scope, and a writer that waited adopts the collection the winner
+            // persisted instead of creating another.
+            SemaphoreSlim gate = _ProvisioningLocks.GetOrAdd(scope.Id, _ => new SemaphoreSlim(1, 1));
+            await gate.WaitAsync(token).ConfigureAwait(false);
+            try
+            {
+                Scope? current = await _Database.Scopes.ReadAsync(scope.TenantId, scope.Id, token).ConfigureAwait(false);
+                if (current != null && !string.IsNullOrEmpty(current.RecallCollectionId)) scope.RecallCollectionId = current.RecallCollectionId;
+
+                string? before = scope.RecallCollectionId;
+                await store.EnsureScopeAsync(scope, token).ConfigureAwait(false);
+                if (!string.Equals(before, scope.RecallCollectionId, StringComparison.Ordinal))
+                {
+                    await _Database.Scopes.UpdateAsync(scope, token).ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                gate.Release();
+            }
+        }
+
+        private async Task<string?> ResolveCategoryFilterAsync(Scope scope, string? filter, CancellationToken token)
+        {
+            if (string.IsNullOrWhiteSpace(filter)) return null;
+
+            Category? byId = await _Database.Categories.ReadAsync(scope.TenantId, filter, token).ConfigureAwait(false);
+            if (byId != null && byId.ScopeId == scope.Id) return byId.Id;
+
+            Category? byName = await _Database.Categories.ReadByNameAsync(scope.TenantId, scope.Id, filter, token).ConfigureAwait(false);
+            if (byName != null) return byName.Id;
+
+            // ReadByNameAsync may be case-sensitive depending on the provider collation; fall back to a
+            // case-insensitive match over the scope's categories.
+            List<Category> categories = await EnumerateCategoriesAsync(scope, 1000, token).ConfigureAwait(false);
+            foreach (Category category in categories)
+            {
+                if (string.Equals(category.Name, filter, StringComparison.OrdinalIgnoreCase)) return category.Id;
+            }
+
+            throw new InvalidOperationException("Category '" + filter + "' was not found in this scope (pass a category name or cat_ id).");
+        }
+
+        private async Task EmbedChunksAsync(ModelEndpoint endpoint, IReadOnlyList<MemoryChunk> chunks, CancellationToken token)
+        {
+            if (chunks.Count == 1)
+            {
+                chunks[0].Embedding = await _EmbeddingService!.EmbedAsync(endpoint, chunks[0].Text, token).ConfigureAwait(false);
+                return;
+            }
+
+            // Embed a multi-chunk memory's chunks concurrently (bounded, so one large memory cannot flood the
+            // endpoint): upsert latency then scales with chunks / parallelism rather than with the chunk count.
+            using SemaphoreSlim gate = new SemaphoreSlim(_ChunkEmbeddingParallelism);
+            List<Task> tasks = new List<Task>(chunks.Count);
+            foreach (MemoryChunk chunk in chunks)
+            {
+                tasks.Add(EmbedChunkAsync(endpoint, chunk, gate, token));
+            }
+
+            await Task.WhenAll(tasks).ConfigureAwait(false);
+        }
+
+        private async Task EmbedChunkAsync(ModelEndpoint endpoint, MemoryChunk chunk, SemaphoreSlim gate, CancellationToken token)
+        {
+            await gate.WaitAsync(token).ConfigureAwait(false);
+            try
+            {
+                chunk.Embedding = await _EmbeddingService!.EmbedAsync(endpoint, chunk.Text, token).ConfigureAwait(false);
+            }
+            finally
+            {
+                gate.Release();
+            }
+        }
+
+        private static string MemoryLockKey(string scopeId, string categoryId, string slug)
+        {
+            return scopeId + "/" + categoryId + "/" + slug;
+        }
+
+        private async Task<IReadOnlyList<MemoryChunk>> EmbedWithBudgetFallbackAsync(Scope scope, ModelEndpoint endpoint, string body, IReadOnlyList<MemoryChunk> chunks, CancellationToken token)
+        {
+            // The local tokenizer can undercount relative to the serving runtime: a few tokens on technical English,
+            // but far more on accented text (the WordPiece vocabulary strips diacritics; some runtimes do not). When the
+            // endpoint rejects a chunk as too long, re-chunk at progressively smaller fractions of the budget.
+            double[] fallbackScales = new double[] { 0.75, 0.5, 0.3 };
+            for (int attempt = 0; ; attempt++)
+            {
+                try
+                {
+                    await EmbedChunksAsync(endpoint, chunks, token).ConfigureAwait(false);
+                    return chunks;
+                }
+                catch (InvalidOperationException e) when (IsContextLengthError(e) && attempt < fallbackScales.Length)
+                {
+                    chunks = await MemoryChunker.ChunkAsync(scope, endpoint, body, fallbackScales[attempt], token).ConfigureAwait(false);
+                }
+            }
+        }
+
+        private static bool IsContextLengthError(InvalidOperationException e)
+        {
+            string message = e.Message ?? string.Empty;
+            return message.IndexOf("context length", StringComparison.OrdinalIgnoreCase) >= 0
+                || message.IndexOf("maximum context", StringComparison.OrdinalIgnoreCase) >= 0
+                || message.IndexOf("too long", StringComparison.OrdinalIgnoreCase) >= 0
+                || message.IndexOf("too many tokens", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private async Task<float[]> EmbedAsync(Scope scope, string text, CancellationToken token)

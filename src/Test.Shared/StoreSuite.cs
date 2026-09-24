@@ -11,6 +11,7 @@ namespace Test.Shared
     using Isis.Core.Stores.Filesystem;
     using Isis.Core.Stores.RecallDb;
     using Isis.Core.Stores.Verbex;
+    using RecallDb.Sdk;
     using Touchstone.Core;
 
     /// <summary>
@@ -84,6 +85,7 @@ namespace Test.Shared
                     // Capabilities.
                     TestCase.Async("store", "caps-recalldb", "RecallDB advertises semantic, hybrid, keyword, and embeddings", CapsRecallDbAsync),
                     TestCase.Async("store", "recalldb-chunk-key-url-safe", "RecallDB chunk document keys are URL-safe (no reserved chars)", RecallDbChunkKeyUrlSafeAsync),
+                    TestCase.Sync("store", "recalldb-client-pooled", "RecallDB clients are shared per endpoint and key, not created per store", RecallDbClientPooled),
                     TestCase.Async("store", "caps-verbex", "Verbex advertises keyword only, no semantic/hybrid/embeddings", CapsVerbexAsync),
                     TestCase.Async("store", "caps-filesystem", "Filesystem advertises keyword only, no semantic/embeddings", CapsFilesystemAsync),
 
@@ -107,6 +109,16 @@ namespace Test.Shared
         #endregion
 
         #region Private-Methods-Filesystem-Hierarchy
+
+        private static void RecallDbClientPooled()
+        {
+            RecallDbClient a = RecallDbClientPool.Get("http://127.0.0.1:1", "key-a");
+            RecallDbClient b = RecallDbClientPool.Get("http://127.0.0.1:1", "key-a");
+            RecallDbClient c = RecallDbClientPool.Get("http://127.0.0.1:1", "key-b");
+            TestCase.Require(ReferenceEquals(a, b), "The same endpoint and key should return the same shared client.");
+            TestCase.Require(!ReferenceEquals(a, c), "A different key should get its own client.");
+            TestCase.Throws<ArgumentException>(() => RecallDbClientPool.Get(string.Empty, "k"), "An empty endpoint should be rejected.");
+        }
 
         private static async Task FsHierEnsureCreatesDirAsync()
         {

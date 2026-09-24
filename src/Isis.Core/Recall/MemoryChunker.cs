@@ -38,6 +38,25 @@ namespace Isis.Core.Recall
         /// <exception cref="ArgumentNullException">Thrown when a required argument is null.</exception>
         public static async Task<IReadOnlyList<MemoryChunk>> ChunkAsync(Scope scope, ModelEndpoint endpoint, string body, CancellationToken token = default)
         {
+            return await ChunkAsync(scope, endpoint, body, 1.0, token).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Chunk a memory body for the scope's embedding endpoint using a fraction of the resolved token budget.
+        /// Used to re-chunk more finely when the endpoint still rejects a chunk as too long.
+        /// </summary>
+        /// <param name="scope">The owning scope (supplies the chunking mode, strategy, and per-chunk budget).</param>
+        /// <param name="endpoint">The scope's embedding endpoint (supplies the API format, model, and optional
+        /// max-input-token override used to resolve the token budget).</param>
+        /// <param name="body">The full memory body to chunk.</param>
+        /// <param name="budgetScale">Fraction of the resolved per-chunk budget to use, in (0, 1].</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>The ordered chunks. Always at least one chunk (the whole body) for a non-empty body.</returns>
+        /// <exception cref="ArgumentNullException">Thrown when a required argument is null.</exception>
+        /// <exception cref="ArgumentOutOfRangeException">Thrown when budgetScale is not in (0, 1].</exception>
+        public static async Task<IReadOnlyList<MemoryChunk>> ChunkAsync(Scope scope, ModelEndpoint endpoint, string body, double budgetScale, CancellationToken token = default)
+        {
+            if (budgetScale <= 0.0 || budgetScale > 1.0) throw new ArgumentOutOfRangeException(nameof(budgetScale));
             if (scope == null) throw new ArgumentNullException(nameof(scope));
             if (endpoint == null) throw new ArgumentNullException(nameof(endpoint));
             if (body == null) throw new ArgumentNullException(nameof(body));
@@ -63,8 +82,9 @@ namespace Isis.Core.Recall
             // shortfall if the profile under-reserves, and never double-counts a reservation the library made.
             int rawBudget = profile.EffectiveInputBudget > 0 ? profile.EffectiveInputBudget : 512;
             int extraReserve = Math.Max(0, EncoderSpecialTokenReserve(profile.TokenizerKind) - Math.Max(0, profile.ReservedInputTokens));
-            int budget = Math.Max(1, rawBudget - extraReserve);
+            int budget = Math.Max(1, rawBudget - extraReserve - TokenizerMismatchMargin(rawBudget, budgetOverride.HasValue));
             int perChunk = scope.ChunkMaxTokens > 0 ? Math.Min(scope.ChunkMaxTokens, budget) : budget;
+            if (budgetScale < 1.0) perChunk = Math.Max(1, (int)Math.Floor(perChunk * budgetScale));
 
             if (scope.ChunkingMode == ChunkingModeEnum.OnOverflow)
             {
@@ -124,6 +144,17 @@ namespace Isis.Core.Recall
         {
             if (!string.IsNullOrEmpty(strategy) && Enum.TryParse(strategy, true, out TcChunkStrategy parsed)) return parsed;
             return TcChunkStrategy.FixedTokenCount;
+        }
+
+        // The local tokenizer is a close but not exact match for the serving runtime's: measured against Ollama's
+        // all-minilm on scientific text (symbols, Greek letters, numbers), Ollama counted up to ~7 more tokens than
+        // the WordPiece vocabulary, so chunks sized to the full 254-token budget were rejected ~20% of the time.
+        // Keep a small margin under a model budget the library resolved on its own. An explicit MaxInputTokens
+        // override is the operator's statement of the real limit and is used as-is.
+        private static int TokenizerMismatchMargin(int budget, bool explicitOverride)
+        {
+            if (explicitOverride) return 0;
+            return Math.Max(4, (int)Math.Ceiling(budget * 0.04));
         }
 
         // WordPiece encoders (BERT-family embedding models) frame each sequence with [CLS] and [SEP]; those two

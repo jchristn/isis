@@ -5,7 +5,34 @@ All notable changes to Isis are documented here. This project adheres to
 
 ## [0.1.0] - ALPHA (in progress)
 
+### Added
+
+- **Benchmark harness (`src/Test.Benchmark`, `benchmarks/`).** A black-box REST/MCP harness with `retrieval`, `chat`,
+  `agent`, `load`, `stub`, `prepare`, and `compare` commands, an isolated pgvector + RecallDB stack, hand-labelled
+  datasets (`isis-live`, `atlas`), converters for BEIR and LongMemEval, and a CI regression gate. The first baseline
+  is in `benchmarks/RESULTS.md`.
+
+### Changed
+
+- **Voltaic 1.1.0.** The MCP server moves from Voltaic 0.6.1 to 1.1.0, which fixes Claude Code 2.1.x seeing no Isis
+  tools (it uses `server/discover` and the stateless `2026-07-28` revision). Regression cases were added to the MCP
+  suite.
+- **Chat grounds on the whole best-matching chunk** instead of a 240-character snippet. Answer accuracy on the
+  isis-live benchmark rose from 0.68 to 0.96.
+- **Hybrid search runs its vector and text legs in parallel**, and a multi-chunk memory's chunks are embedded
+  concurrently (4 at a time).
+- **RecallDB clients are shared per endpoint** instead of one undisposed `HttpClient` per request.
+
 ### Fixed
+
+- **`memory_search` category filter** accepts a category name or `cat_` id (by name it previously matched nothing).
+  An unknown category or an empty `queryText` now returns 400.
+- **Concurrent first writes to a new scope** no longer race to provision the RecallDB tenant and collection.
+- **Concurrent upserts of the same memory** are serialized, so there are no more duplicate-key 500s.
+- **Embedding overflow on technical and accented text.** Chunks keep a 4% margin under an auto-resolved token budget,
+  and a context-length rejection re-chunks at 0.75, 0.5, and 0.3 of the budget.
+- **Unhandled exceptions return JSON** (400/501/503/500) through a server-wide exception route, instead of Watson's
+  HTML error page.
 
 - **Chunk document keys are now URL-safe (fixes orphaned chunks on delete).** Multi-chunk memories were
   keyed `{memoryId}#{ordinal}`, but the RecallDB SDK places the document key into the request path without

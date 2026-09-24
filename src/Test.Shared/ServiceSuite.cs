@@ -38,6 +38,9 @@ namespace Test.Shared
                 new System.Collections.Generic.List<Touchstone.Core.TestCaseDescriptor>
                 {
                     // HealthCheckService.BuildKey
+                    TestCase.Async("service", "keyed-lock-exclusive", "KeyedAsyncLock serializes holders of the same key", KeyedLockExclusiveAsync),
+                    TestCase.Async("service", "keyed-lock-independent-keys", "KeyedAsyncLock lets different keys proceed concurrently", KeyedLockIndependentKeysAsync),
+                    TestCase.Async("service", "keyed-lock-cleans-up", "KeyedAsyncLock removes entries once released", KeyedLockCleansUpAsync),
                     TestCase.Async("service", "buildkey-identical-equal", "BuildKey: identical endpoints share a key", BuildKeyIdenticalEqualAsync),
                     TestCase.Async("service", "buildkey-path-differs", "BuildKey: different health-check path differs", BuildKeyPathDiffersAsync),
                     TestCase.Async("service", "buildkey-method-differs", "BuildKey: GET vs HEAD differs", BuildKeyMethodDiffersAsync),
@@ -179,6 +182,71 @@ namespace Test.Shared
         #endregion
 
         #region Private-Methods-BuildKey
+
+        private static async Task KeyedLockExclusiveAsync()
+        {
+            KeyedAsyncLock locks = new KeyedAsyncLock();
+            int inside = 0;
+            int maxInside = 0;
+            List<Task> tasks = new List<Task>();
+            for (int i = 0; i < 16; i++)
+            {
+                tasks.Add(Task.Run(async () =>
+                {
+                    await locks.WaitAsync("memory-1").ConfigureAwait(false);
+                    try
+                    {
+                        int now = Interlocked.Increment(ref inside);
+                        InterlockedMax(ref maxInside, now);
+                        await Task.Delay(5).ConfigureAwait(false);
+                        Interlocked.Decrement(ref inside);
+                    }
+                    finally
+                    {
+                        locks.Release("memory-1");
+                    }
+                }));
+            }
+
+            await Task.WhenAll(tasks).ConfigureAwait(false);
+            TestCase.Require(maxInside == 1, "At most one holder of a key should be inside at once, saw " + maxInside + ".");
+            TestCase.Require(locks.ActiveKeys() == 0, "The key should be removed once every holder released it.");
+        }
+
+        private static async Task KeyedLockIndependentKeysAsync()
+        {
+            KeyedAsyncLock locks = new KeyedAsyncLock();
+            await locks.WaitAsync("a").ConfigureAwait(false);
+            Task other = locks.WaitAsync("b");
+            Task finished = await Task.WhenAny(other, Task.Delay(2000)).ConfigureAwait(false);
+            TestCase.Require(finished == other, "A different key should not wait on a held key.");
+            locks.Release("b");
+            locks.Release("a");
+        }
+
+        private static async Task KeyedLockCleansUpAsync()
+        {
+            KeyedAsyncLock locks = new KeyedAsyncLock();
+            for (int i = 0; i < 50; i++)
+            {
+                await locks.WaitAsync("k" + i).ConfigureAwait(false);
+                locks.Release("k" + i);
+            }
+
+            TestCase.Require(locks.ActiveKeys() == 0, "Released keys should be removed, " + locks.ActiveKeys() + " remain.");
+            TestCase.Throws<InvalidOperationException>(() => locks.Release("never-held"), "Releasing an unheld key should throw.");
+        }
+
+        private static void InterlockedMax(ref int target, int value)
+        {
+            int current = Volatile.Read(ref target);
+            while (value > current)
+            {
+                int previous = Interlocked.CompareExchange(ref target, value, current);
+                if (previous == current) return;
+                current = previous;
+            }
+        }
 
         private static Task BuildKeyIdenticalEqualAsync()
         {

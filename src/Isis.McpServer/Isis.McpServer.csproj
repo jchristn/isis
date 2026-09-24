@@ -18,7 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Voltaic" Version="0.6.1" />
+    <PackageReference Include="Voltaic" Version="1.1.0" />
   </ItemGroup>
 
 </Project>

@@ -169,7 +169,8 @@ namespace Test.Shared
                 await store.EnsureScopeAsync(scope).ConfigureAwait(false);
 
                 Memory memory = new Memory { TenantId = "ten_x", ScopeId = scope.Id, CategoryId = "cat_1", Slug = "centerline", Title = "Centerline", Body = "Control the centerline; posture and framing win positions." };
-                string key = await store.UpsertAsync(scope, memory, null).ConfigureAwait(false);
+                List<MemoryChunk> chunks = new List<MemoryChunk> { new MemoryChunk { Ordinal = 0, Text = memory.Body, StartOffset = 0, EndOffset = memory.Body.Length } };
+                string key = await store.UpsertAsync(scope, memory, chunks).ConfigureAwait(false);
                 if (string.IsNullOrEmpty(key) || !File.Exists(key)) throw new InvalidOperationException("Expected a written memory file.");
 
                 MemorySearchResult result = await store.SearchAsync(scope, new MemorySearchQuery { QueryText = "posture framing", Mode = SearchModeEnum.Hybrid, TopK = 5 }, null).ConfigureAwait(false);

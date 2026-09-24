@@ -20,7 +20,8 @@ namespace Isis.Core.Stores
         public SearchModeEnum Mode { get; set; } = SearchModeEnum.Hybrid;
 
         /// <summary>
-        /// Optional category filter (category name / label). Null searches all categories in the scope.
+        /// Optional category filter: a category name or cat_ id (the service resolves either to the id, which is
+        /// what stores label documents with). Null searches all categories in the scope.
         /// </summary>
         public string? CategoryFilter { get; set; } = null;
 

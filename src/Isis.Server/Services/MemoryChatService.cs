@@ -248,6 +248,8 @@ namespace Isis.Server.Services
 
         #region Private-Methods
 
+        private const int _ContextCharsPerMemory = 4000;
+
         private const string _SystemPrompt =
             "You are a memory assistant for a specific memory scope. Answer the user's question using only the provided memories. " +
             "Cite the memories you use by their slug in square brackets. " +
@@ -281,7 +283,11 @@ namespace Isis.Server.Services
             }
 
             int k = topK < 1 ? 5 : topK;
-            MemorySearchQuery query = new MemorySearchQuery { QueryText = question, Mode = SearchModeEnum.Hybrid, TopK = k };
+            // Ground on the whole best-matching chunk, not a short preview snippet: a chunk is bounded by the embedding
+            // token budget (roughly a thousand characters for small encoders), so this is the entire memory for a
+            // typical memory and the relevant region of a long one. A 240-character snippet hid any answer that was
+            // not in a memory's opening sentence.
+            MemorySearchQuery query = new MemorySearchQuery { QueryText = question, Mode = SearchModeEnum.Hybrid, TopK = k, TokenBudget = _ContextCharsPerMemory };
             MemorySearchResult retrieval = await _MemoryService.SearchAsync(scope, query, token).ConfigureAwait(false);
 
             if (retrieval.Hits.Count == 0)
@@ -367,7 +373,8 @@ namespace Isis.Server.Services
             if (!string.IsNullOrEmpty(title)) sb.Append(title).Append(": ");
             sb.Append(snippet).Append('\n');
             ctx.Citations.Add(new ChatCitation { Slug = slug, Title = title, Score = score ?? 0.0 });
-            ctx.HitPayloads.Add(new { slug = slug, title = title, score = score ?? 0.0, snippet = snippet });
+            // The model gets the whole chunk; the UI's retrieval event keeps a short preview.
+            ctx.HitPayloads.Add(new { slug = slug, title = title, score = score ?? 0.0, snippet = Truncate(snippet ?? string.Empty, 240) });
         }
 
         private static string Truncate(string value, int max)

@@ -73,7 +73,7 @@ namespace Isis.Core.Models
         /// <summary>
         /// The full base URL of the endpoint, onto which the API-format-specific path (for example
         /// <c>/api/embed</c> or <c>/v1/embeddings</c>) is appended. Example:
-        /// <c>http://view.homedns.org:8900/v1.0/api/all-minilm-latest</c>.
+        /// <c>http://conductor.example.com:8900/v1.0/api/all-minilm-latest</c>.
         /// </summary>
         public string BaseUrl { get; set; } = "http://127.0.0.1:11434";
 

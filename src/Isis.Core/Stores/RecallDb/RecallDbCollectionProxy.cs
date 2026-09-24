@@ -31,7 +31,7 @@ namespace Isis.Core.Stores.RecallDb
         {
             if (string.IsNullOrEmpty(endpoint)) throw new ArgumentException("A RecallDB endpoint is required.", nameof(endpoint));
             if (string.IsNullOrEmpty(adminKey)) throw new ArgumentException("A RecallDB admin key is required.", nameof(adminKey));
-            _Client = new RecallDbClient(endpoint, adminKey);
+            _Client = RecallDbClientPool.Get(endpoint, adminKey);
         }
 
         #endregion

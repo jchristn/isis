@@ -59,7 +59,7 @@ namespace Isis.Core.Stores.RecallDb
         {
             if (string.IsNullOrEmpty(endpoint)) throw new ArgumentException("A RecallDB endpoint is required.", nameof(endpoint));
             if (string.IsNullOrEmpty(adminKey)) throw new ArgumentException("A RecallDB admin key is required.", nameof(adminKey));
-            _Client = new RecallDbClient(endpoint, adminKey);
+            _Client = RecallDbClientPool.Get(endpoint, adminKey);
         }
 
         #endregion
@@ -85,7 +85,16 @@ namespace Isis.Core.Stores.RecallDb
                 bool tenantExists = await client.TenantExistsAsync(scope.TenantId, token).ConfigureAwait(false);
                 if (!tenantExists)
                 {
-                    await client.CreateTenantAsync(new TenantMetadata { Id = scope.TenantId, Name = scope.TenantId, Active = true }, token).ConfigureAwait(false);
+                    try
+                    {
+                        await client.CreateTenantAsync(new TenantMetadata { Id = scope.TenantId, Name = scope.TenantId, Active = true }, token).ConfigureAwait(false);
+                    }
+                    catch (RecallDbException)
+                    {
+                        // A concurrent writer (another scope in this tenant, or another node) may have created the
+                        // tenant between the probe and the create; that is success. Anything else is a real failure.
+                        if (!await client.TenantExistsAsync(scope.TenantId, token).ConfigureAwait(false)) throw;
+                    }
                 }
 
                 if (string.IsNullOrEmpty(scope.RecallCollectionId))
@@ -357,8 +366,13 @@ namespace Isis.Core.Stores.RecallDb
                     FullText = new FullTextQuery { Query = query.QueryText, TextWeight = query.TextWeight }
                 };
 
-                SearchResult vectorResult = await ExecuteSearchAsync(client, scope, vectorQuery, token).ConfigureAwait(false);
-                SearchResult textResult = await ExecuteSearchAsync(client, scope, textQuery, token).ConfigureAwait(false);
+                // The two legs are independent, so run them concurrently: hybrid latency becomes max(vector, text)
+                // instead of their sum.
+                Task<SearchResult> vectorTask = ExecuteSearchAsync(client, scope, vectorQuery, token);
+                Task<SearchResult> textTask = ExecuteSearchAsync(client, scope, textQuery, token);
+                await Task.WhenAll(vectorTask, textTask).ConfigureAwait(false);
+                SearchResult vectorResult = await vectorTask.ConfigureAwait(false);
+                SearchResult textResult = await textTask.ConfigureAwait(false);
                 // Fuse the two rankings at the chunk-document level, then roll chunks up to one hit per memory.
                 List<DocumentRecord> fused = FuseByReciprocalRank(new[] { vectorResult.Documents, textResult.Documents });
                 documents = GroupByParent(fused, topK);

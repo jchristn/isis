@@ -1,0 +1,242 @@
+{
+  "name": "isis-agent",
+  "dataset": "../datasets/isis-live.json",
+  "tasks": [
+    {
+      "id": "t01",
+      "type": "recall",
+      "prompt": "What command runs the Isis automated test suite?",
+      "expect": [
+        "Test\\.Automated"
+      ],
+      "forbid": []
+    },
+    {
+      "id": "t02",
+      "type": "how-to",
+      "prompt": "I need to add a new persisted column to the memories table in Isis. What do I have to touch?",
+      "expect": [
+        "migration",
+        "DDL|Setup|provider"
+      ],
+      "forbid": []
+    },
+    {
+      "id": "t03",
+      "type": "recall",
+      "prompt": "Which separator do multi-chunk RecallDB document keys use in Isis now, and why was it changed?",
+      "expect": [
+        "-c",
+        "#|fragment"
+      ],
+      "forbid": []
+    },
+    {
+      "id": "t04",
+      "type": "recall",
+      "prompt": "What is all-minilm's real context length, and what effective token budget does the Isis chunker resolve for it?",
+      "expect": [
+        "256",
+        "254"
+      ],
+      "forbid": []
+    },
+    {
+      "id": "t05",
+      "type": "recall",
+      "prompt": "Can an MCP client authenticate to Isis with only the access key? Which header does it use?",
+      "expect": [
+        "yes|only the access key|access key alone|alone",
+        "Bearer|x-access-key"
+      ],
+      "forbid": []
+    },
+    {
+      "id": "t06",
+      "type": "recall",
+      "prompt": "Does Isis have an admin x-api-key header?",
+      "expect": [
+        "\\b(no|not|isn't|there is no)\\b"
+      ],
+      "forbid": []
+    },
+    {
+      "id": "t07",
+      "type": "how-to",
+      "prompt": "In Isis, how do I make one scope override the content of a tenant-global instruction without affecting other scopes?",
+      "expect": [
+        "Replace"
+      ],
+      "forbid": []
+    },
+    {
+      "id": "t08",
+      "type": "recall",
+      "prompt": "Which REST route returns the merged instruction set an agent should see for a scope?",
+      "expect": [
+        "effective-instructions"
+      ],
+      "forbid": []
+    },
+    {
+      "id": "t09",
+      "type": "recall",
+      "prompt": "Where do I add new UI strings in the Isis dashboard?",
+      "expect": [
+        "resources\\.js"
+      ],
+      "forbid": []
+    },
+    {
+      "id": "t10",
+      "type": "how-to",
+      "prompt": "How do I verify a change to the Isis dashboard before committing?",
+      "expect": [
+        "lint",
+        "build"
+      ],
+      "forbid": []
+    },
+    {
+      "id": "t11",
+      "type": "multi",
+      "prompt": "Which database providers does the Isis metadata DAL support?",
+      "expect": [
+        "sqlite",
+        "postgres",
+        "mysql",
+        "sql ?server"
+      ],
+      "forbid": []
+    },
+    {
+      "id": "t12",
+      "type": "recall",
+      "prompt": "What is the order of #region blocks in an Isis C# file?",
+      "expect": [
+        "Public-Members",
+        "Private-Members",
+        "Constructors-and-Factories"
+      ],
+      "forbid": []
+    },
+    {
+      "id": "t13",
+      "type": "recall",
+      "prompt": "How does Isis hybrid search combine the vector and full-text results?",
+      "expect": [
+        "reciprocal rank|RRF"
+      ],
+      "forbid": []
+    },
+    {
+      "id": "t14",
+      "type": "multi",
+      "prompt": "If I delete an Isis scope, what happens to its RecallDB data, and is the RecallDB tenant dropped?",
+      "expect": [
+        "collection",
+        "(not|n't|never).{0,60}tenant|tenant.{0,80}(not|n't|never|remains|kept|shared)"
+      ],
+      "forbid": []
+    },
+    {
+      "id": "t15",
+      "type": "how-to",
+      "prompt": "I'm writing a new store teardown method for Isis cascades. How should it handle a collection that is already missing?",
+      "expect": [
+        "best[- ]effort|catch|ignore|swallow"
+      ],
+      "forbid": []
+    },
+    {
+      "id": "t16",
+      "type": "recall",
+      "prompt": "What happens if I upsert an Isis memory with a slug that already exists in the same scope and category?",
+      "expect": [
+        "update|in place|overwrit",
+        "version"
+      ],
+      "forbid": []
+    },
+    {
+      "id": "t17",
+      "type": "recall",
+      "prompt": "Which library does Isis use for inference calls, and who applies endpoint authentication?",
+      "expect": [
+        "PolyPrompt",
+        "Isis"
+      ],
+      "forbid": []
+    },
+    {
+      "id": "t18",
+      "type": "recall",
+      "prompt": "What work is planned next for Isis?",
+      "expect": [
+        "OKF",
+        "summar"
+      ],
+      "forbid": []
+    },
+    {
+      "id": "t19",
+      "type": "recall",
+      "prompt": "Where do enum option lists for the Isis dashboard live?",
+      "expect": [
+        "constants\\.js"
+      ],
+      "forbid": []
+    },
+    {
+      "id": "t20",
+      "type": "how-to",
+      "prompt": "In Isis code, should I write System.Collections.Generic.List<ModelEndpoint> inline in a signature?",
+      "expect": [
+        "\\b(no|don't|do not|avoid|never)\\b",
+        "using"
+      ],
+      "forbid": []
+    },
+    {
+      "id": "t21",
+      "type": "recall",
+      "prompt": "How many automated test cases were passing as of the last recorded Isis test run?",
+      "expect": [
+        "346"
+      ],
+      "forbid": []
+    },
+    {
+      "id": "t22",
+      "type": "recall",
+      "prompt": "What are the id prefixes for Isis memories and categories?",
+      "expect": [
+        "mem_",
+        "cat_"
+      ],
+      "forbid": []
+    },
+    {
+      "id": "t23",
+      "type": "abstain",
+      "prompt": "What host port does the Isis Grafana dashboard listen on? Answer only from project memory.",
+      "expect": [
+        "not|no |don't|doesn't|cannot|can't|unable|isn't"
+      ],
+      "forbid": [
+        "\\b3000\\b"
+      ]
+    },
+    {
+      "id": "t24",
+      "type": "abstain",
+      "prompt": "According to the project's memory, what numeric k constant does Isis use for reciprocal rank fusion?",
+      "expect": [
+        "not|no |don't|doesn't|cannot|can't|unable|isn't"
+      ],
+      "forbid": [
+        "\\b60\\b"
+      ]
+    }
+  ]
+}

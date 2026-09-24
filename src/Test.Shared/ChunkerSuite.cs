@@ -8,6 +8,7 @@ namespace Test.Shared
     using Isis.Core.Models;
     using Isis.Core.Recall;
     using Isis.Core.Stores;
+    using TextChunker.Tokenization;
     using Touchstone.Core;
 
     /// <summary>
@@ -36,7 +37,11 @@ namespace Test.Shared
                     TestCase.Async("chunker", "always-splits-small", "ChunkingMode.Always with a small budget splits a small body", AlwaysSplitsSmallAsync),
                     TestCase.Async("chunker", "smaller-budget-more-chunks", "A smaller per-chunk budget produces more chunks", SmallerBudgetMoreChunksAsync),
                     TestCase.Async("chunker", "endpoint-maxinputtokens-caps-budget", "A low endpoint MaxInputTokens caps the chunk budget", EndpointMaxInputTokensCapsBudgetAsync),
-                    TestCase.Async("chunker", "empty-body-single", "An empty body yields a single empty chunk", EmptyBodySingleAsync)
+                    TestCase.Async("chunker", "empty-body-single", "An empty body yields a single empty chunk", EmptyBodySingleAsync),
+                    TestCase.Async("chunker", "minilm-tokenizer-margin", "Auto-resolved all-minilm chunks stay under the budget by a tokenizer-mismatch margin", MiniLmTokenizerMarginAsync),
+                    TestCase.Async("chunker", "override-budget-exact", "An explicit MaxInputTokens override is used without a margin", OverrideBudgetExactAsync),
+                    TestCase.Async("chunker", "budget-scale-finer", "A budget scale below 1 chunks more finely", BudgetScaleFinerAsync),
+                    TestCase.Async("chunker", "budget-scale-invalid", "A budget scale outside (0, 1] is rejected", BudgetScaleInvalidAsync)
                 });
         }
 
@@ -126,6 +131,44 @@ namespace Test.Shared
 
             TestCase.Require(chunks.Count == 1, "An empty body should still produce a single chunk.");
             TestCase.Require(chunks[0].Text.Length == 0, "The single chunk for an empty body should be empty.");
+        }
+
+        private static async Task MiniLmTokenizerMarginAsync()
+        {
+            // all-minilm resolves to a 254-token effective budget; serving runtimes (Ollama) can count a few more
+            // tokens than the local WordPiece vocabulary on technical text, so chunks must leave headroom.
+            BertWordPieceTokenizerAdapter wordPiece = new BertWordPieceTokenizerAdapter();
+            IReadOnlyList<MemoryChunk> chunks = await MemoryChunker.ChunkAsync(Scope(ChunkingModeEnum.OnOverflow), Endpoint(), Oversized()).ConfigureAwait(false);
+            TestCase.Require(chunks.Count > 1, "An oversized body should split.");
+            int largest = chunks.Max(c => wordPiece.CountTokens(c.Text));
+            TestCase.Require(largest <= 245, "Auto-budget all-minilm chunks should stay at or under 245 WordPiece tokens, largest was " + largest + ".");
+        }
+
+        private static async Task OverrideBudgetExactAsync()
+        {
+            BertWordPieceTokenizerAdapter wordPiece = new BertWordPieceTokenizerAdapter();
+            IReadOnlyList<MemoryChunk> chunks = await MemoryChunker.ChunkAsync(Scope(ChunkingModeEnum.Always), Endpoint(100), Oversized()).ConfigureAwait(false);
+            int largest = chunks.Max(c => wordPiece.CountTokens(c.Text));
+            TestCase.Require(largest > 90 && largest <= 100, "An explicit 100-token override should fill chunks close to 100 tokens (no margin), largest was " + largest + ".");
+        }
+
+        private static async Task BudgetScaleFinerAsync()
+        {
+            Scope scope = Scope(ChunkingModeEnum.OnOverflow);
+            IReadOnlyList<MemoryChunk> full = await MemoryChunker.ChunkAsync(scope, Endpoint(), Oversized()).ConfigureAwait(false);
+            IReadOnlyList<MemoryChunk> scaled = await MemoryChunker.ChunkAsync(scope, Endpoint(), Oversized(), 0.5).ConfigureAwait(false);
+            TestCase.Require(scaled.Count > full.Count, "A 0.5 budget scale should produce more chunks (" + scaled.Count + " vs " + full.Count + ").");
+            AssertContiguous(scaled);
+        }
+
+        private static async Task BudgetScaleInvalidAsync()
+        {
+            await TestCase.ThrowsAsync<ArgumentOutOfRangeException>(
+                async () => await MemoryChunker.ChunkAsync(Scope(ChunkingModeEnum.OnOverflow), Endpoint(), "body", 0.0).ConfigureAwait(false),
+                "A zero budget scale should be rejected.").ConfigureAwait(false);
+            await TestCase.ThrowsAsync<ArgumentOutOfRangeException>(
+                async () => await MemoryChunker.ChunkAsync(Scope(ChunkingModeEnum.OnOverflow), Endpoint(), "body", 1.5).ConfigureAwait(false),
+                "A budget scale above 1 should be rejected.").ConfigureAwait(false);
         }
 
         private static void AssertContiguous(IReadOnlyList<MemoryChunk> chunks)

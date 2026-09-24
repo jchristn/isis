@@ -171,7 +171,7 @@ function EndpointForm({ kind, initial, onSubmit, onClose, t }) {
         </div>
         <div className="field">
           <label>{t('endpoints.baseUrl')}</label>
-          <input value={form.baseUrl} onChange={(e) => set('baseUrl', e.target.value)} required placeholder="http://view.homedns.org:8900/v1.0/api/all-minilm-latest" />
+          <input value={form.baseUrl} onChange={(e) => set('baseUrl', e.target.value)} required placeholder="http://conductor.example.com:8900/v1.0/api/all-minilm-latest" />
           <span className="field-hint">{t('endpoints.baseUrlHint')}</span>
         </div>
 

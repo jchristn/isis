@@ -212,6 +212,14 @@ an organized markdown hierarchy) and be reviewed in a pull request.
 | `docker` | Compose stack, per-service Dockerfiles, factory/demo seed |
 | `docs` | REST API reference, MCP API, agent-connection guides, product plan |
 
+## Benchmarks
+
+`benchmarks/` holds a reproducible benchmark suite covering retrieval accuracy (including BEIR SciFact and
+LongMemEval), chat-with-memory accuracy, agent-in-the-loop task success over MCP, and load. It runs against an
+isolated stack so it never touches a deployment. See [benchmarks/README.md](benchmarks/README.md) for how to run it
+and [benchmarks/RESULTS.md](benchmarks/RESULTS.md) for the current baseline. With Isis connected, Claude Code
+(haiku) completed 96% of memory-dependent tasks, against 21% without memory.
+
 ## Issues & discussion
 
 - **Bugs / feature requests:** open an issue at <https://github.com/jchristn/isis/issues>.

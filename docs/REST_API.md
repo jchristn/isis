@@ -233,7 +233,7 @@ merged, source-annotated result an agent working in that scope should see. Over 
 `isis_instructions` tool takes an optional `scopeId` and returns that scope's effective set.
 
 A model endpoint is addressed by a full **`baseUrl`** (e.g. `http://host:11434` or
-`http://view.homedns.org:8900/v1.0/api/all-minilm-latest`) onto which the API-format path is
+`http://conductor.example.com:8900/v1.0/api/all-minilm-latest`) onto which the API-format path is
 appended — there is no separate host/port/ssl. Outbound authentication is configured with
 `authType` — one of `None`, `BearerToken`, `ApiKeyHeader` (with `authHeaderName` + `authSecret`),
 `QueryParam` (with `authQueryParam` + `authSecret`), `BasicAuth` (with `authKeyId` + `authSecret`),
@@ -246,6 +246,10 @@ Chunking of oversized memories is transparent to the API and configured on the *
 (`FixedTokenCount` default), `chunkMaxTokens` (0 = use the model budget), and `chunkOverlapTokens` (64).
 A memory that overflows is embedded as several chunks under the hood; upsert, read, search, and delete all
 continue to operate on the whole memory, and search returns one hit per memory regardless of chunking.
+
+A search body is `{ "queryText": "…", "mode": "Hybrid", "topK": 10, "categoryFilter": "…", "tokenBudget": 240 }`.
+`queryText` is required (an empty or missing query returns 400). `categoryFilter` accepts a category name or
+its `cat_` id; an unknown category returns 400.
 
 ### Instructions (tenant-scoped)
 

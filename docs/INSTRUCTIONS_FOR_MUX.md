@@ -178,7 +178,7 @@ Match every write to a category and follow that category's `instructions`. When 
 | `memory_enumerate` | `tenantId`, `scopeId` (required); `category`, `maxResults` | List token-cheap memory summaries (no bodies). `category` filters by category **id**. |
 | `memory_read` | `tenantId`, `scopeId`, `memoryId` (required) | Read one memory's full body. |
 | `memory_upsert` | `tenantId`, `scopeId`, `categoryId`, `slug`, `body` (required); `title`, `summary`, `type` | Create or update a memory. Idempotent on `(scope, category, slug)`. |
-| `memory_search` | `tenantId`, `scopeId`, `queryText` (required); `mode`, `topK`, `categoryName` | Search a scope. `mode` = `Keyword`/`Semantic`/`Hybrid`. `categoryName` filters by category **name**. |
+| `memory_search` | `tenantId`, `scopeId`, `queryText` (required); `mode`, `topK`, `categoryName` | Search a scope. `mode` = `Keyword`/`Semantic`/`Hybrid`. `categoryName` filters by category name (or `cat_` id). |
 | `memory_delete` | `tenantId`, `scopeId`, `memoryId` (required) | Delete a memory by id. |
 
 `type` on upsert is one of `User`, `Feedback`, `Project`, `Reference`. `Semantic` and `Hybrid` search require a RecallDb-backed scope; `Keyword` works on any store. (The server also exposes a few framework built-ins -- `ping`, `echo`, `getTime`, `getSessions` -- but the memory tools above are the ones you use.)

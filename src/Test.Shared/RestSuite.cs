@@ -94,6 +94,10 @@ namespace Test.Shared
                     TestCase.Async("rest", "memory-read", "GET /memories/{id} reads a memory", MemoryReadAsync),
                     TestCase.Async("rest", "memory-read-unknown", "GET /memories/{unknown} is not found", MemoryReadUnknownAsync),
                     TestCase.Async("rest", "memory-search", "POST /memories/search returns hits", MemorySearchAsync),
+                    TestCase.Async("rest", "memory-search-empty-query", "POST /memories/search without queryText is a bad request", MemorySearchEmptyQueryAsync),
+                    TestCase.Async("rest", "memory-search-category-name", "POST /memories/search filters by category name", MemorySearchCategoryByNameAsync),
+                    TestCase.Async("rest", "memory-search-category-id", "POST /memories/search filters by category id", MemorySearchCategoryByIdAsync),
+                    TestCase.Async("rest", "memory-search-category-unknown", "POST /memories/search with an unknown category is a bad request", MemorySearchCategoryUnknownAsync),
                     TestCase.Async("rest", "memory-delete", "DELETE /memories/{id} deletes a memory", MemoryDeleteAsync),
                     TestCase.Async("rest", "memory-delete-unknown", "DELETE /memories/{unknown} is not found", MemoryDeleteUnknownAsync),
 
@@ -845,6 +849,65 @@ namespace Test.Shared
             ExpectStatus(r, HttpStatusCode.OK, "search memories");
             using JsonDocument doc = await ReadJsonAsync(r).ConfigureAwait(false);
             TestCase.Require(doc.RootElement.GetProperty("hits").GetArrayLength() >= 1, "search should return at least one hit.");
+        }
+
+        private static async Task MemorySearchEmptyQueryAsync()
+        {
+            using ServerHarness h = await ServerHarness.StartAsync().ConfigureAwait(false);
+            using HttpClient access = h.AccessClient();
+            string sid = await CreateScopeAsync(access, h, "s1").ConfigureAwait(false);
+            string cid = await CreateCategoryAsync(access, h, sid, "notes").ConfigureAwait(false);
+            await UpsertMemoryAsync(access, h, sid, cid, "centerline", "Control the centerline.").ConfigureAwait(false);
+
+            HttpResponseMessage missing = await PostAsync(access, MemoriesPath(h.TenantId, sid) + "/search",
+                new { mode = "Keyword", topK = 5 }).ConfigureAwait(false);
+            ExpectStatus(missing, HttpStatusCode.BadRequest, "search without queryText");
+
+            HttpResponseMessage blank = await PostAsync(access, MemoriesPath(h.TenantId, sid) + "/search",
+                new { queryText = "   ", mode = "Keyword", topK = 5 }).ConfigureAwait(false);
+            ExpectStatus(blank, HttpStatusCode.BadRequest, "search with blank queryText");
+        }
+
+        private static async Task MemorySearchCategoryByNameAsync()
+        {
+            await MemorySearchCategoryFilterAsync(true).ConfigureAwait(false);
+        }
+
+        private static async Task MemorySearchCategoryByIdAsync()
+        {
+            await MemorySearchCategoryFilterAsync(false).ConfigureAwait(false);
+        }
+
+        private static async Task MemorySearchCategoryFilterAsync(bool byName)
+        {
+            using ServerHarness h = await ServerHarness.StartAsync().ConfigureAwait(false);
+            using HttpClient access = h.AccessClient();
+            string sid = await CreateScopeAsync(access, h, "s1").ConfigureAwait(false);
+            string notes = await CreateCategoryAsync(access, h, sid, "notes").ConfigureAwait(false);
+            string other = await CreateCategoryAsync(access, h, sid, "other").ConfigureAwait(false);
+            await UpsertMemoryAsync(access, h, sid, notes, "in-notes", "Posture and framing in notes.").ConfigureAwait(false);
+            await UpsertMemoryAsync(access, h, sid, other, "in-other", "Posture and framing elsewhere.").ConfigureAwait(false);
+
+            HttpResponseMessage r = await PostAsync(access, MemoriesPath(h.TenantId, sid) + "/search",
+                new { queryText = "posture framing", mode = "Keyword", topK = 5, categoryFilter = byName ? "Notes" : notes }).ConfigureAwait(false);
+            ExpectStatus(r, HttpStatusCode.OK, "search with category filter");
+            using JsonDocument doc = await ReadJsonAsync(r).ConfigureAwait(false);
+            JsonElement hits = doc.RootElement.GetProperty("hits");
+            TestCase.Require(hits.GetArrayLength() == 1, "category filter should return exactly the one memory in that category, got " + hits.GetArrayLength() + ".");
+            TestCase.Require(hits[0].GetProperty("slug").GetString() == "in-notes", "category filter returned the wrong memory.");
+        }
+
+        private static async Task MemorySearchCategoryUnknownAsync()
+        {
+            using ServerHarness h = await ServerHarness.StartAsync().ConfigureAwait(false);
+            using HttpClient access = h.AccessClient();
+            string sid = await CreateScopeAsync(access, h, "s1").ConfigureAwait(false);
+            string cid = await CreateCategoryAsync(access, h, sid, "notes").ConfigureAwait(false);
+            await UpsertMemoryAsync(access, h, sid, cid, "centerline", "Control the centerline.").ConfigureAwait(false);
+
+            HttpResponseMessage r = await PostAsync(access, MemoriesPath(h.TenantId, sid) + "/search",
+                new { queryText = "centerline", mode = "Keyword", topK = 5, categoryFilter = "no-such-category" }).ConfigureAwait(false);
+            ExpectStatus(r, HttpStatusCode.BadRequest, "search with unknown category");
         }
 
         private static async Task MemoryDeleteAsync()
