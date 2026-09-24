@@ -117,6 +117,10 @@ Defaults:
 - One idea per memory. Do not bundle unrelated facts.
 - Slugs are stable and descriptive (e.g. auth-token-rotation), lower-case-hyphenated; re-using a slug updates
   that memory rather than creating a duplicate.
+- When a fact changes (a decision is reversed, a value or owner changes), update the existing memory: search for
+  it, then upsert with the same slug and category. Do not add a second memory for the new value; the old one keeps
+  surfacing in search and contradicts the new one. If the change is significant enough to keep history, say what
+  it replaced and when in the body of the updated memory.
 - Write a one-line summary that is a genuine recall hook — what you'd search for to find this later.
 - Choose the category whose instructions match; if none fits, propose a new category rather than forcing it.
 - Record durable facts, decisions, and conventions — not transient chatter or secrets."
@@ -127,7 +131,8 @@ Defaults:
                     Name = "Recall",
                     Position = 5,
                     Content =
-@"Search before writing to avoid duplicates, and search before answering to ground your response.
+@"Search before writing to avoid duplicates (and to find the memory to update when a fact changes), and search
+before answering to ground your response.
 - On RecallDB scopes prefer Semantic or Hybrid search for meaning-based recall; use Keyword for exact terms.
 - Verbex and Filesystem scopes are keyword-only and match literal terms.
 - Narrow with the category filter when you know where the answer lives, and keep topK small."

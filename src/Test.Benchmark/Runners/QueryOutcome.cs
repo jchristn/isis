@@ -60,6 +60,11 @@ namespace Test.Benchmark.Runners
         public double TopScore { get; set; } = 0.0;
 
         /// <summary>
+        /// Highest raw vector similarity among the hits (0 when none reported one).
+        /// </summary>
+        public double TopVectorScore { get; set; } = 0.0;
+
+        /// <summary>
         /// Metric name to value for this query (empty for unanswerable queries).
         /// </summary>
         public Dictionary<string, double> Metrics { get; set; } = new Dictionary<string, double>();

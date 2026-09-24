@@ -17,6 +17,11 @@ namespace Test.Benchmark
         /// </summary>
         public double Score { get; set; } = 0.0;
 
+        /// <summary>
+        /// Raw vector similarity reported with the hit, when the server returned one.
+        /// </summary>
+        public double? VectorScore { get; set; } = null;
+
         #endregion
     }
 }

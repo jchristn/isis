@@ -59,6 +59,10 @@ namespace Test.Benchmark.Runners
             int topK = Math.Max(10, args.GetInt("k", 10));
             int concurrency = Math.Max(1, args.GetInt("concurrency", 1));
             bool useCategory = !args.GetFlag("no-category");
+            string? recencyArg = args.GetOptional("recency-weight");
+            double? recencyWeight = recencyArg != null ? args.GetDouble("recency-weight", 0.1) : (double?)null;
+            string? minScoreArg = args.GetOptional("min-score");
+            double? minScore = minScoreArg != null ? args.GetDouble("min-score", 0.0) : (double?)null;
 
             RetrievalReport report = new RetrievalReport
             {
@@ -71,6 +75,8 @@ namespace Test.Benchmark.Runners
             report.Config["concurrency"] = concurrency.ToString();
             report.Config["categoryFilter"] = useCategory ? "on" : "off";
             report.Config["store"] = args.Get("store", "RecallDb");
+            report.Config["recencyWeight"] = recencyWeight.HasValue ? recencyWeight.Value.ToString("0.###") : "server default";
+            if (minScore.HasValue) report.Config["minScore"] = minScore.Value.ToString("0.###");
             foreach (string name in new string[] { "chunking-mode", "chunk-strategy", "chunk-max-tokens", "chunk-overlap", "scope-suffix" })
             {
                 string? value = args.GetOptional(name);
@@ -88,7 +94,7 @@ namespace Test.Benchmark.Runners
             foreach (string mode in modes)
             {
                 PrometheusSnapshot before = await PrometheusSnapshot.CaptureAsync(_Context.Http, _Context.MetricsUrl, token).ConfigureAwait(false);
-                List<QueryOutcome> outcomes = await RunModeAsync(scopes, mode, topK, concurrency, useCategory, token).ConfigureAwait(false);
+                List<QueryOutcome> outcomes = await RunModeAsync(scopes, mode, topK, concurrency, useCategory, recencyWeight, minScore, token).ConfigureAwait(false);
                 PrometheusSnapshot after = await PrometheusSnapshot.CaptureAsync(_Context.Http, _Context.MetricsUrl, token).ConfigureAwait(false);
 
                 ModeSummary summary = Summarize(mode, outcomes);
@@ -107,7 +113,7 @@ namespace Test.Benchmark.Runners
 
         #region Private-Methods
 
-        private async Task<List<QueryOutcome>> RunModeAsync(List<ProvisionedScope> scopes, string mode, int topK, int concurrency, bool useCategory, CancellationToken token)
+        private async Task<List<QueryOutcome>> RunModeAsync(List<ProvisionedScope> scopes, string mode, int topK, int concurrency, bool useCategory, double? recencyWeight, double? minScore, CancellationToken token)
         {
             ConcurrentBag<QueryOutcome> outcomes = new ConcurrentBag<QueryOutcome>();
             using SemaphoreSlim gate = new SemaphoreSlim(concurrency);
@@ -123,7 +129,7 @@ namespace Test.Benchmark.Runners
                         try
                         {
                             string? category = useCategory ? query.Category : null;
-                            SearchResponse response = await _Context.Client.SearchAsync(scope.ScopeId, query.Text, mode, topK, category, token).ConfigureAwait(false);
+                            SearchResponse response = await _Context.Client.SearchAsync(scope.ScopeId, query.Text, mode, topK, category, token, recencyWeight, minScore).ConfigureAwait(false);
                             outcomes.Add(Score(scope.Corpus.Id, query, mode, response));
                         }
                         finally
@@ -151,7 +157,8 @@ namespace Test.Benchmark.Runners
                 LatencyMs = Math.Round(response.ElapsedMs, 2),
                 Ranked = response.Hits.Select(h => h.Slug).ToList(),
                 Relevant = new List<string>(query.Relevant),
-                TopScore = response.Hits.Count > 0 ? response.Hits[0].Score : 0.0
+                TopScore = response.Hits.Count > 0 ? response.Hits[0].Score : 0.0,
+                TopVectorScore = response.Hits.Count > 0 ? response.Hits.Max(h => h.VectorScore ?? 0.0) : 0.0
             };
 
             if (!query.Answerable || !response.IsSuccess) return outcome;
@@ -190,6 +197,8 @@ namespace Test.Benchmark.Runners
                 Metrics = Mean(scored),
                 MeanTopScoreAnswerable = scored.Count > 0 ? Math.Round(scored.Average(o => o.TopScore), 4) : 0.0,
                 MeanTopScoreNegative = negatives.Count > 0 ? Math.Round(negatives.Average(o => o.TopScore), 4) : 0.0,
+                ScoreAuroc = Auroc(scored.Select(o => o.TopScore).ToList(), negatives.Select(o => o.TopScore).ToList()),
+                VectorScoreAuroc = Auroc(scored.Select(o => o.TopVectorScore).ToList(), negatives.Select(o => o.TopVectorScore).ToList()),
                 Latency = LatencyStats.From(outcomes.Select(o => o.LatencyMs))
             };
 
@@ -201,6 +210,24 @@ namespace Test.Benchmark.Runners
             }
 
             return summary;
+        }
+
+        private static double? Auroc(List<double> positives, List<double> negatives)
+        {
+            // Mann-Whitney form: fraction of (positive, negative) pairs ranked correctly, ties counting half.
+            if (positives.Count == 0 || negatives.Count == 0) return null;
+            if (positives.All(p => p == 0.0) && negatives.All(n => n == 0.0)) return null;
+            double wins = 0.0;
+            foreach (double p in positives)
+            {
+                foreach (double n in negatives)
+                {
+                    if (p > n) wins += 1.0;
+                    else if (p == n) wins += 0.5;
+                }
+            }
+
+            return Math.Round(wins / (positives.Count * (double)negatives.Count), 4);
         }
 
         private static Dictionary<string, double> Mean(List<QueryOutcome> outcomes)

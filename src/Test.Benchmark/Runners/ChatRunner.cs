@@ -48,14 +48,14 @@ namespace Test.Benchmark.Runners
         public async Task<ChatReport> RunAsync(BenchmarkDataset dataset, CancellationToken token)
         {
             BenchmarkArguments args = _Context.Arguments;
-            int topK = args.GetInt("k", 5);
+            int topK = args.GetInt("k", 0);
             int limit = args.GetInt("limit", 0);
             int concurrency = Math.Max(1, args.GetInt("concurrency", 1));
             string inferenceId = await _Context.PrepareInferenceAsync(token).ConfigureAwait(false);
             JudgeClient? judge = CreateJudge(args);
 
             ChatReport report = new ChatReport { Dataset = dataset.Name, Environment = _Context.Environment };
-            report.Config["topK"] = topK.ToString();
+            report.Config["topK"] = topK > 0 ? topK.ToString() : "server default";
             report.Config["judge"] = judge != null ? judge.Description : "none";
             report.Config["concurrency"] = concurrency.ToString();
             if (limit > 0) report.Config["limit"] = limit.ToString();

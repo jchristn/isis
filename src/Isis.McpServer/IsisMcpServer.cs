@@ -441,7 +441,7 @@ namespace Isis.McpServer
 
             _Server.RegisterTool(
                 "memory_search",
-                "Search a scope's memory. Required: tenantId, scopeId, queryText. Optional: mode (Keyword|Semantic|Hybrid), topK, categoryName.",
+                "Search a scope's memory. Required: tenantId, scopeId, queryText. Optional: mode (Keyword|Semantic|Hybrid), topK, categoryName, minScore, recencyWeight.",
                 new
                 {
                     type = "object",
@@ -452,7 +452,9 @@ namespace Isis.McpServer
                         queryText = new { type = "string" },
                         mode = new { type = "string", description = "Keyword, Semantic, or Hybrid. Semantic/Hybrid require a RecallDB scope." },
                         topK = new { type = "integer" },
-                        categoryName = new { type = "string", description = "Optional category filter: the category's name or its cat_ id. An unknown category is an error, not an empty result." }
+                        categoryName = new { type = "string", description = "Optional category filter: the category's name or its cat_ id. An unknown category is an error, not an empty result." },
+                        minScore = new { type = "number", description = "Optional minimum score; weaker hits are dropped. Hybrid scores are fused and normalized to 0..1." },
+                        recencyWeight = new { type = "number", description = "Hybrid only: weight 0..1 of a signal favoring recently written memories (default 0.1; 0 disables)." }
                     },
                     required = new[] { "tenantId", "scopeId", "queryText" }
                 },
@@ -464,6 +466,10 @@ namespace Isis.McpServer
                     long? topK = p?.GetInt64("topK");
                     if (topK.HasValue) body["topK"] = topK.Value;
                     if (p?.GetString("categoryName") != null) body["categoryFilter"] = p.GetString("categoryName");
+                    double? minScore = p?.GetDouble("minScore");
+                    if (minScore.HasValue) body["minScore"] = minScore.Value;
+                    double? recencyWeight = p?.GetDouble("recencyWeight");
+                    if (recencyWeight.HasValue) body["recencyWeight"] = recencyWeight.Value;
                     string path = "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/scopes/" + Encode(Require(p, "scopeId")) + "/memories/search";
                     return await ProxyAsync(HttpMethod.Post, path, JsonSerializer.Serialize(body), "memory_search", CurrentCredentials(), ct).ConfigureAwait(false);
                 });
@@ -581,7 +587,7 @@ namespace Isis.McpServer
 
             _Server.RegisterTool(
                 "chat",
-                "Ask a question answered from a scope's memory (retrieval-augmented). Required: tenantId, scopeId, question. Optional: topK (default 5), inferenceEndpointId. Returns the answer plus cited memory ids.",
+                "Ask a question answered from a scope's memory (retrieval-augmented). Required: tenantId, scopeId, question. Optional: topK (default 8), inferenceEndpointId. Returns the answer plus cited memory ids.",
                 new { type = "object", properties = new { tenantId = new { type = "string" }, scopeId = new { type = "string" }, question = new { type = "string" }, topK = new { type = "integer" }, inferenceEndpointId = new { type = "string" } }, required = new[] { "tenantId", "scopeId", "question" } },
                 async (RpcParameters? p, CancellationToken ct) =>
                 {

@@ -8,6 +8,7 @@ namespace Isis.Server.Services
     using System.Threading;
     using System.Threading.Tasks;
     using Isis.Core.Database;
+    using Isis.Core.Helpers;
     using Isis.Core.Models;
     using Isis.Core.Observability;
     using Isis.Core.Recall;
@@ -67,6 +68,12 @@ namespace Isis.Server.Services
             if (category == null) throw new ArgumentNullException(nameof(category));
             if (incoming == null) throw new ArgumentNullException(nameof(incoming));
 
+            // Unpaired surrogates are not valid Unicode: tokenizers throw on them and PostgreSQL cannot store them,
+            // so one stray code unit (common in scraped or pasted text) would make the whole memory unstorable.
+            incoming.Title = TextSanitizer.ReplaceInvalidSurrogates(incoming.Title);
+            incoming.Summary = TextSanitizer.ReplaceInvalidSurrogates(incoming.Summary);
+            incoming.Body = TextSanitizer.ReplaceInvalidSurrogates(incoming.Body) ?? incoming.Body;
+
             long telemetryStart = Stopwatch.GetTimestamp();
             string telemetryOutcome = "success";
             using Activity? activity = IsisTelemetry.ActivitySource.StartActivity("memory upsert", ActivityKind.Internal);
@@ -112,8 +119,9 @@ namespace Isis.Server.Services
                     if (store.Capabilities.RequiresEmbedding)
                     {
                         ModelEndpoint endpoint = await ResolveEmbeddingEndpointAsync(scope, token).ConfigureAwait(false);
-                        chunks = await MemoryChunker.ChunkAsync(scope, endpoint, target.Body, token).ConfigureAwait(false);
-                        chunks = await EmbedWithBudgetFallbackAsync(scope, endpoint, target.Body, chunks, token).ConfigureAwait(false);
+                        string header = ChunkHeader(target);
+                        chunks = await MemoryChunker.ChunkAsync(scope, endpoint, target.Body, header, 1.0, token).ConfigureAwait(false);
+                        chunks = await EmbedWithBudgetFallbackAsync(scope, endpoint, target.Body, header, chunks, token).ConfigureAwait(false);
                     }
                     else
                     {
@@ -352,7 +360,9 @@ namespace Isis.Server.Services
                         CategoryFilter = categoryId,
                         TopK = query.TopK,
                         TokenBudget = query.TokenBudget,
-                        TextWeight = query.TextWeight
+                        TextWeight = query.TextWeight,
+                        MinScore = query.MinScore,
+                        RecencyWeight = query.RecencyWeight
                     };
                 }
 
@@ -363,6 +373,12 @@ namespace Isis.Server.Services
                 }
 
                 MemorySearchResult result = await store.SearchAsync(scope, query, queryEmbedding, token).ConfigureAwait(false);
+                if (query.MinScore.HasValue && result.Hits != null)
+                {
+                    double minimum = query.MinScore.Value;
+                    result.Hits = result.Hits.Where(h => h.Score >= minimum).ToList();
+                }
+
                 telemetryHits = result.Hits != null ? result.Hits.Count : 0;
                 return result;
             }
@@ -456,9 +472,12 @@ namespace Isis.Server.Services
 
             // First write to a scope provisions its store collection. Concurrent first writes would each create
             // one (splitting the scope's memories across collections, or failing on the store's unique keys), so
-            // provisioning is serialized per scope, and a writer that waited adopts the collection the winner
-            // persisted instead of creating another.
-            SemaphoreSlim gate = _ProvisioningLocks.GetOrAdd(scope.Id, _ => new SemaphoreSlim(1, 1));
+            // provisioning is serialized, and a writer that waited adopts the collection the winner persisted
+            // instead of creating another. The lock is per tenant rather than per scope: RecallDB derives
+            // per-collection index names from the time component of the collection id, so two collections created
+            // in the same instant collide and the second loses its indexes. Serializing creation within a tenant
+            // keeps creates apart; only a new scope's first write pays for it.
+            SemaphoreSlim gate = _ProvisioningLocks.GetOrAdd(scope.TenantId, _ => new SemaphoreSlim(1, 1));
             await gate.WaitAsync(token).ConfigureAwait(false);
             try
             {
@@ -503,7 +522,7 @@ namespace Isis.Server.Services
         {
             if (chunks.Count == 1)
             {
-                chunks[0].Embedding = await _EmbeddingService!.EmbedAsync(endpoint, chunks[0].Text, token).ConfigureAwait(false);
+                chunks[0].Embedding = await _EmbeddingService!.EmbedAsync(endpoint, chunks[0].EmbeddingText ?? chunks[0].Text, token).ConfigureAwait(false);
                 return;
             }
 
@@ -524,7 +543,7 @@ namespace Isis.Server.Services
             await gate.WaitAsync(token).ConfigureAwait(false);
             try
             {
-                chunk.Embedding = await _EmbeddingService!.EmbedAsync(endpoint, chunk.Text, token).ConfigureAwait(false);
+                chunk.Embedding = await _EmbeddingService!.EmbedAsync(endpoint, chunk.EmbeddingText ?? chunk.Text, token).ConfigureAwait(false);
             }
             finally
             {
@@ -537,7 +556,17 @@ namespace Isis.Server.Services
             return scopeId + "/" + categoryId + "/" + slug;
         }
 
-        private async Task<IReadOnlyList<MemoryChunk>> EmbedWithBudgetFallbackAsync(Scope scope, ModelEndpoint endpoint, string body, IReadOnlyList<MemoryChunk> chunks, CancellationToken token)
+        private static string ChunkHeader(Memory memory)
+        {
+            // Embed each chunk with the memory's title and summary so a chunk from the middle of a long memory still
+            // carries what the memory is about. Only the embedding sees the header; the stored chunk text is unchanged.
+            string title = memory.Title?.Trim() ?? string.Empty;
+            string summary = memory.Summary?.Trim() ?? string.Empty;
+            if (title.Length > 0 && summary.Length > 0) return title + ": " + summary;
+            return title.Length > 0 ? title : summary;
+        }
+
+        private async Task<IReadOnlyList<MemoryChunk>> EmbedWithBudgetFallbackAsync(Scope scope, ModelEndpoint endpoint, string body, string header, IReadOnlyList<MemoryChunk> chunks, CancellationToken token)
         {
             // The local tokenizer can undercount relative to the serving runtime: a few tokens on technical English,
             // but far more on accented text (the WordPiece vocabulary strips diacritics; some runtimes do not). When the
@@ -552,7 +581,7 @@ namespace Isis.Server.Services
                 }
                 catch (InvalidOperationException e) when (IsContextLengthError(e) && attempt < fallbackScales.Length)
                 {
-                    chunks = await MemoryChunker.ChunkAsync(scope, endpoint, body, fallbackScales[attempt], token).ConfigureAwait(false);
+                    chunks = await MemoryChunker.ChunkAsync(scope, endpoint, body, header, fallbackScales[attempt], token).ConfigureAwait(false);
                 }
             }
         }

@@ -12,6 +12,8 @@ namespace Isis.Core.Stores.RecallDb
     using Isis.Core.Models;
     using Isis.Core.Observability;
     using Isis.Core.Stores;
+    using RecallCollectionPage = global::RecallDb.Sdk.Models.EnumerationResult<global::RecallDb.Sdk.Models.CollectionMetadata>;
+    using RecallEnumerationQuery = global::RecallDb.Sdk.Models.EnumerationQuery;
 
     /// <summary>
     /// A memory store backed by RecallDB, providing vector, full-text, and hybrid retrieval. RecallDB is
@@ -99,15 +101,28 @@ namespace Isis.Core.Stores.RecallDb
 
                 if (string.IsNullOrEmpty(scope.RecallCollectionId))
                 {
-                    CollectionMetadata created = await client.CreateCollectionAsync(scope.TenantId, new CollectionMetadata
+                    try
                     {
-                        TenantId = scope.TenantId,
-                        Name = scope.Id,
-                        Description = scope.Name,
-                        Dimensionality = scope.Dimensionality,
-                        Active = true
-                    }, token).ConfigureAwait(false);
-                    scope.RecallCollectionId = created.Id;
+                        CollectionMetadata created = await client.CreateCollectionAsync(scope.TenantId, new CollectionMetadata
+                        {
+                            TenantId = scope.TenantId,
+                            Name = scope.Id,
+                            Description = scope.Name,
+                            Dimensionality = scope.Dimensionality,
+                            Active = true
+                        }, token).ConfigureAwait(false);
+                        scope.RecallCollectionId = created.Id;
+                    }
+                    catch (RecallDbException)
+                    {
+                        // A create can fail after RecallDB has already recorded the collection (for example a
+                        // concurrent create elsewhere, or a partial failure while building its indexes). Without
+                        // recovery the scope never learns its collection id and every later write retries the
+                        // create and fails on the duplicate name. Adopt an existing collection named for this scope.
+                        string? existingId = await FindCollectionIdByNameAsync(client, scope.TenantId, scope.Id, token).ConfigureAwait(false);
+                        if (existingId == null) throw;
+                        scope.RecallCollectionId = existingId;
+                    }
                 }
             }
             catch (RecallDbException e)
@@ -343,7 +358,7 @@ namespace Isis.Core.Stores.RecallDb
                 ? new LabelFilter { Required = new List<string> { query.CategoryFilter! } }
                 : null;
 
-            List<DocumentRecord> documents;
+            List<FusedDocument> documents;
             SearchModeEnum effectiveMode;
 
             if (wantSemantic && wantKeyword)
@@ -363,7 +378,7 @@ namespace Isis.Core.Stores.RecallDb
                 {
                     MaxResults = fetch,
                     LabelFilter = labelFilter,
-                    FullText = new FullTextQuery { Query = query.QueryText, TextWeight = query.TextWeight }
+                    FullText = new FullTextQuery { Query = query.QueryText }
                 };
 
                 // The two legs are independent, so run them concurrently: hybrid latency becomes max(vector, text)
@@ -373,8 +388,10 @@ namespace Isis.Core.Stores.RecallDb
                 await Task.WhenAll(vectorTask, textTask).ConfigureAwait(false);
                 SearchResult vectorResult = await vectorTask.ConfigureAwait(false);
                 SearchResult textResult = await textTask.ConfigureAwait(false);
-                // Fuse the two rankings at the chunk-document level, then roll chunks up to one hit per memory.
-                List<DocumentRecord> fused = FuseByReciprocalRank(new[] { vectorResult.Documents, textResult.Documents });
+
+                // Fuse at the chunk-document level (with the optional recency signal), then roll chunks up to one
+                // hit per memory. The fused score is normalized to [0, 1] so it can be thresholded with MinScore.
+                List<FusedDocument> fused = HybridFusion.Fuse(vectorResult.Documents, textResult.Documents, query.TextWeight, query.RecencyWeight, ParentKey);
                 documents = GroupByParent(fused, topK);
                 effectiveMode = SearchModeEnum.Hybrid;
             }
@@ -388,20 +405,30 @@ namespace Isis.Core.Stores.RecallDb
                 }
                 else
                 {
-                    single.FullText = new FullTextQuery { Query = query.QueryText, TextWeight = query.TextWeight };
+                    single.FullText = new FullTextQuery { Query = query.QueryText };
                     effectiveMode = SearchModeEnum.Keyword;
                 }
 
                 SearchResult result = await ExecuteSearchAsync(client, scope, single, token).ConfigureAwait(false);
-                documents = GroupByParent(result.Documents, topK);
+                List<FusedDocument> ranked = new List<FusedDocument>();
+                foreach (DocumentRecord document in result.Documents ?? new List<DocumentRecord>())
+                {
+                    FusedDocument candidate = new FusedDocument(document) { Score = document.Score };
+                    if (effectiveMode == SearchModeEnum.Semantic) candidate.VectorScore = document.Score;
+                    else candidate.TextScore = document.Score;
+                    ranked.Add(candidate);
+                }
+
+                documents = GroupByParent(ranked, topK);
             }
 
             MemorySearchResult output = new MemorySearchResult();
             output.EffectiveMode = effectiveMode;
 
             int budget = query.TokenBudget.HasValue && query.TokenBudget.Value > 0 ? query.TokenBudget.Value : 240;
-            foreach (DocumentRecord document in documents)
+            foreach (FusedDocument fusedDocument in documents)
             {
+                DocumentRecord document = fusedDocument.Document;
                 string content = document.Content ?? string.Empty;
                 string snippet = content.Length > budget ? content.Substring(0, budget) + "…" : content;
                 string? title = document.Tags != null && document.Tags.TryGetValue("title", out string? titleValue) ? titleValue : null;
@@ -412,7 +439,11 @@ namespace Isis.Core.Stores.RecallDb
                     Slug = document.DocumentId,
                     Title = title,
                     Snippet = snippet,
-                    Score = document.Score
+                    Score = fusedDocument.Score,
+                    VectorScore = fusedDocument.VectorScore,
+                    TextScore = fusedDocument.TextScore,
+                    VectorRank = fusedDocument.VectorRank,
+                    TextRank = fusedDocument.TextRank
                 });
             }
 
@@ -447,6 +478,22 @@ namespace Isis.Core.Stores.RecallDb
             IsisTelemetry.StoreOps.Add(1, tags);
         }
 
+        private static async Task<string?> FindCollectionIdByNameAsync(RecallDbClient client, string tenantId, string name, CancellationToken token)
+        {
+            string? continuation = null;
+            do
+            {
+                RecallEnumerationQuery query = new RecallEnumerationQuery { MaxResults = 1000, ContinuationToken = continuation };
+                RecallCollectionPage page = await client.EnumerateCollectionsAsync(tenantId, query, token).ConfigureAwait(false);
+                CollectionMetadata? match = page.Objects?.FirstOrDefault(c => string.Equals(c.Name, name, StringComparison.Ordinal));
+                if (match != null) return match.Id;
+                continuation = page.EndOfResults ? null : page.ContinuationToken;
+            }
+            while (!string.IsNullOrEmpty(continuation));
+
+            return null;
+        }
+
         private static async Task<SearchResult> ExecuteSearchAsync(RecallDbClient client, Scope scope, SearchQuery search, CancellationToken token)
         {
             try
@@ -459,51 +506,15 @@ namespace Isis.Core.Stores.RecallDb
             }
         }
 
-        /// <summary>
-        /// Reciprocal-rank fusion: union multiple ranked result lists, scoring each document by the sum of
-        /// 1/(k + rank) across the lists it appears in, then return every document ordered by fused score. This
-        /// blends the vector and full-text rankings without needing to normalize their score scales; the caller
-        /// rolls the fused chunk documents up to memories and truncates to topK.
-        /// </summary>
-        private static List<DocumentRecord> FuseByReciprocalRank(IEnumerable<List<DocumentRecord>?> lists)
+        private static List<FusedDocument> GroupByParent(IEnumerable<FusedDocument> ordered, int topK)
         {
-            const int k = 60;
-            Dictionary<string, DocumentRecord> byKey = new Dictionary<string, DocumentRecord>();
-            Dictionary<string, double> scores = new Dictionary<string, double>();
-
-            foreach (List<DocumentRecord>? list in lists)
-            {
-                if (list == null) continue;
-                for (int rank = 0; rank < list.Count; rank++)
-                {
-                    DocumentRecord document = list[rank];
-                    string key = document.DocumentKey ?? document.DocumentId ?? (rank + ":" + (document.Content ?? string.Empty).GetHashCode());
-                    if (!byKey.ContainsKey(key)) byKey[key] = document;
-                    scores[key] = (scores.TryGetValue(key, out double existing) ? existing : 0.0) + 1.0 / (k + rank + 1);
-                }
-            }
-
-            return scores
-                .OrderByDescending(pair => pair.Value)
-                .Select(pair => byKey[pair.Key])
-                .ToList();
-        }
-
-        /// <summary>
-        /// Collapse chunk documents to at most <paramref name="topK"/> memories, keeping the best-scoring chunk
-        /// per parent memory. The input must already be ordered best-first; the first document seen for a parent
-        /// wins and represents that memory (its content becomes the hit snippet).
-        /// </summary>
-        private static List<DocumentRecord> GroupByParent(IEnumerable<DocumentRecord>? ordered, int topK)
-        {
-            List<DocumentRecord> result = new List<DocumentRecord>();
-            if (ordered == null) return result;
-
+            // Collapse chunk documents to at most topK memories. The input is ordered best-first, so the first chunk
+            // seen for a memory is its best chunk and represents it (its content becomes the hit snippet).
+            List<FusedDocument> result = new List<FusedDocument>();
             HashSet<string> seen = new HashSet<string>(StringComparer.Ordinal);
-            foreach (DocumentRecord document in ordered)
+            foreach (FusedDocument document in ordered)
             {
-                string parent = ParentKey(document);
-                if (!seen.Add(parent)) continue;
+                if (!seen.Add(ParentKey(document.Document))) continue;
                 result.Add(document);
                 if (result.Count >= topK) break;
             }

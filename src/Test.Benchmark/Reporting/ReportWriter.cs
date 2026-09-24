@@ -102,10 +102,13 @@ namespace Test.Benchmark.Reporting
             }
 
             md.Append("\n## Score separation (can a score threshold detect \"nothing relevant\"?)\n\n");
-            md.Append("| Mode | Mean top score, answerable | Mean top score, unanswerable | Unanswerable queries |\n|---|---|---|---|\n");
+            md.Append("| Mode | Mean top score, answerable | Mean top score, unanswerable | Score AUROC | Vector-score AUROC | Unanswerable queries |\n|---|---|---|---|---|---|\n");
             foreach (ModeSummary mode in report.Modes)
             {
-                md.Append("| ").Append(mode.Mode).Append(" | ").Append(mode.MeanTopScoreAnswerable).Append(" | ").Append(mode.MeanTopScoreNegative).Append(" | ").Append(mode.NegativeQueries).Append(" |\n");
+                md.Append("| ").Append(mode.Mode).Append(" | ").Append(mode.MeanTopScoreAnswerable).Append(" | ").Append(mode.MeanTopScoreNegative)
+                  .Append(" | ").Append(mode.ScoreAuroc.HasValue ? mode.ScoreAuroc.Value.ToString("F3") : "n/a")
+                  .Append(" | ").Append(mode.VectorScoreAuroc.HasValue ? mode.VectorScoreAuroc.Value.ToString("F3") : "n/a")
+                  .Append(" | ").Append(mode.NegativeQueries).Append(" |\n");
             }
 
             md.Append("\n## Accuracy by query type\n\n");

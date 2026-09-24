@@ -696,6 +696,8 @@ Proxies `POST /v1.0/api/tenants/{tenantId}/scopes/{scopeId}/memories/search`.
 | `mode` | string | No | server default | `Keyword`, `Semantic`, or `Hybrid` |
 | `topK` | integer | No | server default | Maximum results to return |
 | `categoryName` | string | No | null | Optional category filter: name or `cat_` id (sent as `categoryFilter`). An unknown category returns 400. |
+| `minScore` | number | No | null | Drop hits scoring below this. Hybrid scores are fused and normalized to 0..1 |
+| `recencyWeight` | number | No | 0.1 | Hybrid only: weight (0..1) of a signal favoring recently written memories; 0 disables |
 
 #### Example Request
 
@@ -718,14 +720,20 @@ Proxies `POST /v1.0/api/tenants/{tenantId}/scopes/{scopeId}/memories/search`.
   "success": true,
   "statusCode": 200,
   "data": {
-    "results": [
+    "hits": [
       {
-        "id": "mem_7",
+        "storeKey": "mem_7",
         "slug": "run-tests",
-        "summary": "Run test.bat, or dotnet test on the Isis solution.",
-        "score": 0.83
+        "title": "Build and run the test suite",
+        "snippet": "Build: dotnet build src/Isis.sln -c Release. Test: dotnet run --project src/Test.Automated…",
+        "score": 0.83,
+        "vectorScore": 0.61,
+        "textScore": 0.09,
+        "vectorRank": 1,
+        "textRank": 2
       }
-    ]
+    ],
+    "effectiveMode": "Hybrid"
   }
 }
 ```

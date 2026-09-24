@@ -105,7 +105,8 @@ namespace Test.Benchmark
             await context.PrepareEmbeddingAsync(token).ConfigureAwait(false);
 
             RetrievalReport report = await new RetrievalRunner(context).RunAsync(dataset, token).ConfigureAwait(false);
-            string basePath = context.ResultPath("retrieval", dataset.Name + (arguments.GetOptional("scope-suffix") != null ? "-" + arguments.Get("scope-suffix", string.Empty) : string.Empty));
+            string suffix = arguments.GetOptional("label") ?? arguments.GetOptional("scope-suffix") ?? string.Empty;
+            string basePath = context.ResultPath("retrieval", dataset.Name + (suffix.Length > 0 ? "-" + suffix : string.Empty));
             Console.WriteLine("Wrote " + ReportWriter.WriteJson(report, basePath));
             Console.WriteLine("Wrote " + ReportWriter.WriteMarkdown(ReportWriter.RenderRetrieval(report), basePath));
             return 0;
@@ -184,10 +185,11 @@ namespace Test.Benchmark
             Console.WriteLine("  retrieval --dataset <file.json> [--modes Keyword,Semantic,Hybrid] [--k 10] [--concurrency 1] [--no-category]");
             Console.WriteLine("            [--reingest] [--ingest-concurrency 8] [--cleanup] [--scope-suffix x]");
             Console.WriteLine("            [--chunking-mode OnOverflow|Always|Off] [--chunk-max-tokens N] [--chunk-overlap N]");
+            Console.WriteLine("            [--recency-weight 0..1] [--min-score X]   (hybrid recency ablation; score threshold)");
             Console.WriteLine("  load      [--dataset <file.json>] [--corpus-size 1000] [--concurrency 1,4,16] [--duration 30] [--warmup 5]");
             Console.WriteLine("            [--scenario mixed|search|upsert] [--search-weight 0.9] [--long-fraction 0.2] [--mode Hybrid]");
             Console.WriteLine("            [--stub --stub-latency-ms 5 --stub-port 18900]   (isolate Isis+RecallDB from the embedding model)");
-            Console.WriteLine("  chat      --dataset <file.json> [--k 5] [--limit N] [--inference-url/-format/-model] [--judge-url/-format/-model | --judge-format none]");
+            Console.WriteLine("  chat      --dataset <file.json> [--k N (default: server default)] [--limit N] [--inference-url/-format/-model] [--judge-url/-format/-model | --judge-format none]");
             Console.WriteLine("  agent     --tasks <tasks.json> [--model haiku] [--arms isis,none] [--mcp-url http://127.0.0.1:18720/mcp] [--limit N]");
             Console.WriteLine("  stub      [--stub-port 18900] [--stub-latency-ms 5] [--dim 384]   (standalone stub embedding server)");
             Console.WriteLine("  compare   --baseline <a.json> --candidate <b.json> [--tolerance 0.01] [--latency-tolerance 0.2]");

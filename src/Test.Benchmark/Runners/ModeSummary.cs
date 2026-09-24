@@ -57,6 +57,18 @@ namespace Test.Benchmark.Runners
         public double MeanTopScoreNegative { get; set; } = 0.0;
 
         /// <summary>
+        /// AUROC of the top-hit score as a classifier of answerable vs unanswerable questions: the probability that
+        /// a random answerable question's top score exceeds a random unanswerable one's. 0.5 is no signal, 1.0 is a
+        /// perfect threshold. Null without both kinds of question.
+        /// </summary>
+        public double? ScoreAuroc { get; set; } = null;
+
+        /// <summary>
+        /// The same AUROC computed on the top raw vector similarity instead of the reported score.
+        /// </summary>
+        public double? VectorScoreAuroc { get; set; } = null;
+
+        /// <summary>
         /// Client latency.
         /// </summary>
         public LatencyStats Latency { get; set; } = new LatencyStats();

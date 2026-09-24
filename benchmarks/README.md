@@ -1,21 +1,28 @@
 # Isis benchmarks
 
-A black-box benchmark harness (`src/Test.Benchmark`) that measures Isis the way a client sees it, over REST and MCP.
-It never references Isis assemblies, so it can target a local working tree or any deployment. It covers four layers:
+This directory holds a reproducible benchmark suite for Isis, the agent-memory platform in this repository. It
+answers three questions: does Isis retrieve the right memories, do answers grounded on those memories come out
+right, and does an agent actually do better with Isis connected? It also measures what that costs in latency and
+throughput. [RESULTS.md](RESULTS.md) has the current numbers and how they changed across rounds of fixes.
+
+The harness (`src/Test.Benchmark`) is black-box. It talks to Isis only over REST and MCP, the same way a client does,
+and never references Isis assemblies. The same commands can therefore measure a local working tree or any
+deployment you point them at.
 
 | Command | Measures |
 |---|---|
-| `retrieval` | Search accuracy (Hit@1, Recall@1/5/10, All@5/10, MRR@10, nDCG@10) per search mode and query type, plus latency and a server-side stage breakdown |
-| `chat` | End-to-end chat-with-memory: LLM-judged answer accuracy, abstention on unanswerable questions, citation precision/recall, and whether retrieval put the evidence in the prompt |
-| `agent` | Claude Code headless on memory-dependent tasks, with the Isis MCP server connected vs. with no memory (success rate, turns, cost) |
-| `load` | Closed-loop throughput and latency percentiles per concurrency level for a search/upsert mix, optionally with a stub embedding server so Isis + RecallDB are measured in isolation |
-
-`compare` diffs two retrieval reports and exits non-zero on a regression, so it can gate CI.
+| `retrieval` | Search accuracy (Hit@1, Recall@1/5/10, All@5/10, MRR@10, nDCG@10) per search mode and query type, plus latency, a server-side stage breakdown, and how well scores separate answerable from unanswerable questions |
+| `chat` | End-to-end chat-with-memory: LLM-judged answer accuracy, abstention on unanswerable questions, citation precision and recall, and whether retrieval put the evidence in the prompt at all |
+| `agent` | Claude Code run headless on memory-dependent tasks, once with the Isis MCP server connected and once with no memory (success rate, turns, cost) |
+| `load` | Closed-loop throughput and latency percentiles per concurrency level for a search/upsert mix, optionally against a stub embedding server so Isis and RecallDB are measured without the model |
+| `compare` | Diffs two retrieval reports and exits non-zero on a regression, so it can gate CI |
+| `prepare` | Converts BEIR and LongMemEval downloads into the harness's dataset format |
+| `stub` | Runs the stub embedding server on its own |
 
 ## 1. Stand up an isolated stack
 
-Benchmarks run against their own pgvector + RecallDB on non-default ports, and a local Isis built from the working
-tree. They never touch the development stack or a live deployment.
+Benchmarks run against their own pgvector and RecallDB containers on non-default ports, and a local Isis built from
+the working tree. They never touch the development stack in `docker/` or a live deployment.
 
 ```bash
 docker compose -f benchmarks/docker/compose.yaml up -d      # pgvector :15432, RecallDB :18600
@@ -23,40 +30,34 @@ dotnet build src/Isis.sln -c Release
 benchmarks/start-bench-server.sh                            # Isis REST :18700, Prometheus :19464  (.bat on Windows)
 benchmarks/start-bench-mcp.sh                               # Isis MCP  :18720 (agent benchmark only)
 ollama pull all-minilm                                      # default embedding model (384-dim)
+ollama pull gemma3:4b                                       # default chat model and judge
 ```
 
-To tear down and discard all benchmark data, run `docker compose -f benchmarks/docker/compose.yaml down -v`.
+`docker compose -f benchmarks/docker/compose.yaml down -v` tears the stack down and discards all benchmark data.
 
 ## 2. Datasets
 
-Every dataset uses one neutral JSON format (`Datasets/BenchmarkDataset.cs`). A dataset has one or more
-**corpora**, and each corpus becomes its own Isis scope. A corpus holds:
+Every dataset uses one neutral JSON format (`src/Test.Benchmark/Datasets/BenchmarkDataset.cs`). A dataset has one or
+more **corpora**, and each corpus becomes its own Isis scope. A corpus holds categories, documents (each becomes a
+memory, and its `id` becomes the memory slug), and labelled queries (`text`, `type`, `relevant` document ids, an
+optional `category` filter, and an optional gold `answer`). An empty `relevant` list marks a question the corpus
+cannot answer, which is how abstention is tested.
 
-- **categories**
-- **documents**: each becomes a memory, and its `id` becomes the memory slug.
-- **queries**: each has `text`, `type`, `relevant` document ids, an optional `category` filter, and an optional `answer`.
+| Dataset | In the repo? | Size | What it tests |
+|---|---|---|---|
+| `datasets/isis-live.json` | yes | 24 memories, 110 questions | The real memories an agent wrote about this project, with questions of six types: paraphrase, lexical (exact identifiers), multi (2–3 memories), category (uses a filter), detail (answer deep in a long memory), and negative (no answer exists) |
+| `datasets/atlas.json` | yes | 170 memories, 260 questions | A synthetic agent-memory corpus for a fictional logistics company, adding superseded facts (an old and a newer memory), confusable near-duplicates, and long documents |
+| SciFact (BEIR) | downloaded | 5,183 abstracts, 300 queries | Scientific claim retrieval, useful as a sanity check against published numbers for the embedding model |
+| LongMemEval-S | downloaded | 60 of 500 questions (stratified) | Multi-session chat memory with seven question types; every question has its own haystack of about 50 sessions |
 
-An empty `relevant` list marks a question the corpus cannot answer.
+The two committed datasets were built for this suite. Both question sets were written with LLM assistance and then
+checked against the corpus. For Atlas, the questions were written by a separate pass that had not written the corpus,
+to keep them from echoing its phrasing. Treat the labels as good but not gold: a handful of questions have more than
+one defensible answer, and the per-type breakdowns are more trustworthy than any single question.
 
-| Dataset | Where | What it tests |
-|---|---|---|
-| `datasets/isis-live.json` | committed | The 24 real memories from the live Isis scope, with 110 hand-labelled questions |
-| `datasets/atlas.json` | committed | A synthetic agent-memory corpus for a fictional logistics codebase (see below) |
-| SciFact (BEIR) | download | 5,183 scientific abstracts and 300 queries, for comparing against published embedding numbers |
-| LongMemEval-S | download | Multi-session chat memory with 7 question types; each question has its own ~50-session haystack |
-
-The isis-live question types are:
-
-- **paraphrase**: no lexical overlap with the memory
-- **lexical**: exact identifiers
-- **multi**: 2–3 relevant memories
-- **category**: uses a category filter
-- **detail**: the answer is buried deep in a long memory
-- **negative**: the corpus has no answer
-
-Atlas covers all of these, plus superseded facts and near-duplicates.
-
-To download and convert the public sets (both go into the git-ignored `benchmarks/data/`):
+The public datasets are downloaded at run time and are not redistributed here. Check their licenses upstream (SciFact
+through BEIR, and LongMemEval) before publishing derived data. To download and convert them into the git-ignored
+`benchmarks/data/`:
 
 ```bash
 B="dotnet run --project src/Test.Benchmark -c Release --"
@@ -66,11 +67,18 @@ $B prepare --format beir --input benchmarks/data/scifact --name scifact --output
 $B prepare --format longmemeval --input benchmarks/data/longmemeval_s_cleaned.json --limit 60 --seed 7 --output benchmarks/data/longmemeval-s-60.json
 ```
 
-`--limit` takes a stratified sample, round-robin across question types, and is reproducible with `--seed`. A full
-LongMemEval-S run is 500 haystacks of about 50 sessions. With a CPU-bound local all-minilm (about 70 embeddings/s),
-that is about 25k sessions and 300k embedding calls, so start with a sample.
+`--limit` takes a stratified sample (round-robin across question types) that is reproducible with `--seed`. The full
+LongMemEval-S set is 500 haystacks of about 50 sessions each. With a local all-minilm on a laptop (about 70
+embeddings/s) that is roughly 300k embedding calls, so start with the sample.
+
+Documents that carry dates (Atlas and LongMemEval) are written one at a time in date order, so each memory's write
+time follows the order its facts were recorded. That matters because Isis uses write time as a recency signal in
+hybrid search. Corpora without dates are written in parallel.
 
 ## 3. Run
+
+`run-baseline.sh` (or `run-baseline.bat`) runs the standard suite: retrieval on every dataset present, the load test,
+and chat. Pass `--agent` to include the agent benchmark, which spends real API credits. Individual commands:
 
 ```bash
 B="dotnet run --project src/Test.Benchmark -c Release --no-build --"
@@ -80,16 +88,20 @@ $B retrieval --dataset benchmarks/datasets/isis-live.json
 $B retrieval --dataset benchmarks/data/scifact.json --ingest-concurrency 8
 $B retrieval --dataset benchmarks/data/longmemeval-s-60.json --modes Semantic,Hybrid
 
+# Ablations on the same ingested scopes: recency off, or a score threshold
+$B retrieval --dataset benchmarks/datasets/atlas.json --modes Hybrid --recency-weight 0 --label recency0
+$B retrieval --dataset benchmarks/datasets/isis-live.json --modes Hybrid --min-score 0.3 --label min03
+
 # Chunking sweep: a suffix keeps the variants in separate scopes
 $B retrieval --dataset benchmarks/data/longmemeval-s-60.json --chunk-overlap 0   --scope-suffix ov0
 $B retrieval --dataset benchmarks/data/longmemeval-s-60.json --chunk-overlap 128 --scope-suffix ov128
 
-# Chat-with-memory, judged by a model called directly (never through Isis)
-#   (use a non-reasoning model: Isis's chat call does not disable thinking, so a reasoning model such as
-#    qwen3.5 spends minutes per answer on a CPU/iGPU. gemma3:4b is the default and matches the live seed.)
+# Chat-with-memory, judged by a model called directly (never through Isis). Uses the server's default retrieval
+# depth unless --k is given. Use a non-reasoning model: Isis does not disable thinking, so a reasoning model spends
+# minutes per answer on a laptop GPU.
 $B chat --dataset benchmarks/datasets/isis-live.json --inference-model gemma3:4b --judge-model gemma3:4b
 
-# Agent-in-the-loop (spends real API credits; runs with the claude CLI's own auth)
+# Agent-in-the-loop (spends real API credits; uses the claude CLI's own authentication)
 $B agent --tasks benchmarks/agent/tasks-isis.json --model haiku
 
 # Load: stub embeddings isolate Isis + RecallDB; the real model shows end-to-end capacity
@@ -100,25 +112,34 @@ $B load --corpus-size 1000 --concurrency 1,4,16 --scenario search
 $B compare --baseline benchmarks/results/<old>.json --candidate benchmarks/results/<new>.json --tolerance 0.01 --latency-tolerance 0.25
 ```
 
-Each run writes `benchmarks/results/<utc-stamp>-<kind>-<name>.json` for machines and `.md` for people. Every report
-records the git commit (marked `-dirty` for uncommitted changes), the machine, the embedding and inference
+Each run writes `benchmarks/results/<utc-stamp>-<kind>-<name>.json` for machines and a `.md` for people. The
+directory is git-ignored because the reports are machine-specific; RESULTS.md carries the numbers that matter. Every
+report records the git commit (marked `-dirty` for uncommitted changes), the machine, the embedding and inference
 endpoints, and the configuration. Scope names are deterministic (dataset, corpus, embedding model, suffix), so a
-rerun reuses an already-ingested scope. Pass `--reingest` to rebuild it after changing chunking or embedding code.
+rerun reuses an already-ingested scope. Pass `--reingest` after changing chunking or embedding code.
 
-## How to read the results
+## 4. How to read the results
 
-- **Stage breakdown.** The Prometheus histograms Isis already exports are scraped before and after each phase, which
-  gives the server-side mean time per stage: `memory_search`, `embedding`, `store_search`, `db_query`, and so on.
-  Compare it with client latency to see where time goes.
-- **Score separation.** This compares the mean top-hit score of answerable questions with that of unanswerable ones.
-  If the two are close, no score threshold can tell "nothing relevant" apart from a real hit.
-- **Evidence retrieved vs. missed** (chat). This separates retrieval failures from generation failures.
-- **Agent arms.** The `none` arm is the floor, meaning what the model can answer without memory. The gap to the
-  `isis` arm is the value memory adds. Runs use an empty temp directory with every built-in tool disabled, so the
-  agent can only learn project facts through Isis.
-- **Judges.** Small local judges are noisy. For headline numbers, point `--judge-*` at a strong model and
-  spot-check about 50 verdicts by hand.
+A few of the report sections are easy to misread.
 
-## Baseline results
+**Stage breakdown.** The harness scrapes the Prometheus histograms Isis already exports before and after each
+phase, which gives the server-side mean time per stage (`memory_search`, `embedding`, `store_search`, `db_query`, and
+so on). Compare that with client latency to see where the time actually goes.
 
-See [RESULTS.md](RESULTS.md) for the first full baseline and the issues it surfaced.
+**Score separation.** The report compares the mean top-hit score of answerable and unanswerable questions. When the
+two are close, no score threshold can say "nothing relevant", however it is tuned. Hybrid scores are fused
+reciprocal-rank scores normalized to 0..1, so they are comparable across queries in a way raw similarities are not.
+
+**Evidence retrieved vs. missed (chat).** Accuracy is reported separately for questions where retrieval did and did
+not put the evidence in the prompt. That split tells retrieval failures apart from generation failures.
+
+**Agent arms.** The `none` arm is the floor: what the model answers without memory. The gap to the `isis` arm is what
+memory adds. Each run uses an empty temporary directory with every built-in tool disabled, so project facts can only
+come from Isis.
+
+**Judges.** Chat accuracy is graded by an LLM judge called directly, never through Isis. The default is the same small
+local model that answers, which is cheap but noisy; expect a few points of variance between runs. For headline
+numbers, point `--judge-*` at a stronger model and spot-check around 50 verdicts by hand.
+
+**Hardware.** Absolute latencies and throughput depend on the machine. RESULTS.md records what it ran on. Compare
+runs from the same machine, and use `compare` for regressions rather than absolute thresholds.

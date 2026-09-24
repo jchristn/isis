@@ -16,6 +16,12 @@ namespace Test.Benchmark.Runners
     /// configuration, optional suffix), so a later run reuses an already-ingested scope instead of re-embedding it
     /// unless --reingest is passed.
     /// </summary>
+    /// <remarks>
+    /// A corpus whose documents carry dates is written strictly one document at a time in date order, so each
+    /// memory's write time (which Isis uses as its recency signal) follows the order the facts were recorded.
+    /// Throughput then comes from provisioning several corpora at once (LongMemEval has one corpus per question). A
+    /// single undated corpus uses document-level parallelism instead.
+    /// </remarks>
     public class ScopeProvisioner
     {
         #region Private-Members
@@ -54,99 +60,98 @@ namespace Test.Benchmark.Runners
         /// <returns>The provisioned scopes, in corpus order.</returns>
         public async Task<List<ProvisionedScope>> ProvisionAsync(BenchmarkDataset dataset, IngestSummary summary, CancellationToken token)
         {
-            List<ProvisionedScope> scopes = new List<ProvisionedScope>();
+            ProvisionedScope?[] scopes = new ProvisionedScope?[dataset.Corpora.Count];
             ConcurrentBag<double> latencies = new ConcurrentBag<double>();
             ConcurrentQueue<string> errors = new ConcurrentQueue<string>();
             int failures = 0;
+            int documents = 0;
+            int reused = 0;
+            int completed = 0;
             summary.Concurrency = _Concurrency;
+
+            bool multiCorpus = dataset.Corpora.Count > 1;
+            int corpusConcurrency = multiCorpus ? _Concurrency : 1;
 
             PrometheusSnapshot before = await PrometheusSnapshot.CaptureAsync(_Context.Http, _Context.MetricsUrl, token).ConfigureAwait(false);
             Stopwatch wall = Stopwatch.StartNew();
-            int corpusIndex = 0;
 
-            foreach (BenchmarkCorpus corpus in dataset.Corpora)
+            using SemaphoreSlim corpusGate = new SemaphoreSlim(corpusConcurrency);
+            List<Task> corpusTasks = new List<Task>();
+            for (int index = 0; index < dataset.Corpora.Count; index++)
             {
-                corpusIndex++;
-                string name = ScopeName(dataset, corpus);
-                string? scopeId = await _Context.Client.FindScopeAsync(name, token).ConfigureAwait(false);
-
-                if (scopeId != null && !_Reingest)
+                int corpusIndex = index;
+                BenchmarkCorpus corpus = dataset.Corpora[index];
+                await corpusGate.WaitAsync(token).ConfigureAwait(false);
+                corpusTasks.Add(Task.Run(async () =>
                 {
-                    // Count only the categories the corpus's documents live in, so memories a benchmark wrote on
-                    // top (the load test's "load" category) do not force a needless re-ingest.
-                    Dictionary<string, string> existing = await _Context.Client.ListCategoriesAsync(scopeId, token).ConfigureAwait(false);
-                    long count = 0;
-                    foreach (string categoryName in corpus.Documents.Select(d => d.Category).Distinct(StringComparer.OrdinalIgnoreCase))
+                    try
                     {
-                        if (existing.TryGetValue(categoryName, out string? categoryId))
-                            count += await _Context.Client.CountMemoriesAsync(scopeId, categoryId, token).ConfigureAwait(false);
-                    }
-
-                    if (count == corpus.Documents.Count)
-                    {
-                        scopes.Add(new ProvisionedScope { Corpus = corpus, ScopeId = scopeId, Categories = existing });
-                        summary.ReusedScopes++;
-                        continue;
-                    }
-                }
-
-                if (scopeId != null) await _Context.Client.DeleteScopeAsync(scopeId, token).ConfigureAwait(false);
-
-                ProvisionedScope scope = new ProvisionedScope { Corpus = corpus };
-                scope.ScopeId = await _Context.Client.CreateScopeAsync(ScopeDefinition(name, dataset, corpus), token).ConfigureAwait(false);
-                foreach (BenchmarkCategory category in corpus.Categories)
-                {
-                    scope.Categories[category.Name] = await _Context.Client.CreateCategoryAsync(scope.ScopeId, category.Name, category.Description, token).ConfigureAwait(false);
-                }
-
-                foreach (string categoryName in corpus.Documents.Select(d => d.Category).Distinct(StringComparer.OrdinalIgnoreCase))
-                {
-                    if (!scope.Categories.ContainsKey(categoryName))
-                        scope.Categories[categoryName] = await _Context.Client.CreateCategoryAsync(scope.ScopeId, categoryName, categoryName, token).ConfigureAwait(false);
-                }
-
-                using SemaphoreSlim gate = new SemaphoreSlim(_Concurrency);
-                List<Task> tasks = new List<Task>();
-                foreach (BenchmarkDocument document in corpus.Documents)
-                {
-                    await gate.WaitAsync(token).ConfigureAwait(false);
-                    tasks.Add(Task.Run(async () =>
-                    {
-                        try
+                        ProvisionedScope? existing = await TryReuseAsync(dataset, corpus, token).ConfigureAwait(false);
+                        if (existing != null)
                         {
-                            TimedResponse response = await _Context.Client.UpsertMemoryAsync(scope.ScopeId, MemoryBody(scope, document), token).ConfigureAwait(false);
-                            latencies.Add(response.ElapsedMs);
-                            if (!response.IsSuccess)
+                            scopes[corpusIndex] = existing;
+                            Interlocked.Increment(ref reused);
+                            return;
+                        }
+
+                        ProvisionedScope scope = await CreateScopeAsync(dataset, corpus, token).ConfigureAwait(false);
+                        bool dated = corpus.Documents.Any(d => !string.IsNullOrEmpty(d.Date));
+                        IEnumerable<BenchmarkDocument> writeOrder = dated
+                            ? corpus.Documents.OrderBy(d => d.Date ?? string.Empty, StringComparer.Ordinal)
+                            : corpus.Documents;
+                        int documentConcurrency = dated || multiCorpus ? 1 : _Concurrency;
+
+                        using SemaphoreSlim gate = new SemaphoreSlim(documentConcurrency);
+                        List<Task> tasks = new List<Task>();
+                        foreach (BenchmarkDocument document in writeOrder)
+                        {
+                            await gate.WaitAsync(token).ConfigureAwait(false);
+                            tasks.Add(Task.Run(async () =>
                             {
-                                Interlocked.Increment(ref failures);
-                                if (errors.Count < 10) errors.Enqueue(document.Id + ": " + response.StatusCode + " " + response.Error);
-                            }
+                                try
+                                {
+                                    TimedResponse response = await _Context.Client.UpsertMemoryAsync(scope.ScopeId, MemoryBody(scope, document), token).ConfigureAwait(false);
+                                    latencies.Add(response.ElapsedMs);
+                                    if (!response.IsSuccess)
+                                    {
+                                        Interlocked.Increment(ref failures);
+                                        if (errors.Count < 10) errors.Enqueue(document.Id + ": " + response.StatusCode + " " + response.Error);
+                                    }
+                                }
+                                finally
+                                {
+                                    gate.Release();
+                                }
+                            }, token));
                         }
-                        finally
-                        {
-                            gate.Release();
-                        }
-                    }, token));
-                }
 
-                await Task.WhenAll(tasks).ConfigureAwait(false);
-                summary.Documents += corpus.Documents.Count;
-                scopes.Add(scope);
-
-                if (dataset.Corpora.Count > 1)
-                    Console.WriteLine("  ingested corpus " + corpusIndex + "/" + dataset.Corpora.Count + " (" + corpus.Documents.Count + " docs, " + wall.Elapsed.TotalSeconds.ToString("F0") + "s elapsed)");
+                        await Task.WhenAll(tasks).ConfigureAwait(false);
+                        Interlocked.Add(ref documents, corpus.Documents.Count);
+                        scopes[corpusIndex] = scope;
+                        int done = Interlocked.Increment(ref completed);
+                        if (multiCorpus && done % 10 == 0)
+                            Console.WriteLine("  ingested " + done + " corpora (" + wall.Elapsed.TotalSeconds.ToString("F0") + "s elapsed)");
+                    }
+                    finally
+                    {
+                        corpusGate.Release();
+                    }
+                }, token));
             }
 
+            await Task.WhenAll(corpusTasks).ConfigureAwait(false);
             wall.Stop();
             PrometheusSnapshot after = await PrometheusSnapshot.CaptureAsync(_Context.Http, _Context.MetricsUrl, token).ConfigureAwait(false);
 
+            summary.Documents += documents;
+            summary.ReusedScopes += reused;
             summary.Failures += failures;
             summary.WallSeconds += Math.Round(wall.Elapsed.TotalSeconds, 2);
             summary.DocumentsPerSecond = summary.WallSeconds > 0 ? Math.Round(summary.Documents / summary.WallSeconds, 2) : 0.0;
             summary.Latency = LatencyStats.From(latencies);
             summary.Stages = after.Since(before);
             summary.SampleErrors.AddRange(errors);
-            return scopes;
+            return scopes.Select(s => s!).ToList();
         }
 
         /// <summary>
@@ -166,6 +171,48 @@ namespace Test.Benchmark.Runners
         #endregion
 
         #region Private-Methods
+
+        private async Task<ProvisionedScope?> TryReuseAsync(BenchmarkDataset dataset, BenchmarkCorpus corpus, CancellationToken token)
+        {
+            string? scopeId = await _Context.Client.FindScopeAsync(ScopeName(dataset, corpus), token).ConfigureAwait(false);
+            if (scopeId == null) return null;
+
+            if (!_Reingest)
+            {
+                // Count only the categories the corpus's documents live in, so memories a benchmark wrote on top (the
+                // load test's "load" category) do not force a needless re-ingest.
+                Dictionary<string, string> existing = await _Context.Client.ListCategoriesAsync(scopeId, token).ConfigureAwait(false);
+                long count = 0;
+                foreach (string categoryName in corpus.Documents.Select(d => d.Category).Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    if (existing.TryGetValue(categoryName, out string? categoryId))
+                        count += await _Context.Client.CountMemoriesAsync(scopeId, categoryId, token).ConfigureAwait(false);
+                }
+
+                if (count == corpus.Documents.Count) return new ProvisionedScope { Corpus = corpus, ScopeId = scopeId, Categories = existing };
+            }
+
+            await _Context.Client.DeleteScopeAsync(scopeId, token).ConfigureAwait(false);
+            return null;
+        }
+
+        private async Task<ProvisionedScope> CreateScopeAsync(BenchmarkDataset dataset, BenchmarkCorpus corpus, CancellationToken token)
+        {
+            ProvisionedScope scope = new ProvisionedScope { Corpus = corpus };
+            scope.ScopeId = await _Context.Client.CreateScopeAsync(ScopeDefinition(ScopeName(dataset, corpus), dataset, corpus), token).ConfigureAwait(false);
+            foreach (BenchmarkCategory category in corpus.Categories)
+            {
+                scope.Categories[category.Name] = await _Context.Client.CreateCategoryAsync(scope.ScopeId, category.Name, category.Description, token).ConfigureAwait(false);
+            }
+
+            foreach (string categoryName in corpus.Documents.Select(d => d.Category).Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (!scope.Categories.ContainsKey(categoryName))
+                    scope.Categories[categoryName] = await _Context.Client.CreateCategoryAsync(scope.ScopeId, categoryName, categoryName, token).ConfigureAwait(false);
+            }
+
+            return scope;
+        }
 
         private string ScopeName(BenchmarkDataset dataset, BenchmarkCorpus corpus)
         {

@@ -14,6 +14,14 @@ All notable changes to Isis are documented here. This project adheres to
 
 ### Changed
 
+- **Retrieval improvements** (see `RETRIEVAL_IMPROVEMENTS.md`):
+  - Hybrid scores are now fused and normalized to 0..1. Hits carry `vectorScore`, `textScore`, `vectorRank`, and
+    `textRank`, and search accepts a `minScore` threshold (REST and MCP).
+  - A recency signal (`recencyWeight`, default 0.1, 0 disables) favors the newer of two similar memories.
+  - Each chunk is embedded with its memory's title and summary.
+  - Chat retrieves 8 memories by default instead of 5, and its prompt now forbids unstated facts and requires a
+    citation for every claim.
+  - Default instructions tell agents to update a changed fact in place rather than add a duplicate.
 - **Voltaic 1.1.0.** The MCP server moves from Voltaic 0.6.1 to 1.1.0, which fixes Claude Code 2.1.x seeing no Isis
   tools (it uses `server/discover` and the stateless `2026-07-28` revision). Regression cases were added to the MCP
   suite.
@@ -25,6 +33,13 @@ All notable changes to Isis are documented here. This project adheres to
 
 ### Fixed
 
+- **Concurrent scope provisioning across a tenant.** Collection creation is serialized per tenant, and a failed
+  create adopts an existing collection for the scope instead of retrying forever. It had caused 183 failed
+  LongMemEval ingests when 8 scopes were provisioned in parallel.
+- **Invalid Unicode and emoji.** Unpaired surrogates are replaced with U+FFFD on upsert. Chunking no longer splits
+  a surrogate pair (TextChunker could, which failed the whole memory).
+- **Redundant tail chunks.** Chunks wholly contained in the previous chunk are dropped (about 9% fewer chunks on
+  long chat sessions, with nothing lost).
 - **`memory_search` category filter** accepts a category name or `cat_` id (by name it previously matched nothing).
   An unknown category or an empty `queryText` now returns 400.
 - **Concurrent first writes to a new scope** no longer race to provision the RecallDB tenant and collection.

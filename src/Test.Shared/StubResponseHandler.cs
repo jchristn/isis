@@ -11,6 +11,15 @@ namespace Test.Shared
     /// </summary>
     internal sealed class StubResponseHandler : HttpMessageHandler
     {
+        #region Internal-Members
+
+        /// <summary>
+        /// The body of the most recent request, so tests can assert on what was sent (for example a chat prompt).
+        /// </summary>
+        internal string? LastRequestBody { get; private set; } = null;
+
+        #endregion
+
         #region Private-Members
 
         private readonly string _Body;
@@ -36,11 +45,12 @@ namespace Test.Shared
         #region Protected-Methods
 
         /// <inheritdoc />
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            if (request.Content != null) LastRequestBody = await request.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
             HttpResponseMessage response = new HttpResponseMessage(_Status);
             response.Content = new StringContent(_Body, Encoding.UTF8, "application/json");
-            return Task.FromResult(response);
+            return response;
         }
 
         #endregion

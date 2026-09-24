@@ -19,7 +19,32 @@ namespace Isis.Server.Services
     /// </summary>
     public class MemoryChatService
     {
+        #region Public-Members
+
+        /// <summary>
+        /// Memories retrieved for a question when the caller does not ask for a specific number. Default 8, minimum 1,
+        /// maximum 100. Deeper retrieval helps questions whose answer spans several memories, at the cost of a longer
+        /// prompt.
+        /// </summary>
+        /// <exception cref="ArgumentOutOfRangeException">Thrown when set outside [1, 100].</exception>
+        public int DefaultTopK
+        {
+            get
+            {
+                return _DefaultTopK;
+            }
+            set
+            {
+                if (value < 1 || value > 100) throw new ArgumentOutOfRangeException(nameof(DefaultTopK), "DefaultTopK must be between 1 and 100.");
+                _DefaultTopK = value;
+            }
+        }
+
+        #endregion
+
         #region Private-Members
+
+        private int _DefaultTopK = 8;
 
         private readonly MemoryService _MemoryService;
         private readonly InferenceService _InferenceService;
@@ -251,10 +276,11 @@ namespace Isis.Server.Services
         private const int _ContextCharsPerMemory = 4000;
 
         private const string _SystemPrompt =
-            "You are a memory assistant for a specific memory scope. Answer the user's question using only the provided memories. " +
-            "Cite the memories you use by their slug in square brackets. " +
-            "If the user asks what memories exist, or asks for an overview or summary, summarize the provided memories — do NOT claim you have none when memories are listed below. " +
-            "Only if the memories genuinely do not contain the answer should you say so plainly.";
+            "You are a memory assistant for a specific memory scope. Answer the user's question using only facts stated in the provided memories. " +
+            "Do not add facts from general knowledge, and do not guess or fill gaps. " +
+            "Cite the memory behind every claim by its slug in square brackets, for example [auth-model]. " +
+            "If the memories do not state the answer, say plainly that it is not in memory, and mention what related information they do contain, if any. " +
+            "If the user asks what memories exist, or asks for an overview or summary, summarize the provided memories; do not claim you have none when memories are listed below.";
 
         private static string BuildUserPrompt(string question, string contextText)
         {
@@ -282,7 +308,7 @@ namespace Isis.Server.Services
                     token).ConfigureAwait(false);
             }
 
-            int k = topK < 1 ? 5 : topK;
+            int k = topK < 1 ? _DefaultTopK : topK;
             // Ground on the whole best-matching chunk, not a short preview snippet: a chunk is bounded by the embedding
             // token budget (roughly a thousand characters for small encoders), so this is the entire memory for a
             // typical memory and the relevant region of a long one. A 240-character snippet hid any answer that was

@@ -43,6 +43,7 @@ namespace Test.Shared
                     TestCase.Async("mcp2", "memory-upsert-idempotent", "memory_upsert is idempotent by slug", MemoryUpsertIdempotentAsync),
                     TestCase.Async("mcp2", "memory-upsert-tolerant-type", "memory_upsert defaults an unknown 'type' instead of failing", MemoryUpsertTolerantTypeAsync),
                     TestCase.Async("mcp2", "memory-search", "memory_search returns hits", MemorySearchAsync),
+                    TestCase.Async("mcp2", "memory-search-min-score", "memory_search forwards minScore (an unreachable threshold returns no hits)", MemorySearchMinScoreAsync),
                     TestCase.Async("mcp2", "memory-read", "memory_read reads a memory by id", MemoryReadAsync),
                     TestCase.Async("mcp2", "memory-enumerate", "memory_enumerate lists memories", MemoryEnumerateAsync),
                     TestCase.Async("mcp2", "category-enumerate", "category_enumerate lists categories", CategoryEnumerateAsync),
@@ -302,6 +303,32 @@ namespace Test.Shared
             if (response.StatusCode != HttpStatusCode.OK) throw new InvalidOperationException("Expected HTTP 200 from the MCP initialize handshake, got " + (int)response.StatusCode + " (" + text + ").");
             if (!text.Contains("serverInfo", StringComparison.Ordinal)) throw new InvalidOperationException("Expected the initialize response to contain serverInfo: " + text);
             if (!text.Contains("Isis.McpServer", StringComparison.Ordinal)) throw new InvalidOperationException("Expected the initialize response to name the Isis.McpServer: " + text);
+        }
+
+        private static async Task MemorySearchMinScoreAsync()
+        {
+            using McpContext ctx = await McpContext.StartAsync().ConfigureAwait(false);
+            string scopeId = await CreateScopeAsync(ctx).ConfigureAwait(false);
+            string categoryId = await CreateCategoryAsync(ctx, scopeId).ConfigureAwait(false);
+            await UpsertMemoryAsync(ctx, scopeId, categoryId, "grip", "Grip fighting", "Win the grip to win the exchange; control the sleeve and collar.").ConfigureAwait(false);
+
+            using HttpClient client = new HttpClient { BaseAddress = new Uri("http://127.0.0.1:" + ctx.McpPort) };
+            Dictionary<string, object?> arguments = new Dictionary<string, object?>
+            {
+                { "tenantId", "ten_default" },
+                { "scopeId", scopeId },
+                { "queryText", "grip collar" },
+                { "mode", "Keyword" },
+                { "minScore", 1000000.0 }
+            };
+            Dictionary<string, object?> callParams = new Dictionary<string, object?> { { "name", "memory_search" }, { "arguments", arguments } };
+            using JsonDocument call = await SendStatelessAsync(client, ctx.Harness.AccessKey, "tools/call", 1, callParams, "memory_search", HttpStatusCode.OK).ConfigureAwait(false)
+                ?? throw new InvalidOperationException("Stateless request returned no body.");
+            // The tool result's text content is the proxy envelope as JSON: { success, statusCode, tool, data }.
+            string envelopeText = call.RootElement.GetProperty("result").GetProperty("content")[0].GetProperty("text").GetString() ?? string.Empty;
+            using JsonDocument envelope = JsonDocument.Parse(envelopeText);
+            int hits = envelope.RootElement.GetProperty("data").GetProperty("hits").GetArrayLength();
+            if (hits != 0) throw new InvalidOperationException("An unreachable minScore should return no hits, got " + hits + ": " + envelopeText);
         }
 
         private static async Task StatelessClaudeSequenceAsync()

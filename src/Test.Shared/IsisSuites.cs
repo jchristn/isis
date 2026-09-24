@@ -66,6 +66,7 @@ namespace Test.Shared
                 DatabaseSuite.Suite(),
                 StoreSuite.Suite(),
                 ChunkerSuite.Suite(),
+                RetrievalSuite.Suite(),
                 ServiceSuite.Suite(),
                 RestSuite.Suite(),
                 McpSuite.Suite(),

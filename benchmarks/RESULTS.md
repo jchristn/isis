@@ -1,169 +1,212 @@
-# Isis benchmark results: first baseline (2026-09-23/24)
+# Isis benchmark results
 
-**Setup:**
+This page records what the benchmark suite in this directory measured, round by round, and what changed in Isis
+between rounds. The short version: with Isis connected, Claude Code completed 96% of memory-dependent tasks against
+17% without it; chat answers grounded on Isis memories are right 99% of the time on the isis-live questions; and
+hybrid retrieval now reaches nDCG@10 of 0.80 to 0.91 on the three memory-style datasets. The weak spots are
+paraphrased questions, questions that need several memories at once, and knowing when nothing relevant exists.
 
-- Machine: AMD Ryzen AI 9 HX PRO 370 (12 cores), Radeon 890M iGPU, Windows 11.
-- Isis: built from the working tree against the isolated bench stack (`benchmarks/docker`: pgvector 0.5.1 / PostgreSQL 15.4, RecallDB 0.2.1).
-- Embeddings: local Ollama `all-minilm` (384-dim).
-- Chat: `gemma3:4b` as the answer model, and also as the judge (a small judge, so treat chat numbers as ±5 points).
+Every number here comes from the harness described in [README.md](README.md). Raw per-run reports are written to
+`benchmarks/results/`, which is git-ignored because it is machine-specific.
 
-Raw per-run reports (`.json` and `.md`) are written to `benchmarks/results/`, which is git-ignored because it is machine-specific. The numbers below are copied from those reports.
+## Setup
 
-## Retrieval accuracy (after fixes)
+All rounds ran on one laptop: an AMD Ryzen AI 9 HX PRO 370 (12 cores) with a Radeon 890M integrated GPU, on Windows
+11. The stack was isolated: pgvector 0.5.1 on PostgreSQL 15.4, RecallDB 0.2.1, and Isis built from the working tree.
+Embeddings came from a local Ollama `all-minilm` (384 dimensions). Chat answers came from `gemma3:4b`, which also
+served as the judge. A 4B judge is noisy, so read chat accuracy as plus or minus a few points. The agent benchmark
+used Claude Code 2.1.281 with `haiku`.
 
-| Dataset | Queries | Mode | Hit@1 | Recall@5 | MRR@10 | nDCG@10 | p50 ms |
-|---|---|---|---|---|---|---|---|
-| isis-live (24 real memories) | 90 answerable + 20 negative | Keyword | 0.078 | 0.072 | 0.078 | 0.073 | 26 |
-| | | Semantic | 0.700 | 0.941 | 0.808 | 0.844 | 45 |
-| | | Hybrid | 0.711 | 0.941 | 0.814 | 0.848 | 56 |
-| Atlas (170 synthetic memories) | 220 + 40 negative | Keyword | n/a | 0.136 | 0.147 | 0.137 | 81 |
-| | | Semantic | n/a | 0.830 | 0.693 | 0.715 | 32 |
-| | | Hybrid | n/a | 0.837 | 0.722 | 0.739 | 33 |
-| SciFact (BEIR, 5,183 docs) | 300 | Keyword | 0.060 | 0.056 | 0.060 | 0.057 | 22 |
-| | | Semantic | 0.503 | 0.732 | 0.608 | **0.653** | 46 |
-| | | Hybrid | 0.523 | 0.739 | 0.622 | 0.665 | 53 |
-| LongMemEval-S (60 of 500, stratified) | 60 | Keyword | n/a | 0.098 | 0.118 | 0.102 | 14 |
-| | | Semantic | n/a | 0.947 | 0.828 | 0.853 | 34 |
-| | | Hybrid | n/a | 0.947 | 0.828 | 0.853 | 43 |
+Latency and throughput depend on the machine. Compare them within this page, not against other hardware.
 
-- **Sanity check:** the published all-MiniLM-L6-v2 SciFact nDCG@10 is 0.645. Isis's Semantic score of 0.653
-  shows the pipeline (chunking, storage, retrieval) loses nothing relative to the raw model.
-- **Keyword is broken upstream.** RecallDB ANDs every query term (`plainto_tsquery`). Simulating OR semantics on
-  isis-live gives Keyword recall@5 **0.859**, and moves Hybrid nDCG@10 from 0.848 to **0.867**. The fix plan is in
-  `C:\Code\RecallDB\RecallDB\HYBRID_SEARCH_FIX.md`.
-- **Weak spots, by query type:**
-  - Atlas paraphrase: Hit@1 0.33 (a limit of the embedding model).
-  - Atlas superseded facts: Hit@1 0.40. The old version of a fact often outranks its replacement, because Isis has
-    no recency or supersession signal. This is the planned "living-memory hygiene" work.
-  - Atlas multi-memory questions: all needed memories appear in the top 10 only 47% of the time.
-  - LongMemEval preference questions (Hit@1 0.38) and temporal questions (nDCG 0.71).
-- **No abstention signal.** The mean top score for unanswerable questions is close to the mean for answerable ones
-  (0.36 vs 0.42 on isis-live, 0.47 vs 0.51 on Atlas), so no score threshold can say "nothing relevant".
+## The rounds
 
-## After the RecallDB full-text patch (2026-09-24)
+| Round | What changed |
+|---|---|
+| 0 | First baseline, run against the code as it was when the harness was written |
+| 1 | Nine Isis defects fixed (see [Defects found](#defects-found-by-the-benchmarks)); chat grounds on whole chunks instead of 240-character snippets; Voltaic 1.1.0 so Claude Code can see Isis tools; RecallDB patched upstream so keyword search matches any term instead of requiring every term |
+| 2 | The retrieval improvements in [RETRIEVAL_IMPROVEMENTS.md](../RETRIEVAL_IMPROVEMENTS.md): fused and normalized hybrid scores, a recency signal, chunk headers, deeper chat retrieval, a stricter chat prompt, and update-not-duplicate guidance, plus four ingest robustness fixes found while measuring |
 
-These runs used RecallDB images rebuilt with the `HYBRID_SEARCH_FIX.md` changes, still tagged `v0.2.1`, against the
-same ingested scopes. Isis is unchanged: it still sends a text-only query for Keyword and fuses two separate searches
-itself for Hybrid. The whole improvement comes from RecallDB's new defaults.
+## Retrieval
 
-On first startup, RecallDB's migration added `content_tsv` and `_tsv` indexes to all 65 collection tables (about 50k
-documents) in roughly a minute and dropped every old `_fts` index. RecallDB did not accept requests until the
-migration finished, and it logs no per-collection progress.
+nDCG@10 scores whether the right memories come back near the top, from 0 to 1. Hybrid is the default mode and the
+one agents and chat use.
 
-| Dataset | Mode | Recall@5 before → after | nDCG@10 before → after | p50 ms before → after |
+| Dataset | Mode | Round 0 | Round 1 | Round 2 |
 |---|---|---|---|---|
-| isis-live | Keyword | 0.072 → **0.856** | 0.073 → **0.817** | 26 → 29 |
-| | Hybrid | 0.941 → **0.957** | 0.848 → **0.859** | 56 → 40 |
-| Atlas | Keyword | 0.136 → **0.832** | 0.137 → **0.767** | 81 → 24 |
-| | Hybrid | 0.837 → **0.877** | 0.739 → **0.803** | 33 → 55 |
-| SciFact | Keyword | 0.056 → **0.671** | 0.057 → **0.598** | 22 → 73 (p95 162) |
-| | Hybrid | 0.739 → **0.757** | 0.665 → **0.688** | 53 → 106 (p95 239) |
-| LongMemEval-S (60) | Keyword | 0.098 → **0.848** | 0.102 → **0.833** | 14 → 37 |
-| | Hybrid | 0.947 → **0.975** | 0.853 → **0.906** | 43 → 45 |
+| isis-live: 24 real memories, 110 questions | Keyword | 0.073 | 0.817 | 0.814 |
+| | Semantic | 0.844 | 0.844 | 0.843 |
+| | **Hybrid** | 0.848 | 0.859 | **0.877** |
+| Atlas: 170 synthetic memories, 260 questions | Keyword | 0.137 | 0.767 | 0.773 |
+| | Semantic | 0.715 | 0.714 | 0.738 |
+| | **Hybrid** | 0.739 | 0.803 | **0.804** |
+| SciFact: 5,183 abstracts, 300 queries | Keyword | 0.057 | 0.598 | 0.585 |
+| | Semantic | 0.653 | 0.653 | 0.645 |
+| | **Hybrid** | 0.665 | 0.688 | **0.678** |
+| LongMemEval-S: 60 haystacks of about 50 sessions | Keyword | 0.102 | 0.833 | 0.838 |
+| | Semantic | 0.853 | 0.853 | 0.887 |
+| | **Hybrid** | 0.853 | 0.906 | **0.907** |
 
-Semantic is unchanged, as expected (isis-live 0.844, Atlas 0.714, SciFact 0.653, LongMemEval 0.853 nDCG@10).
+Round 0's retrieval numbers were measured once the ingest-blocking bugs of that round were fixed, so every document
+was actually stored, but before the RecallDB keyword fix and the chat changes. The very first SciFact run lost 19% of
+its documents to a token-budget bug, and it reported nDCG 0.52 until that was fixed.
 
-Against the plan's acceptance targets, isis-live Keyword recall@5 is 0.856 (target ≥ 0.80), SciFact Keyword nDCG@10
-is 0.598 (target ≥ 0.50), and Hybrid beats Semantic on every dataset.
+SciFact is the sanity check. Its semantic score (0.645 to 0.653) sits on the published figure for
+all-MiniLM-L6-v2 (0.645), so chunking and storage cost nothing. The jump in round 1 is almost all keyword search,
+which was essentially broken until RecallDB stopped requiring every query term to appear.
 
-The LongMemEval rerun re-ingested 14 of its 60 haystacks, whose earlier runs had lost sessions to the socket and
-tokenizer bugs. They now ingest with 0 failures, so its "after" numbers also include those previously missing
-sessions.
+Round 2's gains are narrower than round 1's, and they land where they were aimed:
 
-On SciFact, Keyword got slower because it now does real work. An OR query of six scientific terms matches 26% of
-the 11k chunk documents (2,863 rows). `EXPLAIN ANALYZE` shows the GIN `_tsv` index is used and the rank-and-sort
-takes about 21 ms in Postgres. The rest of the p50 is RecallDB overhead (including its count query over the same
-match set) and HTTP. Isis's Hybrid pays for both legs concurrently.
-
-There are two ways to win the latency back:
-
-- **In Isis:** replace the two-call client-side fusion with one server-side `Hybrid.Strategy = Rrf` call. This needs
-  a RecallDB SDK that exposes `Hybrid` (see §11 of the plan).
-- **In RecallDB:** skip or cap the `COUNT(*)` for ranked text queries.
-
-## Chat-with-memory (isis-live, 110 questions)
-
-| | Before (240-char snippets) | After (whole best chunk) |
+| Atlas, Hybrid, by question type | Hit@1 round 1 → 2 | nDCG@10 round 1 → 2 |
 |---|---|---|
-| Answer accuracy (answerable) | 0.678 | **0.956** |
-| Accuracy when the evidence was retrieved | 0.706 | 0.976 |
-| Detail / paraphrase questions | 0.53 / 0.54 | 0.93 / 0.97 |
-| Abstention on unanswerable questions | 0.95 | 0.90 |
-| Citation precision / recall | 0.52 / 0.72 | 0.65 / 0.85 |
-| Context recall (evidence in the prompt) | 0.918 | 0.918 |
-| Latency p50 (local 4B model on iGPU) | 8.2 s | 14.9 s (larger prompts) |
+| superseded (a fact and its later replacement) | 0.40 → **0.55** | 0.718 → **0.777** |
+| paraphrase | 0.43 → 0.45 | 0.673 → **0.707** |
+| multi (needs 2 or 3 memories) | 0.80 → 0.83 | 0.785 → 0.799 |
+| confusable near-duplicates | 0.72 → 0.68 | 0.852 → 0.859 |
+| detail deep in a long memory | 0.90 → 0.87 | 0.947 → 0.933 |
+| category-filtered | 0.95 → 0.95 | 0.975 → 0.982 |
+| **lexical (exact identifiers)** | 0.77 → **0.57** | 0.833 → **0.740** |
 
-## Load (stub embeddings at 5 ms, 10k memories, 90% search / 10% upsert, 30 s per level)
+The lexical drop is the one real regression, and it comes from chunk headers. Embedding each chunk with its
+memory's title and summary helps meaning-based questions but blurs the vector leg's ranking of memories that differ
+mainly by identifier. Hybrid still has the keyword leg for those, but less decisively than before. Revisiting how
+the header is applied is on the list of next steps.
 
-This is a same-conditions A/B: HEAD built in a git worktree against the same database and scope, 2 runs each.
+SciFact slipped by a point in round 2 for a reason that does not apply to agent memory: it is a bulk import with no
+meaningful write order, so the new recency signal is noise there. With recency off, SciFact scores 0.693, above round
+1. Scopes loaded by bulk import should set `recencyWeight` to 0.
 
-| Concurrency | Throughput HEAD → new | Search p50 HEAD → new | Upsert p50 HEAD → new | Errors HEAD → new |
-|---|---|---|---|---|
-| 1 | 19 → 23 ops/s | 47 → 33 ms | 79–95 → 85–88 ms | 0 → 0 |
-| 4 | 64–71 → 77–83 | 50–56 → 40–44 | 106–119 → 110–118 | ≤0.1% → 0 |
-| 16 | 119–128 → 139 | 110–120 → 93 | 232–242 → 288 | ≤0.1% → 0 |
-| 64 | 142 → 139–142 | 381–392 → 336–344 | 940–1030 → 1415–1440 | 0.2% → 0 |
+### Choosing the recency weight
 
-- **RecallDB is the ceiling**, at about 140 ops/s on this machine. At c=64, store search is ~310 ms of a ~335 ms
-  search.
-- **At saturation, searches win.** Parallel hybrid legs give searches a larger share of RecallDB, so upserts queue
-  longer when the mix is 90% search. This is a scheduling trade-off, not an upsert-path regression: c=1 upserts are
-  unchanged.
-- **Ingest with the real model** (Ollama all-minilm on iGPU) is about 18–24 docs/s at concurrency 8. The embedding
-  model is the bottleneck: ~70 embeddings/s. Ollama supports a batch `/api/embed` that Isis doesn't use yet.
+The recency weight was chosen by sweeping it on all four datasets, reusing the same ingested scopes.
 
-## Agent-in-the-loop (Claude Code 2.1.281, haiku, 24 tasks over the isis-live memories)
-
-Each task ran twice: once with the Isis MCP server connected, and once with no memory. Every run used an empty
-working directory with all built-in tools disabled, so project facts could only come from Isis. Grading is by regex
-on the final answer. Before Voltaic 1.1.0 this benchmark could not run at all, because Claude Code saw no Isis
-tools.
-
-| Arm | Success | Mean turns | Mean cost | Total cost | Mean duration |
+| Hybrid nDCG@10 | w = 0 | 0.03 | 0.05 | **0.1 (default)** | 0.2 |
 |---|---|---|---|---|---|
-| With Isis | **96%** (23/24) | 2.83 | $0.021 | $0.51 | 10.6 s |
-| No memory | 21% (5/24) | 1.00 | $0.015 | $0.37 | 6.5 s |
+| Atlas overall | 0.806 | 0.805 | 0.803 | 0.804 | 0.803 |
+| Atlas, superseded facts only | 0.703 | 0.722 | 0.722 | **0.777** | 0.814 |
+| LongMemEval | 0.906 | 0.909 | 0.909 | 0.909 | 0.911 |
+| isis-live (undated) | 0.872 | 0.880 | 0.876 | 0.873 | 0.856 |
+| SciFact (bulk import) | 0.693 | 0.685 | 0.682 | 0.680 | 0.658 |
 
-The no-memory arm's five passes are generic-knowledge or abstention tasks (t10, t13, t20, t23, t24), which is the
-expected floor. The one Isis-arm miss (t08) answered with the MCP tool name (`instructions` with a `scopeId`) rather
-than the REST route the task asked for (`effective-instructions`). The answer is defensible for an MCP caller, so
-the task's expectation could reasonably accept either.
+Superseded facts keep improving as the weight rises. Undated and bulk-imported corpora start to pay for it above
+0.1. At 0.1, Isis gets most of the superseded-fact gain for about one point of nDCG on the bulk import.
 
-Memory costs about one extra agent turn (2.8 vs 1.0), four seconds, and $0.006 per task, and it takes success from
-21% to 96%.
+### Can a score say "nothing relevant"?
 
-## Defects found and fixed
+Each dataset includes questions the memories cannot answer. The harness measures how well the top hit's score
+separates answerable from unanswerable questions, as AUROC: 0.5 is a coin flip, 1.0 is a perfect threshold.
 
-| # | Defect | Found by | Fix |
+| AUROC, Hybrid mode | isis-live | Atlas | LongMemEval |
 |---|---|---|---|
-| 1 | MCP `memory_search` category filter by name matched nothing (store labels are ids) | live probe | Filter accepts a name or `cat_` id; unknown category → 400 |
-| 2 | Empty `queryText` returned top-K hits with score 0 | live probe | 400 |
-| 3 | Concurrent first writes to a new scope raced to provision the RecallDB tenant/collection | retrieval ingest (23/24 failed) | Per-scope provisioning lock; waiters adopt the winner's collection; tenant create tolerates a concurrent create |
-| 4 | Chunks exceeded all-minilm's context on technical and accented text (Ollama counts more tokens than the HF WordPiece vocabulary) | SciFact (19% failed), LongMemEval (Turkish) | 4% chunk margin, plus re-chunking at 0.75/0.5/0.3 of the budget on context-length rejection |
-| 5 | Concurrent upserts of the same memory raced (duplicate keys, 500s) | load test | Per-memory keyed lock |
-| 6 | Exceptions a route didn't catch returned Watson's HTML 500 page | load test | Global `Routes.Exception` handler returning JSON (400/501/503/500) |
-| 7 | New `RecallDbClient` (and `HttpClient`) per request, never disposed | code map; socket exhaustion during LongMemEval | Shared client per endpoint |
-| 8 | Chat grounded on 240-character snippets | chat benchmark | Grounds on the whole best chunk (UI preview stays short) |
+| Fused hybrid score | 0.64 | 0.67 | 0.57 |
+| Raw vector similarity (`vectorScore`) | 0.67 | 0.64 | 0.78 |
 
-Performance changes: hybrid legs run in parallel, and a multi-chunk memory's chunks are embedded concurrently (4 at
-a time).
+Neither is reliable enough to act as an abstention gate. The fused score is a rank-fusion score, so every query's
+best hit lands near 1.0 whether or not it is relevant. The raw vector similarity, which Isis now returns on every
+hit, is the better signal, and it is usable as a soft filter on LongMemEval. A reranker with calibrated scores is the
+fix that would change this picture.
 
-## Open issues (not fixed here)
+### Latency
 
-- **Resolved (Voltaic 1.1.0): Claude Code 2.1.x could not use Isis's MCP tools.** Isis is now on 1.1.0, and McpSuite has regression cases `stateless-claude-sequence` and `initialize-caps-stateless-version`. The notes below describe the original diagnosis. The actual Claude Code flow is `server/discover` followed by stateless requests, which also need `ttlMs`/`cacheScope`.
-  - Isis now uses Voltaic 0.7.1 (bumped 2026-09-24). The problem is identical on 0.7.1 and 0.6.1.
-  - Voltaic negotiates protocol revision `2026-07-28` whenever the client requests it.
-  - Its session-mode `tools/list` then omits the `resultType` field that revision requires, so the client rejects the
-    tool list.
-  - The live deployment negotiates the same revision.
-  - The fix belongs in Voltaic (cap negotiation on the session path, or emit `resultType`). Isis cannot cap the
-    version: `McpHttpServer.ProtocolVersion` only sets the default for clients that don't ask.
-  - The agent benchmark (`agent` command, `agent/tasks-isis.json`) is built but blocked on this.
-- RecallDB keyword search: fixed upstream and verified (see "After the RecallDB full-text patch"). Remaining: SciFact-scale text-query latency, and moving Isis to server-side RRF once the SDK exposes `Hybrid`.
-- No relevance threshold or abstention in search; no recency or supersession awareness.
-- Auth does 2 DB reads per request (credential and user). A short-TTL cache would save ~5 ms per call, at the cost
-  of revocation latency. This is a policy decision.
-- Upserts embed one text per HTTP call. Batch embedding APIs (Ollama `/api/embed`, OpenAI list input) would raise
-  ingest throughput.
-- One full test-suite run hung once and did not reproduce in 3 reruns. It may have been a Docker-backed live-DB
-  test.
+Hybrid search p50 in round 2 was 42 ms on isis-live and Atlas, 38 ms on LongMemEval, and 95 ms on SciFact. SciFact is
+slower because any-term text matching over 11,000 chunk documents ranks thousands of matches per query; the full-text
+index is used, and the cost is the ranking itself. Round 2 did not change the search path's cost.
+
+## Chat with memory
+
+The isis-live questions, asked through the Isis chat route and graded by an independent model call:
+
+| | Round 0 | Round 1 | Round 2 |
+|---|---|---|---|
+| Answer accuracy (90 answerable questions) | 0.678 | 0.956 | **0.989** |
+| Evidence reached the prompt | 0.918 | 0.918 | **0.974** |
+| Accuracy when the evidence was in the prompt | 0.706 | 0.976 | 0.989 |
+| Correctly declined (20 unanswerable questions) | 0.95 | 0.90 | 0.85 |
+| Citation precision / recall | 0.52 / 0.72 | 0.65 / 0.85 | 0.66 / 0.87 |
+| Latency p50 | 8.2 s | 14.9 s | 15.4 s |
+
+Round 1's jump came from one change: chat used to ground the model on a 240-character preview of each memory, so any
+answer past a memory's first sentence was invisible. Round 2's gain came from retrieving 8 memories instead of 5,
+which put the evidence in the prompt for 97% of questions instead of 92%.
+
+Declining unanswerable questions got slightly worse in each round, 19, then 18, then 17 of 20, even though round 2's
+prompt tells the model to say when the answer is not in memory. A larger, more complete context gives a small model
+more near-relevant material to talk itself into an answer with. The latency increase is the larger prompt on a laptop
+GPU.
+
+## Agents over MCP
+
+Claude Code ran 24 tasks whose answers live in the isis-live memories, once with the Isis MCP server connected and once
+with no memory. Each run used an empty directory with all built-in tools disabled, so project facts could only come
+from Isis.
+
+| Arm | Round 1 | Round 2 | Mean turns | Mean cost per task |
+|---|---|---|---|---|
+| With Isis | 96% (23/24) | **96%** (23/24) | 3.2 | $0.024 |
+| No memory | 21% (5/24) | 17% (4/24) | 1.0 | $0.015 |
+
+Before round 1 this benchmark could not run at all. Voltaic 0.6 and 0.7 left out a field the MCP 2026-07-28 revision
+requires, so Claude Code connected to Isis and saw zero tools. The no-memory arm's passes are general-knowledge and
+abstention tasks, which is the expected floor. The single Isis miss answered a "which REST route" question with the
+equivalent MCP tool name.
+
+## Load
+
+The load test ran in round 1, as a same-conditions A/B against the pre-fix build. Both builds used stub embeddings, so
+it measures Isis and RecallDB without the model. The corpus was 10,000 memories with a 90/10 search and upsert mix.
+
+| Concurrency | Throughput before → after | Search p50 before → after | Error rate before → after |
+|---|---|---|---|
+| 1 | 19 → 23 ops/s | 47 → 33 ms | 0 → 0 |
+| 16 | 119–128 → 139 ops/s | 110–120 → 93 ms | up to 0.1% → 0 |
+| 64 | 142 → 139–142 ops/s | 381–392 → 336–344 ms | 0.2% → 0 |
+
+RecallDB is the ceiling at about 140 operations per second on this machine. With the real embedding model, ingest is
+bound by the model instead, at about 70 embeddings per second through Ollama on the integrated GPU.
+
+## Defects found by the benchmarks
+
+The benchmarks paid for themselves mostly by finding bugs. Every item below was found by a run, fixed, and covered by a
+test.
+
+| Found in | Defect | Symptom |
+|---|---|---|
+| Round 0 | MCP `memory_search` category filter compared a name to stored ids | Filtering by name matched nothing |
+| Round 0 | Empty search text was accepted | Top-k hits with score 0 instead of a 400 |
+| Round 0 | Concurrent first writes to a new scope raced to create its collection | 23 of 24 ingests failed |
+| Round 0 | Chunks sized to the model's exact token limit | 19% of SciFact ingests rejected, because Ollama counts technical text differently from the local tokenizer |
+| Round 0 | Concurrent upserts of the same memory raced | Duplicate-key errors under load |
+| Round 0 | Exceptions a route didn't catch returned the web server's HTML error page | Clients received an unparseable 500 |
+| Round 0 | A new RecallDB HTTP client for every request, never disposed | Socket exhaustion during long ingests |
+| Round 0 | Chat grounded on 240-character snippets | Accuracy 0.68 |
+| Round 0 | Voltaic MCP responses lacked a field required by the 2026-07-28 revision | Claude Code saw no Isis tools |
+| Round 2 | Collection creation for scopes provisioned in parallel collided in RecallDB, and Isis never recovered | 183 of 2,891 LongMemEval ingests failed |
+| Round 2 | A stray invalid Unicode code unit | The whole memory could not be stored |
+| Round 2 | The chunker could split an emoji in half | The whole memory could not be stored |
+| Round 2 | The chunker emitted runs of tiny duplicate tail chunks | 9% of stored chunks on chat sessions were redundant |
+
+Three of these have root causes in libraries Isis depends on, and are worked around in Isis for now:
+
+- **RecallDB:** its per-collection index names use only the time component of the collection id, so collections
+  created in the same instant collide.
+- **TextChunker (two bugs):** it splits text inside surrogate pairs, and fixed-token chunking with overlap produces
+  redundant trailing chunks.
+
+## Environment notes
+
+Heavy ingest runs pushed the machine close to its limit of ephemeral ports. Most of the sockets in `TIME_WAIT`
+belonged to Ollama's connections to its own model runner and to the RecallDB and Isis servers closing HTTP
+connections after each response, not to leaked Isis clients. It cost one SciFact document in each of the last two
+rounds. One LongMemEval upsert in the round-2 re-run exceeded the harness's 10-minute timeout during the same kind of
+load, and it did not recur on the final pass (0 of 2,891 failed).
+
+## What's next
+
+[RETRIEVAL_IMPROVEMENTS.md](../RETRIEVAL_IMPROVEMENTS.md) lists every fix considered, scored for value and simplicity,
+with what landed in round 2. The results above point at three next steps:
+
+- **Explicit supersession** ("this memory replaces that one"). Recency took superseded facts from 40% to 55% ranked
+  first, and the sweep shows a weight cannot push further without hurting other corpora.
+- **A stronger embedding model and a reranker.** These address paraphrase, the weakest question type at 45% ranked
+  first on Atlas, and the missing "nothing relevant" signal.
+- **Revisiting the chunk header**, to win back the lexical-query regression.

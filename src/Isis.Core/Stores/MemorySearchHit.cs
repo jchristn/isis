@@ -32,6 +32,26 @@ namespace Isis.Core.Stores
         /// </summary>
         public double Score { get; set; } = 0.0;
 
+        /// <summary>
+        /// Vector (semantic) similarity for this hit, when the store ran a vector search and returned it. Null otherwise.
+        /// </summary>
+        public double? VectorScore { get; set; } = null;
+
+        /// <summary>
+        /// Full-text relevance for this hit, when the store ran a text search and returned it. Null otherwise.
+        /// </summary>
+        public double? TextScore { get; set; } = null;
+
+        /// <summary>
+        /// 1-based rank in the vector leg of a hybrid search. Null when not ranked there or not hybrid.
+        /// </summary>
+        public int? VectorRank { get; set; } = null;
+
+        /// <summary>
+        /// 1-based rank in the text leg of a hybrid search. Null when not ranked there or not hybrid.
+        /// </summary>
+        public int? TextRank { get; set; } = null;
+
         #endregion
 
         #region Constructors-and-Factories

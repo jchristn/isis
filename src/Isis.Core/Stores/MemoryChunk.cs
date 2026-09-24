@@ -31,6 +31,13 @@ namespace Isis.Core.Stores
         }
 
         /// <summary>
+        /// The text sent to the embedding model for this chunk, when it differs from <see cref="Text"/>: the memory's
+        /// title and summary header followed by the chunk text. Null means embed <see cref="Text"/> as is. The store
+        /// always persists <see cref="Text"/>, so snippets and full-text search are unaffected by the header.
+        /// </summary>
+        public string? EmbeddingText { get; set; } = null;
+
+        /// <summary>
         /// The embedding vector for this chunk, when the store requires one; otherwise null.
         /// </summary>
         public float[]? Embedding { get; set; } = null;

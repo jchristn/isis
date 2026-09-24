@@ -247,9 +247,23 @@ Chunking of oversized memories is transparent to the API and configured on the *
 A memory that overflows is embedded as several chunks under the hood; upsert, read, search, and delete all
 continue to operate on the whole memory, and search returns one hit per memory regardless of chunking.
 
-A search body is `{ "queryText": "…", "mode": "Hybrid", "topK": 10, "categoryFilter": "…", "tokenBudget": 240 }`.
+A search body is
+`{ "queryText": "…", "mode": "Hybrid", "topK": 10, "categoryFilter": "…", "tokenBudget": 240, "minScore": null, "recencyWeight": 0.1 }`.
 `queryText` is required (an empty or missing query returns 400). `categoryFilter` accepts a category name or
-its `cat_` id; an unknown category returns 400.
+its `cat_` id; an unknown category returns 400. `minScore` (optional) drops hits scoring below it.
+`recencyWeight` (hybrid only, 0 to 1, default 0.1, 0 disables) adds a signal that favors more recently written
+memories, which mostly breaks near-ties such as a fact and its later replacement. Recency is measured by when a
+memory was last written, so for scopes filled by a bulk import, where write order carries no meaning, pass
+`recencyWeight: 0`.
+
+Each hit has `storeKey`, `slug`, `title`, `snippet`, and `score`, plus the evidence behind the score: `vectorScore`
+and `textScore` (the raw leg scores, null when that leg did not return the hit), and in hybrid mode `vectorRank`
+and `textRank` (1-based ranks in each leg). The meaning of `score` depends on the mode. In `Hybrid` it is the fused
+reciprocal-rank score normalized to 0..1 (1.0 means ranked first by every signal). In `Semantic` it is the vector
+similarity, and in `Keyword` the store's text relevance.
+
+Chat (`POST …/scopes/{scopeId}/chat`) takes `{ "question": "…", "topK": 0, "inferenceEndpointId": "…" }`. A `topK` of 0
+(the default) retrieves the server's default number of memories, 8.
 
 ### Instructions (tenant-scoped)
 

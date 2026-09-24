@@ -217,11 +217,15 @@ namespace Test.Benchmark
         /// <param name="topK">Result count.</param>
         /// <param name="categoryFilter">Optional category name or id.</param>
         /// <param name="token">Cancellation token.</param>
+        /// <param name="recencyWeight">Optional hybrid recency weight (null = server default).</param>
+        /// <param name="minScore">Optional minimum score (null = none).</param>
         /// <returns>The parsed, timed response.</returns>
-        public async Task<SearchResponse> SearchAsync(string scopeId, string queryText, string mode, int topK, string? categoryFilter, CancellationToken token)
+        public async Task<SearchResponse> SearchAsync(string scopeId, string queryText, string mode, int topK, string? categoryFilter, CancellationToken token, double? recencyWeight = null, double? minScore = null)
         {
             JsonObject body = new JsonObject { ["queryText"] = queryText, ["mode"] = mode, ["topK"] = topK };
             if (!string.IsNullOrEmpty(categoryFilter)) body["categoryFilter"] = categoryFilter;
+            if (recencyWeight.HasValue) body["recencyWeight"] = recencyWeight.Value;
+            if (minScore.HasValue) body["minScore"] = minScore.Value;
 
             TimedCall call = await TimedSendAsync(HttpMethod.Post, TenantPath("/scopes/" + scopeId + "/memories/search"), body, token).ConfigureAwait(false);
             SearchResponse response = new SearchResponse { StatusCode = call.StatusCode, ElapsedMs = call.ElapsedMs };
@@ -242,7 +246,8 @@ namespace Test.Benchmark
                     response.Hits.Add(new SearchHit
                     {
                         Slug = hit["slug"]?.GetValue<string>() ?? string.Empty,
-                        Score = hit["score"]?.GetValue<double>() ?? 0.0
+                        Score = hit["score"]?.GetValue<double>() ?? 0.0,
+                        VectorScore = hit["vectorScore"] != null ? hit["vectorScore"]!.GetValue<double>() : (double?)null
                     });
                 }
             }
@@ -255,13 +260,14 @@ namespace Test.Benchmark
         /// </summary>
         /// <param name="scopeId">Scope id.</param>
         /// <param name="question">The question.</param>
-        /// <param name="topK">Memories to retrieve.</param>
+        /// <param name="topK">Memories to retrieve; 0 or less uses the server default.</param>
         /// <param name="inferenceEndpointId">Inference endpoint id.</param>
         /// <param name="token">Cancellation token.</param>
         /// <returns>The parsed, timed response.</returns>
         public async Task<ChatResponse> ChatAsync(string scopeId, string question, int topK, string inferenceEndpointId, CancellationToken token)
         {
-            JsonObject body = new JsonObject { ["question"] = question, ["topK"] = topK, ["inferenceEndpointId"] = inferenceEndpointId };
+            JsonObject body = new JsonObject { ["question"] = question, ["inferenceEndpointId"] = inferenceEndpointId };
+            if (topK > 0) body["topK"] = topK;
             TimedCall call = await TimedSendAsync(HttpMethod.Post, TenantPath("/scopes/" + scopeId + "/chat"), body, token).ConfigureAwait(false);
             ChatResponse response = new ChatResponse { StatusCode = call.StatusCode, ElapsedMs = call.ElapsedMs };
             if (!call.IsSuccess)

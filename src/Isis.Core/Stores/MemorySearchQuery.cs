@@ -65,12 +65,40 @@ namespace Isis.Core.Stores
             }
         }
 
+        /// <summary>
+        /// Optional minimum score. Hits scoring below it are dropped. Null (the default) returns every hit.
+        /// The scale depends on the mode: Hybrid scores are fused and normalized to [0, 1]; Semantic scores are vector
+        /// similarities; Keyword scores are the store's text relevance.
+        /// </summary>
+        public double? MinScore { get; set; } = null;
+
+        /// <summary>
+        /// For hybrid search, the weight of a recency signal that favors more recently written memories, in the range
+        /// 0.0 to 1.0. Default 0.1. 0 disables it. It is fused alongside the vector and text rankings, so a small value
+        /// mostly breaks near-ties between similar memories in favor of the newer one (for example a fact and its
+        /// replacement); larger values let recency override relevance.
+        /// </summary>
+        public double RecencyWeight
+        {
+            get
+            {
+                return _RecencyWeight;
+            }
+            set
+            {
+                if (value < 0.0) value = 0.0;
+                if (value > 1.0) value = 1.0;
+                _RecencyWeight = value;
+            }
+        }
+
         #endregion
 
         #region Private-Members
 
         private int _TopK = 10;
         private double _TextWeight = 0.5;
+        private double _RecencyWeight = 0.1;
 
         #endregion
 

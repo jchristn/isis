@@ -18,9 +18,10 @@ namespace Isis.Server.Models
         public string? InferenceEndpointId { get; set; } = null;
 
         /// <summary>
-        /// The maximum number of memories to retrieve. Default 5.
+        /// The maximum number of memories to retrieve. 0 (the default) uses the server's default, which is 8 unless
+        /// configured otherwise (see <c>MemoryChatService.DefaultTopK</c>).
         /// </summary>
-        public int TopK { get; set; } = 5;
+        public int TopK { get; set; } = 0;
 
         #endregion
 
