@@ -182,7 +182,7 @@ namespace Test.Benchmark.Runners
         {
             // Every run sets the rerank settings explicitly, so a reused scope never keeps a previous run's reranker.
             string? endpointId = _Context.RerankEndpointId;
-            int candidates = Math.Max(1, _Context.Arguments.GetInt("rerank-candidates", 20));
+            int candidates = Math.Max(1, _Context.Arguments.GetInt("rerank-candidates", 10));
             double? minScore = _Context.Arguments.GetOptional("scope-min-rerank-score") != null ? _Context.Arguments.GetDouble("scope-min-rerank-score", 0.0) : (double?)null;
             foreach (ProvisionedScope scope in scopes)
             {

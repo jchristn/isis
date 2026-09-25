@@ -58,7 +58,15 @@ namespace Test.Shared
                     TestCase.Async("mcp2", "wrong-secret-rejected", "a present but wrong secret is rejected with 401", WrongSecretRejectedAsync),
                     TestCase.Async("mcp2", "bearer-access-key", "raw MCP initialize authenticates with a bearer access key", BearerAccessKeyHandshakeAsync),
                     TestCase.Async("mcp2", "mcp-handshake", "raw MCP initialize returns serverInfo", HandshakeAsync),
-                    TestCase.Async("mcp2", "tools-parity", "tools/list exposes the full REST-parity tool set", ToolsParityAsync),
+                    TestCase.Async("mcp2", "tools-parity", "tools/list exposes exactly the REST-parity tool set and nothing else", ToolsParityAsync),
+                    TestCase.Async("mcp2", "tools-list-stateless-exact", "stateless tools/list carries only the Isis tools (no Voltaic demo tools)", StatelessToolsListExactAsync),
+                    TestCase.Async("mcp2", "ping-handshake-empty", "protocol ping returns an empty result, not \"pong\"", PingHandshakeEmptyAsync),
+                    TestCase.Async("mcp2", "ping-stateless-complete", "stateless ping returns only resultType complete", PingStatelessCompleteAsync),
+                    TestCase.Async("mcp2", "ping-unauthenticated", "protocol ping succeeds without credentials", PingUnauthenticatedAsync),
+                    TestCase.Async("mcp2", "removed-tools-rejected", "tools/call to the removed Voltaic demo tools (ping, echo, getTime, getSessions) fails", RemovedToolsRejectedAsync),
+                    TestCase.Async("mcp2", "bare-tool-method-rejected", "calling a tool as a bare JSON-RPC method returns -32601", BareToolMethodRejectedAsync),
+                    TestCase.Async("mcp2", "tools-call-unauthorized", "tools/call without credentials is rejected with 401", ToolsCallUnauthorizedAsync),
+                    TestCase.Async("mcp2", "endpoint-schema-declares-ids", "every tool schema declares each argument it requires", EndpointSchemaDeclaresIdsAsync),
                     TestCase.Async("mcp2", "stateless-claude-sequence", "The Claude Code 2.1.x stateless 2026-07-28 discover, list, and call sequence works with a bearer access key", StatelessClaudeSequenceAsync),
                     TestCase.Async("mcp2", "stateless-unauthorized", "A stateless 2026-07-28 request without credentials is rejected with 401", StatelessUnauthorizedAsync),
                     TestCase.Async("mcp2", "initialize-caps-stateless-version", "initialize requesting 2026-07-28 negotiates the newest handshake revision", InitializeCapsStatelessVersionAsync),
@@ -534,21 +542,185 @@ namespace Test.Shared
 
             if (listResp.StatusCode != HttpStatusCode.OK) throw new InvalidOperationException("tools/list returned " + (int)listResp.StatusCode + ": " + text);
 
-            string[] expected = new[]
+            using JsonDocument doc = JsonDocument.Parse(text);
+            RequireExactTools(doc.RootElement.GetProperty("result"), "tools/list");
+        }
+
+        private static async Task StatelessToolsListExactAsync()
+        {
+            using McpContext ctx = await McpContext.StartAsync().ConfigureAwait(false);
+            using HttpClient client = new HttpClient { BaseAddress = new Uri("http://127.0.0.1:" + ctx.McpPort) };
+
+            using JsonDocument tools = await SendStatelessAsync(client, ctx.Harness.AccessKey, "tools/list", 1, null, null, HttpStatusCode.OK).ConfigureAwait(false)
+                ?? throw new InvalidOperationException("Stateless request returned no body.");
+            RequireExactTools(tools.RootElement.GetProperty("result"), "stateless tools/list");
+        }
+
+        private static async Task PingHandshakeEmptyAsync()
+        {
+            // Voltaic 2.x answers the protocol ping itself with {} as the MCP specification requires; 1.x returned "pong".
+            using McpContext ctx = await McpContext.StartAsync().ConfigureAwait(false);
+            using HttpClient client = new HttpClient { BaseAddress = new Uri("http://127.0.0.1:" + ctx.McpPort) };
+
+            string? session = await InitializeAsync(client, ctx.Harness.AccessKey).ConfigureAwait(false);
+            RawResponse ping = await SendRawAsync(client, ctx.Harness.AccessKey, session, "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}").ConfigureAwait(false);
+            if (ping.StatusCode != HttpStatusCode.OK) throw new InvalidOperationException("ping returned " + (int)ping.StatusCode + ": " + ping.Text);
+
+            using JsonDocument doc = JsonDocument.Parse(ping.Text);
+            JsonElement result = doc.RootElement.GetProperty("result");
+            if (result.ValueKind != JsonValueKind.Object) throw new InvalidOperationException("ping must return an object result, not " + result.ValueKind + ": " + ping.Text);
+            foreach (JsonProperty property in result.EnumerateObject()) throw new InvalidOperationException("ping must return an empty object under a handshake revision: " + ping.Text);
+        }
+
+        private static async Task PingStatelessCompleteAsync()
+        {
+            using McpContext ctx = await McpContext.StartAsync().ConfigureAwait(false);
+            using HttpClient client = new HttpClient { BaseAddress = new Uri("http://127.0.0.1:" + ctx.McpPort) };
+
+            using JsonDocument ping = await SendStatelessAsync(client, ctx.Harness.AccessKey, "ping", 1, null, null, HttpStatusCode.OK).ConfigureAwait(false)
+                ?? throw new InvalidOperationException("Stateless request returned no body.");
+            JsonElement result = ping.RootElement.GetProperty("result");
+            if (result.ValueKind != JsonValueKind.Object) throw new InvalidOperationException("stateless ping must return an object result: " + ping.RootElement.GetRawText());
+            RequireResultType(result, "ping");
+            foreach (JsonProperty property in result.EnumerateObject())
             {
-                "whoami", "instructions", "guide",
-                "scope_enumerate", "scope_create", "scope_read", "scope_update", "scope_delete",
-                "category_enumerate", "category_create", "category_read", "category_update", "category_delete",
-                "memory_enumerate", "memory_read", "memory_upsert", "memory_search", "memory_delete",
-                "endpoint_enumerate", "endpoint_read", "endpoint_create", "endpoint_update", "endpoint_delete", "endpoint_health",
-                "chat",
-                "collection_enumerate", "collection_read", "collection_create", "collection_delete",
-                "instruction_create", "instruction_update", "instruction_delete"
-            };
-            foreach (string tool in expected)
-            {
-                if (!text.Contains("\"" + tool + "\"", StringComparison.Ordinal)) throw new InvalidOperationException("tools/list is missing the '" + tool + "' tool (REST parity gap): " + text);
+                if (property.Name != "resultType") throw new InvalidOperationException("stateless ping must carry only resultType: " + result.GetRawText());
             }
+        }
+
+        private static async Task PingUnauthenticatedAsync()
+        {
+            // The ping bypass reaches only Voltaic's protocol handler, which runs no Isis code, so it needs no credential.
+            using McpContext ctx = await McpContext.StartAsync().ConfigureAwait(false);
+            using HttpClient client = new HttpClient { BaseAddress = new Uri("http://127.0.0.1:" + ctx.McpPort) };
+
+            RawResponse ping = await SendRawAsync(client, null, null, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}").ConfigureAwait(false);
+            if (ping.StatusCode != HttpStatusCode.OK) throw new InvalidOperationException("An unauthenticated ping should succeed, got " + (int)ping.StatusCode + ": " + ping.Text);
+            if (ping.Text.Contains("pong", StringComparison.Ordinal)) throw new InvalidOperationException("ping must no longer return \"pong\": " + ping.Text);
+            if (ping.Text.Contains("ten_default", StringComparison.Ordinal)) throw new InvalidOperationException("An unauthenticated ping must not reach Isis: " + ping.Text);
+        }
+
+        private static async Task RemovedToolsRejectedAsync()
+        {
+            using McpContext ctx = await McpContext.StartAsync().ConfigureAwait(false);
+            using HttpClient client = new HttpClient { BaseAddress = new Uri("http://127.0.0.1:" + ctx.McpPort) };
+            string? session = await InitializeAsync(client, ctx.Harness.AccessKey).ConfigureAwait(false);
+
+            int id = 10;
+            foreach (string tool in new[] { "ping", "echo", "getTime", "getSessions", "getClients" })
+            {
+                string body = "{\"jsonrpc\":\"2.0\",\"id\":" + id++ + ",\"method\":\"tools/call\",\"params\":{\"name\":\"" + tool + "\",\"arguments\":{}}}";
+                RawResponse response = await SendRawAsync(client, ctx.Harness.AccessKey, session, body).ConfigureAwait(false);
+                if (!IsFailure(response)) throw new InvalidOperationException("tools/call " + tool + " should fail now that Voltaic no longer publishes it: " + response.Text);
+                if (session != null && response.Text.Contains(session, StringComparison.Ordinal)) throw new InvalidOperationException("tools/call " + tool + " must not disclose session ids: " + response.Text);
+            }
+        }
+
+        private static async Task BareToolMethodRejectedAsync()
+        {
+            // Voltaic 1.x also registered each tool as a bare JSON-RPC method, which skipped tools/call and its schema
+            // validation. In 2.x only tools/call reaches a tool.
+            using McpContext ctx = await McpContext.StartAsync().ConfigureAwait(false);
+            using HttpClient client = new HttpClient { BaseAddress = new Uri("http://127.0.0.1:" + ctx.McpPort) };
+            string? session = await InitializeAsync(client, ctx.Harness.AccessKey).ConfigureAwait(false);
+
+            RawResponse bare = await SendRawAsync(client, ctx.Harness.AccessKey, session, "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"whoami\",\"params\":{}}").ConfigureAwait(false);
+            if (bare.Text.Contains("ten_default", StringComparison.Ordinal)) throw new InvalidOperationException("A bare whoami call must not reach the tool: " + bare.Text);
+            if (!bare.Text.Contains("-32601", StringComparison.Ordinal)) throw new InvalidOperationException("A bare whoami call should return -32601 (method not found), got " + (int)bare.StatusCode + ": " + bare.Text);
+
+            RawResponse viaTools = await SendRawAsync(client, ctx.Harness.AccessKey, session, "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"whoami\",\"arguments\":{}}}").ConfigureAwait(false);
+            if (viaTools.StatusCode != HttpStatusCode.OK || !viaTools.Text.Contains("ten_default", StringComparison.Ordinal)) throw new InvalidOperationException("whoami through tools/call should succeed: " + viaTools.Text);
+        }
+
+        private static async Task ToolsCallUnauthorizedAsync()
+        {
+            using McpContext ctx = await McpContext.StartAsync().ConfigureAwait(false);
+            using HttpClient client = new HttpClient { BaseAddress = new Uri("http://127.0.0.1:" + ctx.McpPort) };
+
+            RawResponse call = await SendRawAsync(client, null, null, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"whoami\",\"arguments\":{}}}").ConfigureAwait(false);
+            if (call.StatusCode != HttpStatusCode.Unauthorized) throw new InvalidOperationException("tools/call without credentials should be rejected with 401, got " + (int)call.StatusCode + ": " + call.Text);
+
+            Dictionary<string, object?> callParams = new Dictionary<string, object?> { { "name", "whoami" }, { "arguments", new Dictionary<string, object?>() } };
+            using JsonDocument? rejected = await SendStatelessAsync(client, null, "tools/call", 2, callParams, "whoami", HttpStatusCode.Unauthorized).ConfigureAwait(false);
+        }
+
+        private static async Task EndpointSchemaDeclaresIdsAsync()
+        {
+            using McpContext ctx = await McpContext.StartAsync().ConfigureAwait(false);
+            using HttpClient client = new HttpClient { BaseAddress = new Uri("http://127.0.0.1:" + ctx.McpPort) };
+
+            using JsonDocument tools = await SendStatelessAsync(client, ctx.Harness.AccessKey, "tools/list", 1, null, null, HttpStatusCode.OK).ConfigureAwait(false)
+                ?? throw new InvalidOperationException("Stateless request returned no body.");
+            foreach (JsonElement tool in tools.RootElement.GetProperty("result").GetProperty("tools").EnumerateArray())
+            {
+                string name = tool.GetProperty("name").GetString() ?? string.Empty;
+                JsonElement schema = tool.GetProperty("inputSchema");
+                if (!schema.TryGetProperty("required", out JsonElement required)) continue;
+                JsonElement properties = schema.GetProperty("properties");
+                foreach (JsonElement field in required.EnumerateArray())
+                {
+                    if (!properties.TryGetProperty(field.GetString() ?? string.Empty, out _)) throw new InvalidOperationException(name + " requires '" + field.GetString() + "' but its schema does not declare it: " + schema.GetRawText());
+                }
+            }
+        }
+
+        private static readonly string[] _ExpectedTools = new[]
+        {
+            "whoami", "instructions", "guide",
+            "scope_enumerate", "scope_create", "scope_read", "scope_update", "scope_delete",
+            "category_enumerate", "category_create", "category_read", "category_update", "category_delete",
+            "memory_enumerate", "memory_read", "memory_upsert", "memory_search", "memory_delete",
+            "endpoint_enumerate", "endpoint_read", "endpoint_create", "endpoint_update", "endpoint_delete", "endpoint_health",
+            "chat",
+            "collection_enumerate", "collection_read", "collection_create", "collection_delete",
+            "instruction_create", "instruction_update", "instruction_delete"
+        };
+
+        private static void RequireExactTools(JsonElement result, string label)
+        {
+            HashSet<string> actual = new HashSet<string>(StringComparer.Ordinal);
+            foreach (JsonElement tool in result.GetProperty("tools").EnumerateArray()) actual.Add(tool.GetProperty("name").GetString() ?? string.Empty);
+
+            foreach (string tool in _ExpectedTools)
+            {
+                if (!actual.Contains(tool)) throw new InvalidOperationException(label + " is missing the '" + tool + "' tool (REST parity gap): " + result.GetRawText());
+            }
+
+            HashSet<string> extra = new HashSet<string>(actual, StringComparer.Ordinal);
+            extra.ExceptWith(_ExpectedTools);
+            if (extra.Count > 0) throw new InvalidOperationException(label + " publishes tools Isis does not register: " + string.Join(", ", extra));
+        }
+
+        private static bool IsFailure(RawResponse response)
+        {
+            if (response.StatusCode != HttpStatusCode.OK) return true;
+            using JsonDocument doc = JsonDocument.Parse(response.Text);
+            if (doc.RootElement.TryGetProperty("error", out _)) return true;
+            return doc.RootElement.TryGetProperty("result", out JsonElement result)
+                && result.TryGetProperty("isError", out JsonElement isError)
+                && isError.ValueKind == JsonValueKind.True;
+        }
+
+        private static async Task<string?> InitializeAsync(HttpClient client, string accessKey)
+        {
+            RawResponse init = await SendRawAsync(client, accessKey, null, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"clientInfo\":{\"name\":\"t\",\"version\":\"1\"}}}").ConfigureAwait(false);
+            if (init.StatusCode != HttpStatusCode.OK) throw new InvalidOperationException("initialize returned " + (int)init.StatusCode + ": " + init.Text);
+            return init.SessionId;
+        }
+
+        private static async Task<RawResponse> SendRawAsync(HttpClient client, string? accessKey, string? session, string body)
+        {
+            using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, "/mcp");
+            if (accessKey != null) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessKey);
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
+            if (!string.IsNullOrEmpty(session)) request.Headers.Add("Mcp-Session-Id", session);
+            request.Content = new StringContent(body, Encoding.UTF8, "application/json");
+
+            HttpResponseMessage response = await client.SendAsync(request).ConfigureAwait(false);
+            string text = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+            string? sessionId = response.Headers.TryGetValues("Mcp-Session-Id", out IEnumerable<string>? ids) ? System.Linq.Enumerable.FirstOrDefault(ids) : session;
+            return new RawResponse(response.StatusCode, text, sessionId);
         }
 
         private static async Task EndpointCrudAsync()
@@ -618,6 +790,22 @@ namespace Test.Shared
         #endregion
 
         #region Private-Methods-Envelope
+
+        private readonly struct RawResponse
+        {
+            internal RawResponse(HttpStatusCode statusCode, string text, string? sessionId)
+            {
+                StatusCode = statusCode;
+                Text = text;
+                SessionId = sessionId;
+            }
+
+            internal HttpStatusCode StatusCode { get; }
+
+            internal string Text { get; }
+
+            internal string? SessionId { get; }
+        }
 
         private readonly struct Envelope
         {

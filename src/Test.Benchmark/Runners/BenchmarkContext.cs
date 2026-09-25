@@ -126,6 +126,14 @@ namespace Test.Benchmark.Runners
                     ["maxInputTokens"] = maxInputTokens,
                     ["timeoutMs"] = 120000
                 };
+
+                string? embeddingKey = source.GetOptional("embedding-api-key");
+                if (!string.IsNullOrEmpty(embeddingKey))
+                {
+                    definition["authType"] = "BearerToken";
+                    definition["authSecret"] = embeddingKey;
+                }
+
                 EmbeddingEndpointId = await Client.EnsureEndpointAsync(definition, token).ConfigureAwait(false);
             }
 
@@ -144,8 +152,15 @@ namespace Test.Benchmark.Runners
                     ["baseUrl"] = rerankUrl,
                     ["model"] = rerankModel,
                     ["timeoutMs"] = 120000,
-                    ["healthCheckUrl"] = "/health"
+                    ["healthCheckUrl"] = string.Equals(rerankFormat, "Tei", StringComparison.OrdinalIgnoreCase) ? "/health" : "/"
                 };
+
+                string? rerankKey = source.GetOptional("rerank-api-key");
+                if (!string.IsNullOrEmpty(rerankKey))
+                {
+                    rerank["authType"] = "BearerToken";
+                    rerank["authSecret"] = rerankKey;
+                }
                 RerankEndpointId = await Client.EnsureEndpointAsync(rerank, token).ConfigureAwait(false);
                 Environment.Rerank = rerankFormat + " " + rerankModel + " @ " + rerankUrl;
             }

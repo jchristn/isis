@@ -18,7 +18,7 @@ All notable changes to Isis are documented here. This project adheres to
   Chat labels outdated memories for the model.
 - **Rerank endpoints.** A new endpoint kind, `Rerank` (`rep_` ids), with the `Tei` (Hugging Face Text Embeddings
   Inference) and `Cohere` (Cohere-compatible, also vLLM) API formats. A scope can name a `rerankEndpointId`, how many
-  `rerankCandidates` to score (default 20), and a `rerankMinScore` cutoff (migration `2026-09-24-scope-rerank`).
+  `rerankCandidates` to score (default 10), and a `rerankMinScore` cutoff (migration `2026-09-24-scope-rerank`).
   Searches in the scope are reranked by default (`rerank: false` opts out) and hits carry `rerankScore`.
 - **Relevance cutoff.** `minRerankScore` on a search (or the scope's `rerankMinScore`) drops reranked hits below
   it, so a question with no relevant memory returns no hits. When that happens in chat, the model is grounded on no
@@ -51,6 +51,15 @@ All notable changes to Isis are documented here. This project adheres to
 - **Voltaic 1.1.0.** The MCP server moves from Voltaic 0.6.1 to 1.1.0, which fixes Claude Code 2.1.x seeing no Isis
   tools (it uses `server/discover` and the stateless `2026-07-28` revision). Regression cases were added to the MCP
   suite.
+- **Voltaic 2.0.0.** The MCP server moves to Voltaic 2.0.0. `tools/list` now returns only the 32 Isis tools: the
+  Voltaic demo tools `ping`, `echo`, `getTime`, and `getSessions` are gone (`getSessions` disclosed every caller's
+  `Mcp-Session-Id`). The protocol `ping` returns `{}` (`{"resultType":"complete"}` under `2026-07-28`) instead of
+  `"pong"`, and still needs no credentials. A tool can no longer be called as a bare JSON-RPC method; use
+  `tools/call`. MCP clients that called the removed tools or read `"pong"` need updating. New MCP suite cases cover
+  the exact tool list, the `ping` result on both revisions, rejection of the removed tools and of bare tool calls,
+  and unauthenticated `tools/call`.
+- **Dependencies.** Microsoft.Data.SqlClient 7.1.0, Microsoft.Data.Sqlite.Core 10.0.12, MySqlConnector 2.6.2,
+  Watson 7.2.0, and OpenTelemetry 1.19.x.
 - **Chat grounds on the whole best-matching chunk** instead of a 240-character snippet. Answer accuracy on the
   isis-live benchmark rose from 0.68 to 0.96.
 - **Hybrid search runs its vector and text legs in parallel**, and a multi-chunk memory's chunks are embedded
@@ -59,6 +68,8 @@ All notable changes to Isis are documented here. This project adheres to
 
 ### Fixed
 
+- **`endpoint_create` and `endpoint_update` MCP schemas** now declare `tenantId` and `endpointId`, which they
+  required but did not list as properties.
 - **`scope_update` over MCP no longer clears scope settings.** It sent only the name and description to a
   full-replace `PUT`, which dropped the embedding endpoint and chunking settings. It now reads the scope and changes
   only the fields passed.

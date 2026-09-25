@@ -16,6 +16,7 @@ namespace Test.Shared
     using Isis.Core.Recall;
     using Isis.Core.Stores;
     using Isis.Server.Services;
+    using TextChunker.Tokenization;
     using Touchstone.Core;
 
     /// <summary>
@@ -39,7 +40,7 @@ namespace Test.Shared
                 new List<TestCaseDescriptor>
                 {
                     TestCase.Sync("refinement", "query-new-defaults", "MemorySearchQuery: new options default off, clamp, and survive Clone", QueryNewDefaults),
-                    TestCase.Sync("refinement", "scope-rerank-defaults", "Scope: rerank settings default to none, 20 candidates, no minimum, and validate", ScopeRerankDefaults),
+                    TestCase.Sync("refinement", "scope-rerank-defaults", "Scope: rerank settings default to none, 10 candidates, no minimum, and validate", ScopeRerankDefaults),
                     TestCase.Async("refinement", "scope-rerank-round-trip", "Scope rerank settings persist through the database", ScopeRerankRoundTripAsync),
                     TestCase.Async("refinement", "rerank-endpoint-prefix", "A Rerank endpoint gets a rep_ id", RerankEndpointPrefixAsync),
                     TestCase.Async("refinement", "migration-005-adds-columns", "Migration 005 adds the supersession columns to an older memories table", Migration005AddsColumnsAsync),
@@ -61,6 +62,9 @@ namespace Test.Shared
                     TestCase.Sync("refinement", "diversify-validates", "Diversify rejects out-of-range arguments", DiversifyValidates),
                     TestCase.Async("refinement", "rerank-tei-request-and-order", "RerankService (Tei): posts query and texts to /rerank and maps scores back to input order", RerankTeiAsync),
                     TestCase.Async("refinement", "rerank-cohere-request-and-order", "RerankService (Cohere): posts to /v1/rerank and reads relevance_score", RerankCohereAsync),
+                    TestCase.Async("refinement", "rerank-chat-ollama", "RerankService (chat model, Ollama): prompts once and maps 0-10 scores to 0-1", RerankChatOllamaAsync),
+                    TestCase.Async("refinement", "rerank-chat-openai", "RerankService (chat model, OpenAI): reads choices and tolerates text around the JSON", RerankChatOpenAiAsync),
+                    TestCase.Async("refinement", "rerank-chat-bad-count", "RerankService (chat model): a wrong number of scores is an error", RerankChatBadCountAsync),
                     TestCase.Async("refinement", "rerank-unsupported-format", "RerankService rejects formats without a rerank API", RerankUnsupportedFormatAsync),
                     TestCase.Async("refinement", "rerank-error-status", "RerankService surfaces an endpoint error", RerankErrorStatusAsync),
                     TestCase.Async("refinement", "search-rerank-reorders", "Search: a scope with a rerank endpoint reorders hits by rerank score", SearchRerankReordersAsync),
@@ -72,7 +76,16 @@ namespace Test.Shared
                     TestCase.Async("refinement", "ttl-cache-hit-and-expiry", "TtlCache serves within its time to live and reloads after", TtlCacheHitAndExpiryAsync),
                     TestCase.Async("refinement", "ttl-cache-invalidation-wins", "TtlCache: a load that raced an invalidation is not cached", TtlCacheInvalidationWinsAsync),
                     TestCase.Async("refinement", "lookup-cache-invalidate-for-write", "LookupCache: writes to scopes invalidate cached scopes; reads and memory writes do not", LookupCacheInvalidateForWriteAsync),
-                    TestCase.Async("refinement", "lookup-cache-disabled", "LookupCache: disabled reads the database every time", LookupCacheDisabledAsync)
+                    TestCase.Async("refinement", "lookup-cache-disabled", "LookupCache: disabled reads the database every time", LookupCacheDisabledAsync),
+                    TestCase.Async("refinement", "retry-transient-then-success", "TransientRetryHandler: retries 429, 502, and 503, resending the same body", RetryTransientThenSuccessAsync),
+                    TestCase.Async("refinement", "retry-gives-up", "TransientRetryHandler: returns the last transient response after MaxRetries", RetryGivesUpAsync),
+                    TestCase.Async("refinement", "retry-ignores-other-errors", "TransientRetryHandler: does not retry a 400 or 500", RetryIgnoresOtherErrorsAsync),
+                    TestCase.Sync("refinement", "retry-validates", "TransientRetryHandler rejects out-of-range settings", RetryValidates),
+                    TestCase.Sync("refinement", "prefix-registry", "EmbeddingPrefixRegistry: nomic gets search prefixes, all-minilm none", PrefixRegistry),
+                    TestCase.Async("refinement", "embedding-sends-prefix", "EmbeddingService prepends the model's query or document prefix", EmbeddingSendsPrefixAsync),
+                    TestCase.Async("refinement", "chunk-default-fraction", "Chunker: default chunks use DefaultChunkFraction of the budget; ChunkMaxTokens overrides", ChunkDefaultFractionAsync),
+                    TestCase.Async("refinement", "embedding-unavailable-exception", "EmbeddingService reports a 429 as ModelEndpointUnavailableException (mapped to 503)", EmbeddingUnavailableExceptionAsync),
+                    TestCase.Sync("refinement", "chunk-defaults-validate", "Chunker: DefaultChunkFraction and DefaultChunkMaxTokens validate", ChunkDefaultsValidate)
                 });
         }
 
@@ -166,7 +179,7 @@ namespace Test.Shared
         private static void ScopeRerankDefaults()
         {
             Scope scope = new Scope();
-            TestCase.Require(scope.RerankEndpointId == null && scope.RerankCandidates == 20 && scope.RerankMinScore == null, "Scope rerank settings should default to none, 20, null.");
+            TestCase.Require(scope.RerankEndpointId == null && scope.RerankCandidates == 10 && scope.RerankMinScore == null, "Scope rerank settings should default to none, 10, null.");
             TestCase.Throws<ArgumentOutOfRangeException>(() => scope.RerankCandidates = 0, "RerankCandidates 0 should be rejected.");
             TestCase.Throws<ArgumentOutOfRangeException>(() => scope.RerankCandidates = 101, "RerankCandidates above 100 should be rejected.");
         }
@@ -226,7 +239,7 @@ namespace Test.Shared
             Tenant tenant = await t.Db.Tenants.CreateAsync(new Tenant { Name = "Acme" }).ConfigureAwait(false);
             Scope scope = await t.Db.Scopes.CreateAsync(new Scope { TenantId = tenant.Id, Name = "p", StoreProvider = StoreProviderEnum.Filesystem }).ConfigureAwait(false);
             Scope? read = await t.Db.Scopes.ReadAsync(tenant.Id, scope.Id).ConfigureAwait(false);
-            TestCase.Require(read != null && read.RerankCandidates == 20, "A scope written after migration 006 should read back with the default candidates.");
+            TestCase.Require(read != null && read.RerankCandidates == 10, "A scope written after migration 006 should read back with the default candidates.");
         }
 
         #endregion
@@ -535,11 +548,41 @@ namespace Test.Shared
             TestCase.Require(body.Contains("\"documents\"", StringComparison.Ordinal) && body.Contains("\"model\":\"ms-marco\"", StringComparison.Ordinal), "Cohere should send documents and the model.");
         }
 
+        private static async Task RerankChatOllamaAsync()
+        {
+            string reply = JsonSerializer.Serialize(new { message = new { role = "assistant", content = "{\"scores\": [2, 9, 12]}" }, done = true });
+            using StubResponseHandler handler = new StubResponseHandler(reply);
+            RerankService service = new RerankService(new HttpClient(handler));
+            double[] scores = await service.RerankAsync(RerankEndpoint(ApiFormatEnum.Ollama), "cache ttl", new List<string> { "first", "second", "third" }).ConfigureAwait(false);
+            TestCase.Require(scores.Length == 3 && scores[0] == 0.2 && scores[1] == 0.9 && scores[2] == 1.0, "Chat scores should be divided by 10 and clamped to 1.");
+            TestCase.Require(handler.LastRequestUri != null && handler.LastRequestUri.AbsolutePath == "/api/chat" && handler.RequestCount == 1, "Ollama chat reranking should make one /api/chat call.");
+            string body = handler.LastRequestBody ?? string.Empty;
+            TestCase.Require(body.Contains("Passage 3", StringComparison.Ordinal) && body.Contains("cache ttl", StringComparison.Ordinal) && body.Contains("\"format\":\"json\"", StringComparison.Ordinal), "The prompt should number every passage, include the query, and ask for JSON.");
+        }
+
+        private static async Task RerankChatOpenAiAsync()
+        {
+            string reply = JsonSerializer.Serialize(new { choices = new[] { new { message = new { role = "assistant", content = "Here you go: [7, 1]" } } } });
+            using StubResponseHandler handler = new StubResponseHandler(reply);
+            RerankService service = new RerankService(new HttpClient(handler));
+            double[] scores = await service.RerankAsync(RerankEndpoint(ApiFormatEnum.OpenAI), "q", new List<string> { "a", "b" }).ConfigureAwait(false);
+            TestCase.Require(scores[0] == 0.7 && scores[1] == 0.1, "A bare array inside text should parse.");
+            TestCase.Require(handler.LastRequestUri != null && handler.LastRequestUri.AbsolutePath == "/v1/chat/completions", "OpenAI chat reranking should call /v1/chat/completions.");
+        }
+
+        private static async Task RerankChatBadCountAsync()
+        {
+            string reply = JsonSerializer.Serialize(new { message = new { role = "assistant", content = "{\"scores\": [5]}" } });
+            using StubResponseHandler handler = new StubResponseHandler(reply);
+            RerankService service = new RerankService(new HttpClient(handler));
+            await TestCase.ThrowsAsync<InvalidOperationException>(() => service.RerankAsync(RerankEndpoint(ApiFormatEnum.Ollama), "q", new List<string> { "a", "b" }), "One score for two passages should throw.").ConfigureAwait(false);
+        }
+
         private static async Task RerankUnsupportedFormatAsync()
         {
             using StubResponseHandler handler = new StubResponseHandler("[]");
             RerankService service = new RerankService(new HttpClient(handler));
-            await TestCase.ThrowsAsync<NotSupportedException>(() => service.RerankAsync(RerankEndpoint(ApiFormatEnum.Ollama), "q", new List<string> { "a" }), "Ollama has no rerank API.").ConfigureAwait(false);
+            await TestCase.ThrowsAsync<NotSupportedException>(() => service.RerankAsync(RerankEndpoint(ApiFormatEnum.Gemini), "q", new List<string> { "a" }), "Gemini has no rerank API here.").ConfigureAwait(false);
         }
 
         private static async Task RerankErrorStatusAsync()
@@ -672,6 +715,129 @@ namespace Test.Shared
             TestCase.Require(!none.Contains("SimilarMemories", StringComparison.OrdinalIgnoreCase), "similarMemories should be omitted when null.");
             string some = JsonSerializer.Serialize(new Memory { Slug = "a", SimilarMemories = new List<SimilarMemory> { new SimilarMemory { Slug = "b", Similarity = 0.93 } } });
             TestCase.Require(some.Contains("SimilarMemories", StringComparison.OrdinalIgnoreCase), "similarMemories should be serialized when present.");
+        }
+
+        #endregion
+
+        #region Private-Methods-Round5
+
+        private static TransientRetryHandler Retry(HttpMessageHandler inner, int maxRetries = 3)
+        {
+            return new TransientRetryHandler(inner) { MaxRetries = maxRetries, BaseDelay = TimeSpan.FromMilliseconds(5), MaxDelay = TimeSpan.FromMilliseconds(20) };
+        }
+
+        private static async Task RetryTransientThenSuccessAsync()
+        {
+            SequenceResponseHandler inner = new SequenceResponseHandler(new List<KeyValuePair<HttpStatusCode, string>>
+            {
+                new KeyValuePair<HttpStatusCode, string>(HttpStatusCode.TooManyRequests, "{}"),
+                new KeyValuePair<HttpStatusCode, string>(HttpStatusCode.BadGateway, "{}"),
+                new KeyValuePair<HttpStatusCode, string>(HttpStatusCode.ServiceUnavailable, "{}"),
+                new KeyValuePair<HttpStatusCode, string>(HttpStatusCode.OK, "{\"ok\":true}")
+            });
+            using HttpClient client = new HttpClient(Retry(inner));
+            HttpResponseMessage response = await client.PostAsync("http://127.0.0.1:9/x", new StringContent("{\"q\":1}")).ConfigureAwait(false);
+            TestCase.Require(response.StatusCode == HttpStatusCode.OK, "Three transient failures within MaxRetries should end in the success.");
+            TestCase.Require(inner.Bodies.Count == 4 && inner.Bodies.All(b => b == "{\"q\":1}"), "Every attempt should resend the same body.");
+        }
+
+        private static async Task RetryGivesUpAsync()
+        {
+            SequenceResponseHandler inner = new SequenceResponseHandler(new List<KeyValuePair<HttpStatusCode, string>> { new KeyValuePair<HttpStatusCode, string>(HttpStatusCode.TooManyRequests, "{}") });
+            using HttpClient client = new HttpClient(Retry(inner, 2));
+            HttpResponseMessage response = await client.PostAsync("http://127.0.0.1:9/x", new StringContent("{}")).ConfigureAwait(false);
+            TestCase.Require(response.StatusCode == HttpStatusCode.TooManyRequests && inner.Bodies.Count == 3, "With MaxRetries 2 the handler should make 3 attempts, then return the 429.");
+        }
+
+        private static async Task RetryIgnoresOtherErrorsAsync()
+        {
+            foreach (HttpStatusCode status in new[] { HttpStatusCode.BadRequest, HttpStatusCode.InternalServerError })
+            {
+                SequenceResponseHandler inner = new SequenceResponseHandler(new List<KeyValuePair<HttpStatusCode, string>> { new KeyValuePair<HttpStatusCode, string>(status, "{}") });
+                using HttpClient client = new HttpClient(Retry(inner));
+                HttpResponseMessage response = await client.PostAsync("http://127.0.0.1:9/x", new StringContent("{}")).ConfigureAwait(false);
+                TestCase.Require(response.StatusCode == status && inner.Bodies.Count == 1, (int)status + " should not be retried.");
+            }
+        }
+
+        private static void RetryValidates()
+        {
+            using StubResponseHandler stub = new StubResponseHandler("{}");
+            TransientRetryHandler handler = new TransientRetryHandler(stub);
+            TestCase.Require(handler.MaxRetries == 3 && handler.BaseDelay == TimeSpan.FromMilliseconds(500) && handler.MaxDelay == TimeSpan.FromSeconds(10), "Retry defaults should be 3, 500 ms, 10 s.");
+            TestCase.Throws<ArgumentOutOfRangeException>(() => handler.MaxRetries = 11, "MaxRetries above 10 should be rejected.");
+            TestCase.Throws<ArgumentOutOfRangeException>(() => handler.BaseDelay = TimeSpan.Zero, "A zero BaseDelay should be rejected.");
+            TestCase.Require(TransientRetryHandler.IsTransient(HttpStatusCode.TooManyRequests) && !TransientRetryHandler.IsTransient(HttpStatusCode.InternalServerError), "Only 429, 502, and 503 are transient.");
+        }
+
+        private static void PrefixRegistry()
+        {
+            TestCase.Require(EmbeddingPrefixRegistry.For("nomic-embed-text:latest", EmbeddingPurposeEnum.Query) == "search_query: ", "nomic queries should get search_query.");
+            TestCase.Require(EmbeddingPrefixRegistry.For("NOMIC-EMBED-TEXT", EmbeddingPurposeEnum.Document) == "search_document: ", "The match should ignore case.");
+            TestCase.Require(EmbeddingPrefixRegistry.For("all-minilm", EmbeddingPurposeEnum.Query) == string.Empty, "all-minilm takes no prefix.");
+            TestCase.Require(EmbeddingPrefixRegistry.For(null, EmbeddingPurposeEnum.Query) == string.Empty, "A missing model takes no prefix.");
+        }
+
+        private static async Task EmbeddingSendsPrefixAsync()
+        {
+            using StubResponseHandler handler = new StubResponseHandler("{\"embedding\":[0.1,0.2]}");
+            EmbeddingService service = new EmbeddingService(new HttpClient(handler));
+            ModelEndpoint nomic = new ModelEndpoint { Name = "n", Kind = EndpointKindEnum.Embedding, ApiFormat = ApiFormatEnum.Ollama, BaseUrl = "http://127.0.0.1:9", Model = "nomic-embed-text" };
+            await service.EmbedAsync(nomic, "where is the cache ttl", default, EmbeddingPurposeEnum.Query).ConfigureAwait(false);
+            TestCase.Require((handler.LastRequestBody ?? string.Empty).Contains("search_query: where is the cache ttl", StringComparison.Ordinal), "A nomic query should be sent with search_query.");
+            await service.EmbedAsync(nomic, "the cache ttl is 5 minutes").ConfigureAwait(false);
+            TestCase.Require((handler.LastRequestBody ?? string.Empty).Contains("search_document: the cache ttl", StringComparison.Ordinal), "Stored content should default to search_document.");
+            ModelEndpoint minilm = new ModelEndpoint { Name = "m", Kind = EndpointKindEnum.Embedding, ApiFormat = ApiFormatEnum.Ollama, BaseUrl = "http://127.0.0.1:9", Model = "all-minilm" };
+            await service.EmbedAsync(minilm, "plain", default, EmbeddingPurposeEnum.Query).ConfigureAwait(false);
+            TestCase.Require((handler.LastRequestBody ?? string.Empty).Contains("\"prompt\":\"plain\"", StringComparison.Ordinal), "all-minilm should be sent without a prefix.");
+        }
+
+        private static async Task ChunkDefaultFractionAsync()
+        {
+            ModelEndpoint endpoint = new ModelEndpoint { Name = "m", Kind = EndpointKindEnum.Embedding, ApiFormat = ApiFormatEnum.Ollama, BaseUrl = "http://127.0.0.1:9", Model = "all-minilm" };
+            string body = string.Join(" ", Enumerable.Range(0, 900).Select(i => "word" + (i % 37)));
+            BertWordPieceTokenizerAdapter wordPiece = new BertWordPieceTokenizerAdapter();
+            int budget = 254 - Math.Max(2, (int)Math.Ceiling(254 * MemoryChunker.TokenizerMarginFraction));
+            int expected = (int)Math.Floor(budget * MemoryChunker.DefaultChunkFraction);
+
+            IReadOnlyList<MemoryChunk> chunks = await MemoryChunker.ChunkAsync(new Scope { ChunkingMode = ChunkingModeEnum.OnOverflow }, endpoint, body).ConfigureAwait(false);
+            int largest = chunks.Max(c => wordPiece.CountTokens(c.Text));
+            TestCase.Require(chunks.Count > 1 && largest <= expected, "Default chunks should stay at or under " + expected + " tokens, largest was " + largest + ".");
+            TestCase.Require(largest >= expected - 16, "Default chunks should be filled close to " + expected + " tokens, largest was " + largest + ".");
+
+            IReadOnlyList<MemoryChunk> explicitChunks = await MemoryChunker.ChunkAsync(new Scope { ChunkingMode = ChunkingModeEnum.OnOverflow, ChunkMaxTokens = 240 }, endpoint, body).ConfigureAwait(false);
+            int explicitLargest = explicitChunks.Max(c => wordPiece.CountTokens(c.Text));
+            TestCase.Require(explicitLargest > expected && explicitLargest <= 240, "An explicit ChunkMaxTokens should override the default fraction, largest was " + explicitLargest + ".");
+        }
+
+        private static async Task EmbeddingUnavailableExceptionAsync()
+        {
+            ModelEndpoint endpoint = new ModelEndpoint { Name = "m", Kind = EndpointKindEnum.Embedding, ApiFormat = ApiFormatEnum.Ollama, BaseUrl = "http://127.0.0.1:9", Model = "all-minilm" };
+            using StubResponseHandler busy = new StubResponseHandler("{}", HttpStatusCode.TooManyRequests);
+            EmbeddingService service = new EmbeddingService(new HttpClient(busy));
+            await TestCase.ThrowsAsync<ModelEndpointUnavailableException>(() => service.EmbedAsync(endpoint, "x"), "A 429 should raise ModelEndpointUnavailableException.").ConfigureAwait(false);
+
+            using StubResponseHandler broken = new StubResponseHandler("{}", HttpStatusCode.InternalServerError);
+            EmbeddingService other = new EmbeddingService(new HttpClient(broken));
+            try
+            {
+                await other.EmbedAsync(endpoint, "x").ConfigureAwait(false);
+                throw new InvalidOperationException("A 500 should throw.");
+            }
+            catch (ModelEndpointUnavailableException)
+            {
+                throw new InvalidOperationException("A 500 is not a capacity problem and should not raise ModelEndpointUnavailableException.");
+            }
+            catch (InvalidOperationException e) when (e.Message.Contains("returned 500", StringComparison.Ordinal))
+            {
+            }
+        }
+
+        private static void ChunkDefaultsValidate()
+        {
+            TestCase.Require(MemoryChunker.DefaultChunkFraction == 0.75 && MemoryChunker.DefaultChunkMaxTokens == 256, "Chunk defaults should be 0.75 and 256.");
+            TestCase.Throws<ArgumentOutOfRangeException>(() => MemoryChunker.DefaultChunkFraction = 0.05, "A fraction below 0.1 should be rejected.");
+            TestCase.Throws<ArgumentOutOfRangeException>(() => MemoryChunker.DefaultChunkMaxTokens = 8, "A cap below 16 should be rejected.");
         }
 
         #endregion

@@ -258,3 +258,43 @@ New items found in round 3:
 | Stored vectors in RecallDB search results through the SDK | Lets diversity (#14) and the similarity check compare embeddings of whole memories instead of words and first chunks |
 | Replacement detection that goes beyond similarity (for example, ask the chat model whether a flagged memory is superseded) | Similarity alone cannot separate replacements from related memories with all-minilm |
 | Retry on 429 from inference and judge endpoints | Shared remote endpoints reject requests at capacity; chat currently returns 502 |
+
+## Round 4 findings and the updated table
+
+Round 4 moved to TextChunker 0.3.1 (span-based chunking and WordPiece counts that match the embedding runtime) and
+removed the Isis workarounds it made unnecessary. Atlas Hybrid nDCG@10 fell from 0.809 to 0.802, with detail
+(0.933 to 0.880), category (0.982 to 0.945), and multi (0.810 to 0.783) questions dropping. The cause is not a
+chunking defect. TextChunker 0.2.2 undercounted tokens, so 53 of Atlas's 80 multi-chunk memories had a chunk
+rejected by Ollama in round 3 and were re-chunked by Isis's fallback at 75% of the budget. Round 3 therefore stored
+smaller chunks by accident, and 0.3.1, whose chunks all fit the first time (0 of 81 rejected), stores chunks of about
+240 tokens instead of about 190. Setting the chunk budget to 190 tokens on purpose restores and exceeds round 3:
+
+| Atlas Hybrid nDCG@10 | Round 3 | Round 4 | Round 4, 190-token chunks | Round 4, 128-token chunks |
+|---|---|---|---|---|
+| category | 0.982 | 0.945 | **0.982** | 0.945 |
+| confusable | 0.863 | 0.868 | 0.879 | 0.888 |
+| detail | 0.933 | 0.880 | **0.953** | 0.898 |
+| lexical | 0.746 | 0.754 | **0.776** | 0.732 |
+| multi | 0.810 | 0.783 | **0.822** | 0.796 |
+| paraphrase | 0.707 | 0.726 | 0.717 | 0.684 |
+| superseded | 0.802 | 0.800 | **0.841** | 0.856 |
+| **Overall** | 0.809 | 0.802 | **0.827** | 0.799 |
+
+The updated table below keeps every open item from the original table and adds what rounds 3 and 4 found, scored the
+same way (value and simplicity 1 to 10, score is their sum, ties broken by value).
+
+| Rank | Fix | Weak area | Value | Simplicity | Score | Source |
+|---|---|---|---|---|---|---|
+| 1 | Default chunk budget below the model limit (about 75% for all-minilm), chosen by a sweep on all datasets; `chunkMaxTokens` still overrides | Detail, multi, category (the round-4 regression) | 7 | 9 | 16 | Round 4 regression |
+| 2 | Stronger default embedding model (choose by benchmark; needs a re-embed) | Paraphrase | 8 | 7 | 15 | Original #2 |
+| 3 | Retry with backoff on 429 and 503 from inference and judge endpoints | Reliability on shared endpoints | 4 | 8 | 12 | Round 3 |
+| 4 | Benchmark larger or better-calibrated rerankers for abstention (for example bge-reranker-base or -large) | No "nothing relevant" signal | 7 | 5 | 12 | Round 3 |
+| 5 | Cheaper reranking by default: fewer candidates (10), shorter passages, GPU-served reranker in the reference stack | Rerank latency (0.6 to 1.1 s on CPU) | 6 | 6 | 12 | Round 3 |
+| 6 | RecallDB single-call hybrid search (needs an SDK release that exposes the hybrid options) | Keyword latency | 6 | 5 | 11 | Original #15 |
+| 7 | Split multi-part questions into sub-queries with the chat model | Multi-memory | 6 | 4 | 10 | Original #16 |
+| 8 | Query expansion (search with a model-drafted hypothetical answer) | Paraphrase | 5 | 5 | 10 | Original #17 |
+| 9 | Replacement detection beyond similarity: ask the chat model whether a flagged similar memory is superseded, and offer the `supersedes` link | Superseded facts | 6 | 4 | 10 | Round 3 |
+| 10 | Stored vectors in RecallDB search results through the SDK, so diversity and the similarity check compare embeddings (whole memory, not first chunk) | Multi-memory, superseded | 4 | 4 | 8 | Round 3 |
+
+Item 1 should be measured on isis-live, SciFact, and LongMemEval before it becomes the default. LongMemEval's single
+preference-question drop in round 4 (8 questions) is covered by the same sweep.

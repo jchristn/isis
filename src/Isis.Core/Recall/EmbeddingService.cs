@@ -46,13 +46,17 @@ namespace Isis.Core.Recall
         /// <param name="endpoint">The embedding endpoint to call.</param>
         /// <param name="text">The text to embed.</param>
         /// <param name="token">Cancellation token.</param>
+        /// <param name="purpose">Whether the text is stored content or a search query. Models trained with task prefixes
+        /// (see <see cref="EmbeddingPrefixRegistry"/>) get the matching prefix. Default Document.</param>
         /// <returns>The embedding vector.</returns>
         /// <exception cref="ArgumentNullException">Thrown when endpoint or text is null.</exception>
+        /// <exception cref="ModelEndpointUnavailableException">Thrown when the endpoint is still at capacity or unavailable after retries.</exception>
         /// <exception cref="InvalidOperationException">Thrown when the endpoint returns an error or an unparseable response.</exception>
-        public async Task<float[]> EmbedAsync(ModelEndpoint endpoint, string text, CancellationToken token = default)
+        public async Task<float[]> EmbedAsync(ModelEndpoint endpoint, string text, CancellationToken token = default, EmbeddingPurposeEnum purpose = EmbeddingPurposeEnum.Document)
         {
             if (endpoint == null) throw new ArgumentNullException(nameof(endpoint));
             if (text == null) throw new ArgumentNullException(nameof(text));
+            text = EmbeddingPrefixRegistry.For(endpoint.Model, purpose) + text;
 
             string model = string.IsNullOrEmpty(endpoint.Model) ? "default" : endpoint.Model!;
             bool ollama = endpoint.ApiFormat == ApiFormatEnum.Ollama;
@@ -77,6 +81,7 @@ namespace Isis.Core.Recall
 
                 HttpResponseMessage response = await _HttpClient.SendAsync(request, cts.Token).ConfigureAwait(false);
                 string body = await response.Content.ReadAsStringAsync(cts.Token).ConfigureAwait(false);
+                if (TransientRetryHandler.IsTransient(response.StatusCode)) throw new ModelEndpointUnavailableException("Embedding endpoint is temporarily unavailable (" + (int)response.StatusCode + "): " + body, (int)response.StatusCode);
                 if (!response.IsSuccessStatusCode) throw new InvalidOperationException("Embedding endpoint returned " + (int)response.StatusCode + ": " + body);
 
                 return ParseVector(body, ollama);

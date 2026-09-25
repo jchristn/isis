@@ -109,7 +109,7 @@ CREATE TABLE IF NOT EXISTS scopes (
     createdutc TEXT NOT NULL,
     lastupdateutc TEXT NOT NULL,
     rerankendpointid TEXT,
-    rerankcandidates INTEGER NOT NULL DEFAULT 20,
+    rerankcandidates INTEGER NOT NULL DEFAULT 10,
     rerankminscore REAL
 );
 

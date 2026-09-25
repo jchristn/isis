@@ -139,12 +139,26 @@ namespace Test.Benchmark.Runners
                 };
             }
 
-            using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, _BaseUrl + path);
-            request.Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json");
-            if (!string.IsNullOrEmpty(_ApiKey)) request.Headers.Add("Authorization", "Bearer " + _ApiKey);
-            using HttpResponseMessage response = await _Http.SendAsync(request, token).ConfigureAwait(false);
-            string text = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
-            if (!response.IsSuccessStatusCode) throw new InvalidOperationException("Judge returned " + (int)response.StatusCode + ": " + text);
+            // Shared judge endpoints refuse requests at capacity (429) or while no backend is healthy (502/503); retry
+            // those with backoff instead of leaving the answer ungraded.
+            string text = string.Empty;
+            for (int attempt = 0; ; attempt++)
+            {
+                using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, _BaseUrl + path);
+                request.Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json");
+                if (!string.IsNullOrEmpty(_ApiKey)) request.Headers.Add("Authorization", "Bearer " + _ApiKey);
+                using HttpResponseMessage response = await _Http.SendAsync(request, token).ConfigureAwait(false);
+                text = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
+                int status = (int)response.StatusCode;
+                if ((status == 429 || status == 502 || status == 503) && attempt < 5)
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(1000 * Math.Pow(2, attempt)), token).ConfigureAwait(false);
+                    continue;
+                }
+
+                if (!response.IsSuccessStatusCode) throw new InvalidOperationException("Judge returned " + status + ": " + text);
+                break;
+            }
 
             JsonNode? parsed = JsonNode.Parse(text);
             if (ollama) return parsed?["message"]?["content"]?.GetValue<string>() ?? string.Empty;

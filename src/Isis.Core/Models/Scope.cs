@@ -105,7 +105,7 @@ namespace Isis.Core.Models
 
         /// <summary>
         /// How many retrieved candidates are sent to the reranker before the top results are kept. Minimum 1,
-        /// maximum 100, default 20. Never fewer than the query's topK.
+        /// maximum 100, default 10. Never fewer than the query's topK.
         /// </summary>
         public int RerankCandidates
         {
@@ -208,7 +208,7 @@ namespace Isis.Core.Models
         private int _Dimensionality = 0;
         private int _ChunkMaxTokens = 0;
         private int _ChunkOverlapTokens = 64;
-        private int _RerankCandidates = 20;
+        private int _RerankCandidates = 10;
 
         #endregion
 

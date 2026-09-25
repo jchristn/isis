@@ -235,7 +235,7 @@ namespace Isis.Core.Database.Sqlite.Implementations
             if (row.Table.Columns.Contains("rerankendpointid")) scope.RerankEndpointId = SqliteHelpers.NullIfEmpty(SqliteHelpers.GetString(row["rerankendpointid"]));
             if (row.Table.Columns.Contains("rerankcandidates"))
             {
-                int candidates = SqliteHelpers.GetInt(row["rerankcandidates"], 20);
+                int candidates = SqliteHelpers.GetInt(row["rerankcandidates"], 10);
                 scope.RerankCandidates = candidates < 1 ? 1 : (candidates > 100 ? 100 : candidates);
             }
 

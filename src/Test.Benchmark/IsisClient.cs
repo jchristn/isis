@@ -28,6 +28,11 @@ namespace Test.Benchmark
         /// </summary>
         public string BaseUrl { get; }
 
+        /// <summary>
+        /// Times an upsert answered 503 or 429 is resent, with backoff from 2 to 60 seconds. Default 6.
+        /// </summary>
+        public int UpsertRetries { get; set; } = 6;
+
         #endregion
 
         #region Private-Members
@@ -204,7 +209,15 @@ namespace Test.Benchmark
         /// <returns>The timed outcome, with any similar memories the server reported.</returns>
         public async Task<UpsertResponse> UpsertMemoryAsync(string scopeId, JsonObject memory, CancellationToken token)
         {
+            // A 503 or 429 means a model endpoint behind Isis was at capacity after Isis's own retries; wait longer and
+            // resend rather than recording a failed ingest. Elapsed time covers only the final attempt.
             TimedCall call = await TimedSendAsync(HttpMethod.Post, TenantPath("/scopes/" + scopeId + "/memories"), memory, token).ConfigureAwait(false);
+            for (int attempt = 0; (call.StatusCode == 503 || call.StatusCode == 429) && attempt < UpsertRetries; attempt++)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(Math.Min(60, 2 * Math.Pow(2, attempt))), token).ConfigureAwait(false);
+                call = await TimedSendAsync(HttpMethod.Post, TenantPath("/scopes/" + scopeId + "/memories"), memory, token).ConfigureAwait(false);
+            }
+
             UpsertResponse response = new UpsertResponse { StatusCode = call.StatusCode, ElapsedMs = call.ElapsedMs, Error = call.IsSuccess ? null : Truncate(call.Body) };
             if (call.IsSuccess && call.Body.Contains("similarMemories", StringComparison.Ordinal))
             {

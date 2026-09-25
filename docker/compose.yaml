@@ -132,6 +132,42 @@ services:
     restart: 'no'
 
   # ------------------------------------------------------------------
+  # Optional cross-encoder reranker (Hugging Face Text Embeddings Inference). Not started by default:
+  #   docker compose --profile rerank up -d        CPU image
+  #   docker compose --profile rerank-gpu up -d    NVIDIA GPU image (pick the TEI tag for your GPU generation)
+  # Then create a Rerank endpoint with apiFormat Tei and baseUrl http://rerank, and set it as a scope's
+  # rerankEndpointId. On CPU a reranked search takes roughly half a second to a second.
+  # ------------------------------------------------------------------
+  rerank:
+    container_name: 'isis-rerank'
+    networks:
+      default:
+        aliases: ['rerank']
+    image: 'ghcr.io/huggingface/text-embeddings-inference:cpu-1.8'
+    profiles: ['rerank']
+    command: ['--model-id', 'cross-encoder/ms-marco-MiniLM-L-6-v2']
+    volumes:
+      - isis-rerank-data:/data
+
+  rerank-gpu:
+    container_name: 'isis-rerank-gpu'
+    networks:
+      default:
+        aliases: ['rerank']
+    image: 'ghcr.io/huggingface/text-embeddings-inference:1.8'
+    profiles: ['rerank-gpu']
+    command: ['--model-id', 'cross-encoder/ms-marco-MiniLM-L-6-v2']
+    volumes:
+      - isis-rerank-data:/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # ------------------------------------------------------------------
   # Isis REST server (Isis.Server, Watson 7.1).
   # ------------------------------------------------------------------
   isis-server:
@@ -381,6 +417,7 @@ services:
 volumes:
   isis-postgres-data:
   isis-ollama-data:
+  isis-rerank-data:
   isis-prometheus-data:
   isis-tempo-data:
   isis-loki-data:

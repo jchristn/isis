@@ -232,7 +232,8 @@ namespace Test.Shared
             string header = "Ingest retries: how the ingest service handles failed batches and when it pages on-call";
             IReadOnlyList<MemoryChunk> chunks = await MemoryChunker.ChunkAsync(ChunkScope(ChunkingModeEnum.OnOverflow), MiniLm(), LongBody(), header, 1.0).ConfigureAwait(false);
             int largest = chunks.Max(c => wordPiece.CountTokens(c.EmbeddingText ?? c.Text));
-            TestCase.Require(largest <= 245, "Header plus chunk must stay within the auto-resolved all-minilm budget (<= 245), largest was " + largest + ".");
+            int cap = 254 - Math.Max(2, (int)Math.Ceiling(254 * MemoryChunker.TokenizerMarginFraction));
+            TestCase.Require(largest <= cap, "Header plus chunk must stay within the auto-resolved all-minilm budget (<= " + cap + "), largest was " + largest + ".");
         }
 
         private static async Task ChunkerHeaderTruncatedAsync()
@@ -243,9 +244,10 @@ namespace Test.Shared
             string embedded = chunks[0].EmbeddingText ?? string.Empty;
             string usedHeader = embedded.Substring(0, embedded.IndexOf("\n\n", StringComparison.Ordinal));
             int headerTokens = wordPiece.CountTokens(usedHeader);
-            TestCase.Require(headerTokens > 0 && headerTokens <= 245 / 4 + 1, "An oversized header should be truncated to about a quarter of the budget, got " + headerTokens + " tokens.");
+            int cap = 254 - Math.Max(2, (int)Math.Ceiling(254 * MemoryChunker.TokenizerMarginFraction));
+            TestCase.Require(headerTokens > 0 && headerTokens <= cap / 4 + 1, "An oversized header should be truncated to about a quarter of the budget, got " + headerTokens + " tokens.");
             int largest = chunks.Max(c => wordPiece.CountTokens(c.EmbeddingText ?? c.Text));
-            TestCase.Require(largest <= 245, "Chunks with a truncated header must still fit the budget, largest was " + largest + ".");
+            TestCase.Require(largest <= cap, "Chunks with a truncated header must still fit the budget, largest was " + largest + ".");
         }
 
         private static async Task ChunkerNoHeaderAsync()

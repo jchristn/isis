@@ -308,7 +308,7 @@ Route registrars: `HealthRoutes, AuthRoutes, TenantRoutes, UserRoutes, Credentia
 
 **Standalone `Exe`, Voltaic 0.6.1, Pattern A** (authenticate + proxy REST over `127.0.0.1`). Reference: Pneuma-Old `Pneuma.McpServer` (`McpAuthenticatedRequestContext.cs`) and AssistantHub `AssistantHub.McpServer` (Voltaic 0.6.1).
 
-**Host** (`IsisMcpServer.cs`): `new McpHttpServer(Mcp.Hostname, Mcp.Port, Mcp.RpcPath, Mcp.EventsPath, includeDefaultMethods:true, Mcp.McpPath)`; set `ServerName="Isis.McpServer"`, `AuthenticationHandler = AuthenticateAsync`, `RequestReceived += OnRequestReceived`. Transport = Streamable HTTP at `/mcp` (+ `/rpc`, `/events`). `includeDefaultMethods:true` auto-registers `ping`/`echo`/`getTime`/`getSessions`/`tools/list`/`tools/call`.
+**Host** (`IsisMcpServer.cs`): `new McpHttpServer(Mcp.Hostname, Mcp.Port, Mcp.RpcPath, Mcp.EventsPath, includeDiagnosticTools:false, mcpPath:Mcp.McpPath)`; set `ServerName="Isis.McpServer"`, `AuthenticationHandler = AuthenticateAsync`, `RequestReceived += OnRequestReceived`. Transport = Streamable HTTP at `/mcp` (+ `/rpc`, `/events`). Voltaic 2.x always registers the protocol methods (`initialize`, `ping`, `tools/list`, `tools/call`, ...); with diagnostic tools off, `tools/list` carries only the Isis tools.
 
 **Auth bridge:** Voltaic does not pass auth into handlers. Replicate Pneuma's bridge — set an `AsyncLocal<McpAuthenticatedRequestContext>` inside `AuthenticateAsync`, and use the `RequestReceived` event + a pending-context map keyed by tool+args so the correct tenant context is retrieved inside each handler under SSE. `McpAuthenticatedRequestContext` = `{ PrincipalId, PrincipalType, TenantId, ScopeId, BootstrapApiKeyAuthenticated, UseBearerToken, PresentedToken }`.
 

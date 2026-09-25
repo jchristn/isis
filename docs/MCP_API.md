@@ -90,8 +90,8 @@ When the REST call fails, `success` is `false`, `statusCode` carries the upstrea
 
 Isis exposes **32** MCP tools at parity with the tenant-scoped REST surface. Each tool proxies the
 REST route shown, forwarding the caller's credential; the write/CRUD tools accept the same fields as
-the corresponding REST request body. (Voltaic also auto-registers `ping`, `echo`, `getTime`, and
-`getSessions`.)
+the corresponding REST request body. `tools/list` returns only these tools; the MCP protocol `ping`
+method is answered with an empty result (`{}`) and needs no credentials.
 
 | Tool | REST route proxied | Purpose |
 |------|--------------------|---------|
@@ -279,7 +279,7 @@ Proxies `POST /v1.0/api/tenants/{tenantId}/scopes`.
 | `chunkMaxTokens` | integer | No | 0 | Per-chunk token budget (0 = use the embedding model's resolved budget) |
 | `chunkOverlapTokens` | integer | No | 64 | Token overlap between adjacent chunks |
 | `rerankEndpointId` | string | No | null | A `Rerank` endpoint (`rep_` id); searches in the scope are then reranked by default |
-| `rerankCandidates` | integer | No | 20 | Candidates the reranker scores before the top results are kept (1..100) |
+| `rerankCandidates` | integer | No | 10 | Candidates the reranker scores before the top results are kept (1..100) |
 | `rerankMinScore` | number | No | null | Drop reranked hits scoring below this (0..1), so a question with no relevant memory returns nothing |
 
 #### Example Request

@@ -255,7 +255,7 @@ continue to operate on the whole memory, and search returns one hit per memory r
 
 Reranking is also configured on the **scope**: `rerankEndpointId` (a `Rerank` endpoint in the tenant; null, the
 default, turns reranking off), `rerankCandidates` (how many retrieved candidates the reranker scores before the top
-`topK` are kept; 1 to 100, default 20), and `rerankMinScore` (drop reranked hits scoring below it, so a question with
+`topK` are kept; 1 to 100, default 10), and `rerankMinScore` (drop reranked hits scoring below it, so a question with
 no relevant memory returns nothing; null keeps every hit). Creating or updating a scope with a `rerankEndpointId` that
 is missing or not a `Rerank` endpoint returns 400. `PUT` replaces the whole scope, so send every field you want to
 keep (read the scope first).

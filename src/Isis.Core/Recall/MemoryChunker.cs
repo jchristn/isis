@@ -44,12 +44,74 @@ namespace Isis.Core.Recall
             }
         }
 
+        /// <summary>
+        /// When a scope does not set <c>ChunkMaxTokens</c>, the fraction of the model's usable budget each chunk is
+        /// sized to, and the threshold above which a body is split. Default 0.75, minimum 0.1, maximum 1.0. Chunks well
+        /// under the model limit keep details from being diluted by the text around them: on the Atlas benchmark,
+        /// all-minilm chunks of about 190 tokens scored 0.827 Hybrid nDCG@10 against 0.802 at the full 251.
+        /// </summary>
+        /// <exception cref="ArgumentOutOfRangeException">Thrown when set outside [0.1, 1.0].</exception>
+        public static double DefaultChunkFraction
+        {
+            get
+            {
+                return _DefaultChunkFraction;
+            }
+            set
+            {
+                if (value < 0.1 || value > 1.0) throw new ArgumentOutOfRangeException(nameof(DefaultChunkFraction), "Default chunk fraction must be in [0.1, 1.0].");
+                _DefaultChunkFraction = value;
+            }
+        }
+
+        /// <summary>
+        /// When a scope does not set <c>ChunkMaxTokens</c>, the largest default chunk in tokens, so models with long
+        /// context windows still get retrieval-sized chunks. Default 256, minimum 16.
+        /// </summary>
+        /// <exception cref="ArgumentOutOfRangeException">Thrown when set below 16.</exception>
+        public static int DefaultChunkMaxTokens
+        {
+            get
+            {
+                return _DefaultChunkMaxTokens;
+            }
+            set
+            {
+                if (value < 16) throw new ArgumentOutOfRangeException(nameof(DefaultChunkMaxTokens), "Default chunk max tokens must be at least 16.");
+                _DefaultChunkMaxTokens = value;
+            }
+        }
+
+        /// <summary>
+        /// Fraction of an automatically resolved model budget held back in case the serving runtime counts a few more
+        /// tokens than the local tokenizer. Default 0.01 (at least 2 tokens); minimum 0.0, maximum 0.25. Not applied
+        /// when the endpoint sets an explicit MaxInputTokens. TextChunker 0.3 counts WordPiece tokens the way embedding
+        /// runtimes do (measured never lower than Ollama), so the margin is small, and an embedding rejected as too
+        /// long is still re-chunked at a smaller budget.
+        /// </summary>
+        /// <exception cref="ArgumentOutOfRangeException">Thrown when set outside [0, 0.25].</exception>
+        public static double TokenizerMarginFraction
+        {
+            get
+            {
+                return _TokenizerMarginFraction;
+            }
+            set
+            {
+                if (value < 0.0 || value > 0.25) throw new ArgumentOutOfRangeException(nameof(TokenizerMarginFraction), "Tokenizer margin fraction must be in [0, 0.25].");
+                _TokenizerMarginFraction = value;
+            }
+        }
+
         #endregion
 
         #region Private-Members
 
         private const string _HeaderSeparator = "\n\n";
         private static double _HeaderBudgetFraction = 0.25;
+        private static double _TokenizerMarginFraction = 0.01;
+        private static double _DefaultChunkFraction = 0.75;
+        private static int _DefaultChunkMaxTokens = 256;
 
         #endregion
 
@@ -134,7 +196,14 @@ namespace Isis.Core.Recall
             int rawBudget = profile.EffectiveInputBudget > 0 ? profile.EffectiveInputBudget : 512;
             int extraReserve = Math.Max(0, EncoderSpecialTokenReserve(profile.TokenizerKind) - Math.Max(0, profile.ReservedInputTokens));
             int budget = Math.Max(1, rawBudget - extraReserve - TokenizerMismatchMargin(rawBudget, budgetOverride.HasValue));
-            int perChunk = scope.ChunkMaxTokens > 0 ? Math.Min(scope.ChunkMaxTokens, budget) : budget;
+            // The model's task prefix for stored content (for example nomic's "search_document: ") is embedded with
+            // every chunk, so it comes out of the budget first.
+            string documentPrefix = EmbeddingPrefixRegistry.For(endpoint.Model, EmbeddingPurposeEnum.Document);
+            if (documentPrefix.Length > 0) budget = Math.Max(1, budget - tokenizer.CountTokens(documentPrefix));
+
+            int perChunk = scope.ChunkMaxTokens > 0
+                ? Math.Min(scope.ChunkMaxTokens, budget)
+                : Math.Max(1, Math.Min(_DefaultChunkMaxTokens, (int)Math.Floor(budget * _DefaultChunkFraction)));
             if (budgetScale < 1.0) perChunk = Math.Max(1, (int)Math.Floor(perChunk * budgetScale));
 
             // Reserve room for the header (plus its separator) in every chunk, truncating an oversized header.
@@ -146,16 +215,9 @@ namespace Isis.Core.Recall
                 perChunk = Math.Max(1, perChunk - headerTokens);
             }
 
-            // TextChunker can place a split inside a UTF-16 surrogate pair (an emoji or other astral character), and
-            // the half-pair then fails Unicode normalization inside the tokenizer. Chunk a same-length stand-in where
-            // every surrogate becomes U+FFFD, then slice the real chunks out of the original text by offset, nudging
-            // any boundary that would land inside a pair. Offsets line up because the stand-in has the same length.
-            bool hasSurrogates = ContainsSurrogates(body);
-            string chunkSource = hasSurrogates ? SurrogateStandIn(body) : body;
-
             if (scope.ChunkingMode == ChunkingModeEnum.OnOverflow)
             {
-                int bodyTokens = tokenizer.CountTokens(chunkSource);
+                int bodyTokens = tokenizer.CountTokens(body);
                 if (bodyTokens <= perChunk) return WithHeader(new List<MemoryChunk> { WholeBody(body) }, cleanHeader);
             }
 
@@ -167,27 +229,22 @@ namespace Isis.Core.Recall
                 ComputeOffsets = true
             };
 
-            IReadOnlyList<Chunk> produced = new Chunker(tokenizer).Chunk(chunkSource, options);
+            // TextChunker 0.3 chunks spans of the source text: cuts never split a surrogate pair or grapheme cluster,
+            // offsets are exact, and no chunk is contained in the one before it, so chunks are used as produced.
+            IReadOnlyList<Chunk> produced = new Chunker(tokenizer).Chunk(body, options);
             if (produced.Count == 0) return WithHeader(new List<MemoryChunk> { WholeBody(body) }, cleanHeader);
 
             List<MemoryChunk> chunks = new List<MemoryChunk>(produced.Count);
             for (int i = 0; i < produced.Count; i++)
             {
                 Chunk source = produced[i];
-                MemoryChunk chunk = new MemoryChunk
+                chunks.Add(new MemoryChunk
                 {
                     Ordinal = chunks.Count,
                     Text = source.Text,
                     StartOffset = source.StartOffset,
                     EndOffset = source.EndOffset
-                };
-                if (hasSurrogates) RestoreOriginalText(body, chunkSource, chunk);
-
-                // Fixed-token chunking with overlap can emit a run of short trailing chunks that repeat the end of the
-                // previous chunk. They add nothing (every character is already in the previous chunk) but they are
-                // embedded and stored, and they crowd search results, so drop them.
-                if (chunks.Count > 0 && chunks[chunks.Count - 1].Text.Contains(chunk.Text, StringComparison.Ordinal)) continue;
-                chunks.Add(chunk);
+                });
             }
 
             return WithHeader(chunks, cleanHeader);
@@ -196,53 +253,6 @@ namespace Isis.Core.Recall
         #endregion
 
         #region Private-Methods
-
-        private static bool ContainsSurrogates(string text)
-        {
-            foreach (char c in text)
-            {
-                if (char.IsSurrogate(c)) return true;
-            }
-
-            return false;
-        }
-
-        private static string SurrogateStandIn(string text)
-        {
-            char[] chars = text.ToCharArray();
-            for (int i = 0; i < chars.Length; i++)
-            {
-                if (char.IsSurrogate(chars[i])) chars[i] = '\uFFFD';
-            }
-
-            return new string(chars);
-        }
-
-        private static void RestoreOriginalText(string body, string standIn, MemoryChunk chunk)
-        {
-            // The chunker reports -1 offsets when it cannot place a chunk (it searches forward only). The chunk text is a
-            // literal substring of the stand-in, so locate it there; the last occurrence is the right one for the
-            // trailing chunks that are the usual cause. If it still cannot be placed, keep the stand-in text: every
-            // character is intact except astral characters, which read as U+FFFD.
-            if (chunk.StartOffset < 0 || chunk.EndOffset < chunk.StartOffset || chunk.EndOffset > body.Length)
-            {
-                int found = standIn.LastIndexOf(chunk.Text, StringComparison.Ordinal);
-                if (found < 0) return;
-                chunk.StartOffset = found;
-                chunk.EndOffset = found + chunk.Text.Length;
-            }
-
-            // Widen each boundary that splits a surrogate pair so the pair stays whole.
-
-            int start = chunk.StartOffset;
-            int end = chunk.EndOffset;
-            if (start > 0 && start < body.Length && char.IsLowSurrogate(body[start]) && char.IsHighSurrogate(body[start - 1])) start--;
-            if (end > 0 && end < body.Length && char.IsHighSurrogate(body[end - 1]) && char.IsLowSurrogate(body[end])) end++;
-
-            chunk.StartOffset = start;
-            chunk.EndOffset = end;
-            chunk.Text = body.Substring(start, end - start);
-        }
 
         private static List<MemoryChunk> WithHeader(List<MemoryChunk> chunks, string header)
         {
@@ -296,15 +306,12 @@ namespace Isis.Core.Recall
             return TcChunkStrategy.FixedTokenCount;
         }
 
-        // The local tokenizer is a close but not exact match for the serving runtime's: measured against Ollama's
-        // all-minilm on scientific text (symbols, Greek letters, numbers), Ollama counted up to ~7 more tokens than
-        // the WordPiece vocabulary, so chunks sized to the full 254-token budget were rejected ~20% of the time.
         // Keep a small margin under a model budget the library resolved on its own. An explicit MaxInputTokens
         // override is the operator's statement of the real limit and is used as-is.
         private static int TokenizerMismatchMargin(int budget, bool explicitOverride)
         {
-            if (explicitOverride) return 0;
-            return Math.Max(4, (int)Math.Ceiling(budget * 0.04));
+            if (explicitOverride || _TokenizerMarginFraction <= 0.0) return 0;
+            return Math.Max(2, (int)Math.Ceiling(budget * _TokenizerMarginFraction));
         }
 
         // WordPiece encoders (BERT-family embedding models) frame each sequence with [CLS] and [SEP]; those two

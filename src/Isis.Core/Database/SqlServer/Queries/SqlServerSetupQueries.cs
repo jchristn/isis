@@ -109,7 +109,7 @@ IF OBJECT_ID(N'dbo.scopes', N'U') IS NULL CREATE TABLE scopes (
     createdutc NVARCHAR(40) NOT NULL,
     lastupdateutc NVARCHAR(40) NOT NULL,
     rerankendpointid NVARCHAR(64) NULL,
-    rerankcandidates INT NOT NULL DEFAULT 20,
+    rerankcandidates INT NOT NULL DEFAULT 10,
     rerankminscore FLOAT NULL,
     INDEX uk_scopes_tenant_name UNIQUE (tenantid, name)
 );

@@ -54,7 +54,9 @@ namespace Isis.McpServer
             _RestClient = new HttpClient();
             _RestClient.BaseAddress = new Uri(settings.RestBaseUrl());
 
-            _Server = new McpHttpServer(settings.Hostname, settings.Port, settings.RpcPath, settings.EventsPath, true, settings.McpPath);
+            // Voltaic 2.x always registers the MCP protocol methods (including ping); the diagnostic echo/getTime tools stay
+            // off so tools/list carries only the Isis tools.
+            _Server = new McpHttpServer(settings.Hostname, settings.Port, settings.RpcPath, settings.EventsPath, includeDiagnosticTools: false, mcpPath: settings.McpPath);
             _Server.ServerName = "Isis.McpServer";
             _Server.ServerVersion = Constants.ProductVersion;
             _Server.EnableCors = true;
@@ -273,6 +275,8 @@ namespace Isis.McpServer
         {
             return new
             {
+                tenantId = new { type = "string" },
+                endpointId = new { type = "string", description = "Endpoint id (update only)." },
                 name = new { type = "string" },
                 kind = new { type = "string", description = "Embedding, Inference, or Rerank." },
                 apiFormat = new { type = "string", description = "Ollama, OpenAI, VLlm, or Gemini for embedding and inference; Tei or Cohere (or VLlm) for rerank." },
@@ -347,7 +351,7 @@ namespace Isis.McpServer
                         chunkMaxTokens = new { type = "integer", description = "Per-chunk token budget (0 = the embedding model's budget)." },
                         chunkOverlapTokens = new { type = "integer", description = "Token overlap between adjacent chunks (default 64)." },
                         rerankEndpointId = new { type = "string", description = "Optional Rerank endpoint id (rep_); searches in the scope are then reranked by default." },
-                        rerankCandidates = new { type = "integer", description = "Candidates sent to the reranker (1..100, default 20)." },
+                        rerankCandidates = new { type = "integer", description = "Candidates sent to the reranker (1..100, default 10)." },
                         rerankMinScore = new { type = "number", description = "Drop reranked hits scoring below this (0..1). Omit to keep all." }
                     },
                     required = new[] { "tenantId", "name" }

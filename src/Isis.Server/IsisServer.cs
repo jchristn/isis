@@ -100,7 +100,7 @@ namespace Isis.Server
             // per-client timeout (inference streams can run far longer than the default 100s), relying on the
             // per-request cancellation token instead.
             _InferenceHandler = new SocketsHttpHandler();
-            _InferenceService = new InferenceService(_InferenceHandler);
+            _InferenceService = new InferenceService(new TransientRetryHandler(_InferenceHandler));
             _ChatService = new MemoryChatService(_MemoryService, _InferenceService);
             _ChatService.LinkExpansion = settings.Retrieval.ChatLinkExpansion;
             _RetentionService = new RetentionService(_Database, Settings.Retention, _Log);
@@ -224,7 +224,13 @@ namespace Isis.Server
             int status;
             string error;
             string message;
-            if (e is ArgumentException || e is InvalidOperationException || e is FormatException)
+            if (e is ModelEndpointUnavailableException)
+            {
+                status = 503;
+                error = "ServiceUnavailable";
+                message = e.Message;
+            }
+            else if (e is ArgumentException || e is InvalidOperationException || e is FormatException)
             {
                 status = 400;
                 error = "BadRequest";

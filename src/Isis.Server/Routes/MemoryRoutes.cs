@@ -5,6 +5,7 @@ namespace Isis.Server.Routes
     using System.Threading.Tasks;
     using Isis.Core.Database;
     using Isis.Core.Models;
+    using Isis.Core.Recall;
     using Isis.Core.Security;
     using Isis.Core.Stores;
     using Isis.Server.Models;
@@ -149,6 +150,10 @@ namespace Isis.Server.Routes
             {
                 await RouteHelpers.ErrorAsync(context, 501, "NotImplemented", ex.Message).ConfigureAwait(false);
             }
+            catch (ModelEndpointUnavailableException ex)
+            {
+                await RouteHelpers.ErrorAsync(context, 503, "ServiceUnavailable", ex.Message).ConfigureAwait(false);
+            }
             catch (InvalidOperationException ex)
             {
                 await RouteHelpers.ErrorAsync(context, 400, "BadRequest", ex.Message).ConfigureAwait(false);
@@ -185,6 +190,10 @@ namespace Isis.Server.Routes
             catch (NotSupportedException ex)
             {
                 await RouteHelpers.ErrorAsync(context, 501, "NotImplemented", ex.Message).ConfigureAwait(false);
+            }
+            catch (ModelEndpointUnavailableException ex)
+            {
+                await RouteHelpers.ErrorAsync(context, 503, "ServiceUnavailable", ex.Message).ConfigureAwait(false);
             }
             catch (InvalidOperationException ex)
             {
@@ -294,6 +303,11 @@ namespace Isis.Server.Routes
                 catch (NotSupportedException ex)
                 {
                     await RouteHelpers.ErrorAsync(context, 501, "NotImplemented", ex.Message).ConfigureAwait(false);
+                    return;
+                }
+                catch (ModelEndpointUnavailableException ex)
+                {
+                    await RouteHelpers.ErrorAsync(context, 503, "ServiceUnavailable", ex.Message + " (" + objects.Count + " item(s) were saved before the failure).").ConfigureAwait(false);
                     return;
                 }
                 catch (InvalidOperationException ex)

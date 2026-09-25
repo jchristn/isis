@@ -52,6 +52,24 @@ namespace Isis.Server.Settings
         }
 
         /// <summary>
+        /// How many chunks of one memory are embedded at the same time. Minimum 1, maximum 32, default 4. Lower it for an
+        /// embedding endpoint that accepts only a few concurrent requests.
+        /// </summary>
+        /// <exception cref="ArgumentOutOfRangeException">Thrown when set outside [1, 32].</exception>
+        public int EmbeddingParallelism
+        {
+            get
+            {
+                return _EmbeddingParallelism;
+            }
+            set
+            {
+                if (value < 1 || value > 32) throw new ArgumentOutOfRangeException(nameof(EmbeddingParallelism), "EmbeddingParallelism must be between 1 and 32.");
+                _EmbeddingParallelism = value;
+            }
+        }
+
+        /// <summary>
         /// How many linked memories chat adds to its grounding context by following links from the retrieved ones.
         /// Minimum 0, maximum 10, default 2.
         /// </summary>
@@ -76,6 +94,7 @@ namespace Isis.Server.Settings
         private double _DuplicateSimilarityThreshold = 0.85;
         private int _RerankPassageChars = 1200;
         private int _ChatLinkExpansion = 2;
+        private int _EmbeddingParallelism = 4;
 
         #endregion
     }

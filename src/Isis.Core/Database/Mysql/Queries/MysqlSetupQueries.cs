@@ -109,7 +109,7 @@ CREATE TABLE IF NOT EXISTS scopes (
     createdutc VARCHAR(40) NOT NULL,
     lastupdateutc VARCHAR(40) NOT NULL,
     rerankendpointid VARCHAR(64) NULL,
-    rerankcandidates INT NOT NULL DEFAULT 20,
+    rerankcandidates INT NOT NULL DEFAULT 10,
     rerankminscore DOUBLE NULL,
     UNIQUE KEY uk_scopes_tenant_name (tenantid, name)
 );

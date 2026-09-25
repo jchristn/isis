@@ -59,7 +59,8 @@ namespace Isis.Server
             AuthenticationService authenticationService = new AuthenticationService(database, settings.Auth, lookupCache);
             AuthorizationService authorizationService = new AuthorizationService();
 
-            HttpClient embeddingClient = new HttpClient();
+            // Embedding and rerank calls retry when the endpoint is briefly at capacity or has no healthy backend.
+            HttpClient embeddingClient = new HttpClient(new TransientRetryHandler(new SocketsHttpHandler()));
             EmbeddingService embeddingService = new EmbeddingService(embeddingClient);
             StoreOptions storeOptions = new StoreOptions
             {
@@ -72,6 +73,7 @@ namespace Isis.Server
             memoryService.DuplicateCheckEnabled = settings.Retrieval.DuplicateCheckEnabled;
             memoryService.DuplicateSimilarityThreshold = settings.Retrieval.DuplicateSimilarityThreshold;
             memoryService.RerankPassageChars = settings.Retrieval.RerankPassageChars;
+            memoryService.EmbeddingParallelism = settings.Retrieval.EmbeddingParallelism;
 
             // Start the observability pipeline before the server so Watson's instrumentation is collected from
             // the first request. A telemetry failure never prevents startup (Start returns null and logs).

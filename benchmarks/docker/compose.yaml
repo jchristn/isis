@@ -3,7 +3,8 @@
 # source against this stack (see benchmarks/README.md) so benchmarks always measure the working tree.
 #
 #   docker compose -f benchmarks/docker/compose.yaml up -d
-#   docker compose -f benchmarks/docker/compose.yaml --profile rerank up -d   # also start the cross-encoder reranker
+#   docker compose -f benchmarks/docker/compose.yaml --profile rerank up -d       # also start the CPU cross-encoders
+#   docker compose -f benchmarks/docker/compose.yaml --profile rerank-gpu up -d   # or the GPU reranker (NVIDIA hosts)
 #   docker compose -f benchmarks/docker/compose.yaml down -v     # discard all benchmark data
 
 name: isis-bench
@@ -61,6 +62,37 @@ services:
     volumes:
       - isis-bench-rerank:/data
 
+  # A larger cross-encoder for comparison (--rerank-url http://127.0.0.1:18801 --rerank-model BAAI/bge-reranker-base).
+  rerank-bge:
+    container_name: 'isis-bench-rerank-bge'
+    image: 'ghcr.io/huggingface/text-embeddings-inference:cpu-1.8'
+    profiles: ['rerank']
+    ports:
+      - '127.0.0.1:18801:80'
+    command: ['--model-id', 'BAAI/bge-reranker-base']
+    volumes:
+      - isis-bench-rerank-bge:/data
+
+  # GPU-served reranker for NVIDIA hosts (replaces the CPU one on port 18800). Pick the TEI image tag that matches the
+  # GPU generation (see the TEI documentation); the plain 1.8 tag targets Ampere.
+  rerank-gpu:
+    container_name: 'isis-bench-rerank-gpu'
+    image: 'ghcr.io/huggingface/text-embeddings-inference:1.8'
+    profiles: ['rerank-gpu']
+    ports:
+      - '127.0.0.1:18800:80'
+    command: ['--model-id', 'cross-encoder/ms-marco-MiniLM-L-6-v2']
+    volumes:
+      - isis-bench-rerank:/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
 volumes:
   isis-bench-postgres:
   isis-bench-rerank:
+  isis-bench-rerank-bge:

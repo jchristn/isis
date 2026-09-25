@@ -153,7 +153,7 @@ Match every write to a category and follow that category's `instructions`. When 
 | `memory_search` | `tenantId`, `scopeId`, `queryText` (required); `mode`, `topK`, `categoryName` | Search a scope. `mode` = `Keyword`/`Semantic`/`Hybrid`. `categoryName` filters by category name (or `cat_` id). |
 | `memory_delete` | `tenantId`, `scopeId`, `memoryId` (required) | Delete a memory by id. |
 
-`type` on upsert is one of `User`, `Feedback`, `Project`, `Reference`. `Semantic` and `Hybrid` search require a RecallDb-backed scope; `Keyword` works on any store. (The server also exposes a few framework built-ins -- `ping`, `echo`, `getTime`, `getSessions` -- but the memory tools above are the ones you use.)
+`type` on upsert is one of `User`, `Feedback`, `Project`, `Reference`. `Semantic` and `Hybrid` search require a RecallDb-backed scope; `Keyword` works on any store.
 
 ## Decision-Making Guidance
 

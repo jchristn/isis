@@ -66,6 +66,24 @@ namespace Isis.Server.Services
         }
 
         /// <summary>
+        /// How many chunks of one memory are embedded at the same time. Minimum 1, maximum 32, default 4. Lower it for
+        /// an embedding endpoint that accepts only a few concurrent requests.
+        /// </summary>
+        /// <exception cref="ArgumentOutOfRangeException">Thrown when set outside [1, 32].</exception>
+        public int EmbeddingParallelism
+        {
+            get
+            {
+                return _EmbeddingParallelism;
+            }
+            set
+            {
+                if (value < 1 || value > 32) throw new ArgumentOutOfRangeException(nameof(EmbeddingParallelism), "EmbeddingParallelism must be between 1 and 32.");
+                _EmbeddingParallelism = value;
+            }
+        }
+
+        /// <summary>
         /// Characters of each candidate's text sent to the reranker (the reranker sees the title and this much of the
         /// best-matching chunk). Minimum 100, default 1200.
         /// </summary>
@@ -89,7 +107,7 @@ namespace Isis.Server.Services
         private readonly DatabaseDriverBase _Database;
         private readonly EmbeddingService? _EmbeddingService;
         private readonly LookupCache? _Cache;
-        private const int _ChunkEmbeddingParallelism = 4;
+        private int _EmbeddingParallelism = 4;
         private static readonly KeyedAsyncLock _MemoryLocks = new KeyedAsyncLock();
         private static readonly ConcurrentDictionary<string, SemaphoreSlim> _ProvisioningLocks = new ConcurrentDictionary<string, SemaphoreSlim>(StringComparer.Ordinal);
         private readonly StoreOptions? _StoreOptions;
@@ -464,7 +482,7 @@ namespace Isis.Server.Services
                 float[]? queryEmbedding = null;
                 if (store.Capabilities.RequiresEmbedding && query.Mode != SearchModeEnum.Keyword)
                 {
-                    queryEmbedding = await EmbedAsync(scope, query.QueryText, token).ConfigureAwait(false);
+                    queryEmbedding = await EmbedAsync(scope, query.QueryText, token, EmbeddingPurposeEnum.Query).ConfigureAwait(false);
                 }
 
                 MemorySearchResult result = await store.SearchAsync(scope, storeQuery, queryEmbedding, token).ConfigureAwait(false);
@@ -806,7 +824,7 @@ namespace Isis.Server.Services
 
             // Embed a multi-chunk memory's chunks concurrently (bounded, so one large memory cannot flood the
             // endpoint): upsert latency then scales with chunks / parallelism rather than with the chunk count.
-            using SemaphoreSlim gate = new SemaphoreSlim(_ChunkEmbeddingParallelism);
+            using SemaphoreSlim gate = new SemaphoreSlim(_EmbeddingParallelism);
             List<Task> tasks = new List<Task>(chunks.Count);
             foreach (MemoryChunk chunk in chunks)
             {
@@ -873,10 +891,10 @@ namespace Isis.Server.Services
                 || message.IndexOf("too many tokens", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
-        private async Task<float[]> EmbedAsync(Scope scope, string text, CancellationToken token)
+        private async Task<float[]> EmbedAsync(Scope scope, string text, CancellationToken token, EmbeddingPurposeEnum purpose)
         {
             ModelEndpoint endpoint = await ResolveEmbeddingEndpointAsync(scope, token).ConfigureAwait(false);
-            return await _EmbeddingService!.EmbedAsync(endpoint, text, token).ConfigureAwait(false);
+            return await _EmbeddingService!.EmbedAsync(endpoint, text, token, purpose).ConfigureAwait(false);
         }
 
         private async Task<ModelEndpoint> ResolveEmbeddingEndpointAsync(Scope scope, CancellationToken token)

@@ -135,21 +135,31 @@ namespace Test.Shared
 
         private static async Task MiniLmTokenizerMarginAsync()
         {
-            // all-minilm resolves to a 254-token effective budget; serving runtimes (Ollama) can count a few more
-            // tokens than the local WordPiece vocabulary on technical text, so chunks must leave headroom.
+            // all-minilm resolves to a 254-token effective budget, and chunks keep MemoryChunker.TokenizerMarginFraction of
+            // it as headroom in case the serving runtime counts a few more tokens than the local WordPiece tokenizer.
+            int cap = 254 - Math.Max(2, (int)Math.Ceiling(254 * MemoryChunker.TokenizerMarginFraction));
             BertWordPieceTokenizerAdapter wordPiece = new BertWordPieceTokenizerAdapter();
             IReadOnlyList<MemoryChunk> chunks = await MemoryChunker.ChunkAsync(Scope(ChunkingModeEnum.OnOverflow), Endpoint(), Oversized()).ConfigureAwait(false);
             TestCase.Require(chunks.Count > 1, "An oversized body should split.");
             int largest = chunks.Max(c => wordPiece.CountTokens(c.Text));
-            TestCase.Require(largest <= 245, "Auto-budget all-minilm chunks should stay at or under 245 WordPiece tokens, largest was " + largest + ".");
+            TestCase.Require(largest <= cap, "Auto-budget all-minilm chunks should stay at or under " + cap + " WordPiece tokens, largest was " + largest + ".");
         }
 
         private static async Task OverrideBudgetExactAsync()
         {
+            // An explicit endpoint limit takes no tokenizer margin. Default chunks are still DefaultChunkFraction of it, and
+            // a scope's ChunkMaxTokens can use all of it.
             BertWordPieceTokenizerAdapter wordPiece = new BertWordPieceTokenizerAdapter();
+            int expected = (int)Math.Floor(100 * MemoryChunker.DefaultChunkFraction);
             IReadOnlyList<MemoryChunk> chunks = await MemoryChunker.ChunkAsync(Scope(ChunkingModeEnum.Always), Endpoint(100), Oversized()).ConfigureAwait(false);
             int largest = chunks.Max(c => wordPiece.CountTokens(c.Text));
-            TestCase.Require(largest > 90 && largest <= 100, "An explicit 100-token override should fill chunks close to 100 tokens (no margin), largest was " + largest + ".");
+            TestCase.Require(largest > expected - 10 && largest <= expected, "An explicit 100-token override should give default chunks close to " + expected + " tokens, largest was " + largest + ".");
+
+            Scope full = Scope(ChunkingModeEnum.Always);
+            full.ChunkMaxTokens = 100;
+            IReadOnlyList<MemoryChunk> fullChunks = await MemoryChunker.ChunkAsync(full, Endpoint(100), Oversized()).ConfigureAwait(false);
+            int fullLargest = fullChunks.Max(c => wordPiece.CountTokens(c.Text));
+            TestCase.Require(fullLargest > 90 && fullLargest <= 100, "ChunkMaxTokens 100 under a 100-token override should fill chunks close to 100 tokens (no margin), largest was " + fullLargest + ".");
         }
 
         private static async Task BudgetScaleFinerAsync()
