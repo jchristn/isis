@@ -19,6 +19,11 @@ namespace Test.Benchmark
         /// </summary>
         public List<SearchHit> Hits { get; set; } = new List<SearchHit>();
 
+        /// <summary>
+        /// Whether the server reranked the hits.
+        /// </summary>
+        public bool Reranked { get; set; } = false;
+
         #endregion
     }
 }

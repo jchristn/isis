@@ -92,6 +92,63 @@ namespace Isis.Core.Stores
             }
         }
 
+        /// <summary>
+        /// How memories replaced by another memory are treated. Default Demote: each replaced memory ranks directly
+        /// after its replacement, which is added when the search did not retrieve it.
+        /// </summary>
+        public SupersededHandlingEnum Superseded { get; set; } = SupersededHandlingEnum.Demote;
+
+        /// <summary>
+        /// Maximum number of additional memories to add by following links from the results (a memory's
+        /// <c>links</c> and any <c>[[slug]]</c> references in its body). Linked memories are placed directly after
+        /// the result that links to them and marked with <c>linkedFrom</c>; they are extra to topK. Minimum 0,
+        /// maximum 10, default 0 (off).
+        /// </summary>
+        public int LinkExpansion
+        {
+            get
+            {
+                return _LinkExpansion;
+            }
+            set
+            {
+                if (value < 0) value = 0;
+                if (value > 10) value = 10;
+                _LinkExpansion = value;
+            }
+        }
+
+        /// <summary>
+        /// Result diversity in the range 0.0 to 1.0, applied by maximal marginal relevance: higher values trade
+        /// relevance for results that overlap less with the ones ranked above them, so near-duplicate memories do not
+        /// crowd out other relevant ones. Default 0 (pure relevance order).
+        /// </summary>
+        public double Diversity
+        {
+            get
+            {
+                return _Diversity;
+            }
+            set
+            {
+                if (value < 0.0) value = 0.0;
+                if (value > 1.0) value = 1.0;
+                _Diversity = value;
+            }
+        }
+
+        /// <summary>
+        /// Whether to rerank results with the scope's rerank endpoint. Null (the default) reranks when the scope has
+        /// a rerank endpoint configured; false skips reranking; true requires a rerank endpoint.
+        /// </summary>
+        public bool? Rerank { get; set; } = null;
+
+        /// <summary>
+        /// Minimum rerank score. Reranked hits scoring below it are dropped. Null uses the scope's
+        /// <c>rerankMinScore</c>. Ignored when the search is not reranked.
+        /// </summary>
+        public double? MinRerankScore { get; set; } = null;
+
         #endregion
 
         #region Private-Members
@@ -99,6 +156,8 @@ namespace Isis.Core.Stores
         private int _TopK = 10;
         private double _TextWeight = 0.5;
         private double _RecencyWeight = 0.1;
+        private int _LinkExpansion = 0;
+        private double _Diversity = 0.0;
 
         #endregion
 
@@ -109,6 +168,19 @@ namespace Isis.Core.Stores
         /// </summary>
         public MemorySearchQuery()
         {
+        }
+
+        #endregion
+
+        #region Public-Methods
+
+        /// <summary>
+        /// Create a copy of this query.
+        /// </summary>
+        /// <returns>A new query with the same settings.</returns>
+        public MemorySearchQuery Clone()
+        {
+            return (MemorySearchQuery)MemberwiseClone();
         }
 
         #endregion

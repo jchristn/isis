@@ -23,6 +23,7 @@ namespace Isis.Server.Services
 
         private readonly DatabaseDriverBase _Database;
         private readonly AuthSettings _AuthSettings;
+        private readonly LookupCache? _Cache;
 
         #endregion
 
@@ -33,11 +34,13 @@ namespace Isis.Server.Services
         /// </summary>
         /// <param name="database">The database driver.</param>
         /// <param name="authSettings">The authentication settings.</param>
+        /// <param name="cache">Optional lookup cache for credentials and users. Null reads the database every time.</param>
         /// <exception cref="ArgumentNullException">Thrown when a required argument is null.</exception>
-        public AuthenticationService(DatabaseDriverBase database, AuthSettings authSettings)
+        public AuthenticationService(DatabaseDriverBase database, AuthSettings authSettings, LookupCache? cache = null)
         {
             _Database = database ?? throw new ArgumentNullException(nameof(database));
             _AuthSettings = authSettings ?? throw new ArgumentNullException(nameof(authSettings));
+            _Cache = cache;
         }
 
         #endregion
@@ -81,7 +84,9 @@ namespace Isis.Server.Services
             string? accessKey = context.Request.Headers["x-access-key"];
             if (!string.IsNullOrEmpty(accessKey))
             {
-                Credential? credential = await _Database.Credentials.ReadByAccessKeyAsync(accessKey, token).ConfigureAwait(false);
+                Credential? credential = _Cache != null
+                    ? await _Cache.GetCredentialByAccessKeyAsync(accessKey, token).ConfigureAwait(false)
+                    : await _Database.Credentials.ReadByAccessKeyAsync(accessKey, token).ConfigureAwait(false);
                 if (credential != null && credential.Active)
                 {
                     if (credential.ExpirationUtc.HasValue && credential.ExpirationUtc.Value < DateTime.UtcNow) return RequestContext.Unauthenticated();
@@ -157,7 +162,9 @@ namespace Isis.Server.Services
 
             if (!string.IsNullOrEmpty(credential.UserId))
             {
-                User? owner = await _Database.Users.ReadAsync(credential.TenantId, credential.UserId, token).ConfigureAwait(false);
+                User? owner = _Cache != null
+                    ? await _Cache.GetUserAsync(credential.TenantId, credential.UserId, token).ConfigureAwait(false)
+                    : await _Database.Users.ReadAsync(credential.TenantId, credential.UserId, token).ConfigureAwait(false);
                 if (owner != null && owner.Active)
                 {
                     context.UserId = owner.Id;

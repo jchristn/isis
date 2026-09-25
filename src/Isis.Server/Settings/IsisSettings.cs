@@ -54,6 +54,16 @@ namespace Isis.Server.Settings
         public RequestHistorySettings RequestHistory { get; set; } = new RequestHistorySettings();
 
         /// <summary>
+        /// Lookup cache settings (credentials, users, scopes, and endpoints read on every request).
+        /// </summary>
+        public CacheSettings Cache { get; set; } = new CacheSettings();
+
+        /// <summary>
+        /// Retrieval settings (similarity check on upsert, reranker input size, chat link expansion).
+        /// </summary>
+        public RetrievalSettings Retrieval { get; set; } = new RetrievalSettings();
+
+        /// <summary>
         /// Retention settings for observability history tables (request history and operation events).
         /// </summary>
         public RetentionSettings Retention { get; set; } = new RetentionSettings();

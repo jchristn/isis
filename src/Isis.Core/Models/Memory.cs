@@ -2,6 +2,7 @@ namespace Isis.Core.Models
 {
     using System;
     using System.Collections.Generic;
+    using System.Text.Json.Serialization;
     using Isis.Core.Enums;
     using Isis.Core.Helpers;
 
@@ -144,6 +145,25 @@ namespace Isis.Core.Models
         /// Slugs of related memories, forming the link graph.
         /// </summary>
         public List<string> Links { get; set; } = new List<string>();
+
+        /// <summary>
+        /// Slugs (or ids) of memories in the same scope that this memory replaces, for example an earlier decision
+        /// this one reverses. Search demotes replaced memories behind their replacement. Empty by default.
+        /// </summary>
+        public List<string> Supersedes { get; set; } = new List<string>();
+
+        /// <summary>
+        /// Id of the memory that replaces this one, maintained by the server from other memories'
+        /// <see cref="Supersedes"/> lists. Null when the memory is current. Ignored on upsert.
+        /// </summary>
+        public string? SupersededBy { get; set; } = null;
+
+        /// <summary>
+        /// On an upsert response only: existing memories in the scope that closely resemble this one, so the writer
+        /// can decide whether it duplicates or replaces them. Not persisted, and omitted from the response when empty.
+        /// </summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public List<SimilarMemory>? SimilarMemories { get; set; } = null;
 
         /// <summary>
         /// Extensible structured metadata (for example referenced files, confidence).

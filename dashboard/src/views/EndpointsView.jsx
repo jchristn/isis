@@ -12,7 +12,7 @@ import CodeViewer from '../components/CodeViewer';
 import StatusBadge from '../components/StatusBadge';
 import HealthHistogram from '../components/HealthHistogram';
 import { ErrorBanner } from '../components/States';
-import { API_FORMATS, HEALTH_METHODS, AUTH_TYPES } from '../utils/constants';
+import { API_FORMATS, RERANK_API_FORMATS, HEALTH_METHODS, AUTH_TYPES } from '../utils/constants';
 import { formatDateTime } from '../i18n/formatters';
 
 // Per-format presets applied when the API format changes. baseUrl is a full URL onto which the
@@ -21,15 +21,25 @@ const FORMAT_DEFAULTS = {
   Ollama: { baseUrl: 'http://localhost:11434', healthCheckUrl: '/api/tags', healthCheckUseAuth: false, authType: 'None' },
   OpenAI: { baseUrl: 'https://api.openai.com', healthCheckUrl: '/v1/models', healthCheckUseAuth: true, authType: 'BearerToken' },
   VLlm: { baseUrl: 'http://localhost:8000', healthCheckUrl: '/v1/models', healthCheckUseAuth: false, authType: 'None' },
-  Gemini: { baseUrl: 'https://generativelanguage.googleapis.com', healthCheckUrl: '/v1beta/models', healthCheckUseAuth: true, authType: 'QueryParam', authQueryParam: 'key' }
+  Gemini: { baseUrl: 'https://generativelanguage.googleapis.com', healthCheckUrl: '/v1beta/models', healthCheckUseAuth: true, authType: 'QueryParam', authQueryParam: 'key' },
+  Tei: { baseUrl: 'http://localhost:8080', healthCheckUrl: '/health', healthCheckUseAuth: false, authType: 'None' },
+  Cohere: { baseUrl: 'https://api.cohere.com', healthCheckUrl: '/v1/models', healthCheckUseAuth: true, authType: 'BearerToken' }
+};
+
+// Per-kind labels (title, subtitle, add button) as i18n keys.
+const KIND_LABELS = {
+  Embedding: { title: 'endpoints.embeddingTitle', subtitle: 'endpoints.embeddingSubtitle', add: 'endpoints.addEmbedding' },
+  Inference: { title: 'endpoints.inferenceTitle', subtitle: 'endpoints.inferenceSubtitle', add: 'endpoints.addInference' },
+  Rerank: { title: 'endpoints.rerankTitle', subtitle: 'endpoints.rerankSubtitle', add: 'endpoints.addRerank' }
 };
 
 function emptyForm(kind) {
+  const rerank = kind === 'Rerank';
   return {
     name: '',
     kind,
-    apiFormat: 'Ollama',
-    baseUrl: 'http://localhost:11434',
+    apiFormat: rerank ? 'Tei' : 'Ollama',
+    baseUrl: rerank ? 'http://localhost:8080' : 'http://localhost:11434',
     authType: 'None',
     authHeaderName: '',
     authSecretHeaderName: '',
@@ -39,7 +49,7 @@ function emptyForm(kind) {
     model: '',
     dimensionality: kind === 'Embedding' ? 1536 : '',
     maxInputTokens: kind === 'Embedding' ? 0 : '',
-    healthCheckUrl: '/api/tags',
+    healthCheckUrl: rerank ? '/health' : '/api/tags',
     healthCheckMethod: 'GET',
     healthCheckIntervalMs: 5000,
     healthCheckExpectedStatusCode: 200,
@@ -122,7 +132,7 @@ function EndpointForm({ kind, initial, onSubmit, onClose, t }) {
     <Modal
       isOpen
       onClose={onClose}
-      title={initial?.id ? t('common.edit') : kind === 'Embedding' ? t('endpoints.addEmbedding') : t('endpoints.addInference')}
+      title={initial?.id ? t('common.edit') : t((KIND_LABELS[kind] || KIND_LABELS.Embedding).add)}
       size="wide"
       footer={
         <>
@@ -145,7 +155,7 @@ function EndpointForm({ kind, initial, onSubmit, onClose, t }) {
           <div className="field">
             <label>{t('endpoints.apiFormat')}</label>
             <select value={form.apiFormat} onChange={(e) => changeFormat(e.target.value)}>
-              {API_FORMATS.map((f) => (
+              {(kind === 'Rerank' ? RERANK_API_FORMATS : API_FORMATS).map((f) => (
                 <option key={f} value={f}>
                   {f}
                 </option>
@@ -591,9 +601,10 @@ function EndpointsView({ kind }) {
     }
   ];
 
-  const title = kind === 'Embedding' ? t('endpoints.embeddingTitle') : t('endpoints.inferenceTitle');
-  const subtitle = kind === 'Embedding' ? t('endpoints.embeddingSubtitle') : t('endpoints.inferenceSubtitle');
-  const addLabel = kind === 'Embedding' ? t('endpoints.addEmbedding') : t('endpoints.addInference');
+  const labels = KIND_LABELS[kind] || KIND_LABELS.Embedding;
+  const title = t(labels.title);
+  const subtitle = t(labels.subtitle);
+  const addLabel = t(labels.add);
 
   return (
     <>

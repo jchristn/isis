@@ -26,6 +26,11 @@ namespace Isis.Core.Stores
         /// </summary>
         public string? Notice { get; set; } = null;
 
+        /// <summary>
+        /// True when the hits were reranked by the scope's rerank endpoint (their scores are then rerank scores).
+        /// </summary>
+        public bool Reranked { get; set; } = false;
+
         #endregion
 
         #region Constructors-and-Factories

@@ -24,6 +24,7 @@ namespace Isis.Server.Routes
         private readonly DatabaseDriverBase _Database;
         private readonly AuthorizationService _Authorization;
         private readonly MemoryService _MemoryService;
+        private readonly LookupCache? _Cache;
 
         #endregion
 
@@ -35,9 +36,11 @@ namespace Isis.Server.Routes
         /// <param name="database">The database driver.</param>
         /// <param name="authorization">The authorization service.</param>
         /// <param name="memoryService">The memory service.</param>
+        /// <param name="cache">Optional lookup cache for scope reads.</param>
         /// <exception cref="ArgumentNullException">Thrown when a required argument is null.</exception>
-        public MemoryRoutes(DatabaseDriverBase database, AuthorizationService authorization, MemoryService memoryService)
+        public MemoryRoutes(DatabaseDriverBase database, AuthorizationService authorization, MemoryService memoryService, LookupCache? cache = null)
         {
+            _Cache = cache;
             _Database = database ?? throw new ArgumentNullException(nameof(database));
             _Authorization = authorization ?? throw new ArgumentNullException(nameof(authorization));
             _MemoryService = memoryService ?? throw new ArgumentNullException(nameof(memoryService));
@@ -77,6 +80,7 @@ namespace Isis.Server.Routes
 
         private async Task<Scope?> LoadScopeAsync(HttpContextBase context, string tenantId, string scopeId)
         {
+            if (_Cache != null) return await _Cache.GetScopeAsync(tenantId, scopeId, context.Token).ConfigureAwait(false);
             return await _Database.Scopes.ReadAsync(tenantId, scopeId, context.Token).ConfigureAwait(false);
         }
 

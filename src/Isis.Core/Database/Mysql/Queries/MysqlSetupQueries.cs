@@ -108,6 +108,9 @@ CREATE TABLE IF NOT EXISTS scopes (
     active INT NOT NULL DEFAULT 1,
     createdutc VARCHAR(40) NOT NULL,
     lastupdateutc VARCHAR(40) NOT NULL,
+    rerankendpointid VARCHAR(64) NULL,
+    rerankcandidates INT NOT NULL DEFAULT 20,
+    rerankminscore DOUBLE NULL,
     UNIQUE KEY uk_scopes_tenant_name (tenantid, name)
 );
 
@@ -148,6 +151,8 @@ CREATE TABLE IF NOT EXISTS memories (
     createdutc VARCHAR(40) NOT NULL,
     lastupdateutc VARCHAR(40) NOT NULL,
     lastaccessedutc VARCHAR(40),
+    supersedes LONGTEXT NULL,
+    supersededby VARCHAR(64) NULL,
     INDEX idx_memories_scope_category (scopeid, categoryid),
     UNIQUE KEY uk_memories_scope_category_slug (scopeid, categoryid, slug)
 );

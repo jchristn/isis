@@ -36,6 +36,11 @@ namespace Test.Benchmark.Runners
         public string EmbeddingEndpointId { get; private set; } = string.Empty;
 
         /// <summary>
+        /// Rerank endpoint id when --rerank was passed and prepared; otherwise null.
+        /// </summary>
+        public string? RerankEndpointId { get; private set; } = null;
+
+        /// <summary>
         /// Embedding dimensionality.
         /// </summary>
         public int Dimensionality { get; private set; } = 384;
@@ -125,6 +130,25 @@ namespace Test.Benchmark.Runners
             }
 
             Environment = BenchmarkEnvironment.Capture(Client.BaseUrl, format + " " + model + " @ " + baseUrl + " (dim " + Dimensionality + ", maxInputTokens " + maxInputTokens + ")");
+
+            if (source.GetFlag("rerank"))
+            {
+                string rerankFormat = source.Get("rerank-format", "Tei");
+                string rerankModel = source.Get("rerank-model", "cross-encoder/ms-marco-MiniLM-L-6-v2");
+                string rerankUrl = source.Get("rerank-url", "http://127.0.0.1:18800");
+                JsonObject rerank = new JsonObject
+                {
+                    ["name"] = "bench-rerank-" + Sanitize(rerankModel),
+                    ["kind"] = "Rerank",
+                    ["apiFormat"] = rerankFormat,
+                    ["baseUrl"] = rerankUrl,
+                    ["model"] = rerankModel,
+                    ["timeoutMs"] = 120000,
+                    ["healthCheckUrl"] = "/health"
+                };
+                RerankEndpointId = await Client.EnsureEndpointAsync(rerank, token).ConfigureAwait(false);
+                Environment.Rerank = rerankFormat + " " + rerankModel + " @ " + rerankUrl;
+            }
         }
 
         /// <summary>
@@ -140,15 +164,24 @@ namespace Test.Benchmark.Runners
             string format = Arguments.Get("inference-format", "Ollama");
             string model = Arguments.Get("inference-model", "gemma3:4b");
             string baseUrl = Arguments.Get("inference-url", "http://127.0.0.1:11434");
+            // A remote endpoint gets its own label (--inference-label) so it never overwrites the local definition.
+            string label = Arguments.Get("inference-label", string.Empty);
             JsonObject definition = new JsonObject
             {
-                ["name"] = "bench-infer-" + Sanitize(model),
+                ["name"] = "bench-infer-" + Sanitize(model) + (label.Length > 0 ? "-" + Sanitize(label) : string.Empty),
                 ["kind"] = "Inference",
                 ["apiFormat"] = format,
-                ["baseUrl"] = baseUrl,
+                ["baseUrl"] = baseUrl.TrimEnd('/'),
                 ["model"] = model,
                 ["timeoutMs"] = 600000
             };
+
+            string? apiKey = Arguments.GetOptional("inference-api-key");
+            if (!string.IsNullOrEmpty(apiKey))
+            {
+                definition["authType"] = "BearerToken";
+                definition["authSecret"] = apiKey;
+            }
             Environment.Inference = format + " " + model + " @ " + baseUrl;
             return await Client.EnsureEndpointAsync(definition, token).ConfigureAwait(false);
         }

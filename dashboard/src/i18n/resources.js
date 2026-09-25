@@ -87,6 +87,7 @@ export const en = {
       chat: 'Chat with Memory',
       embedding: 'Embedding Endpoints',
       inference: 'Inference Endpoints',
+      rerank: 'Rerank Endpoints',
       collectionsRecall: 'Collections',
       requestHistory: 'Request History',
       operations: 'Operations',
@@ -158,7 +159,11 @@ export const en = {
       chunkStrategy: 'Chunk strategy',
       chunkMaxTokens: 'Max tokens per chunk',
       chunkOverlapTokens: 'Chunk overlap (tokens)',
-      chunkingHint: 'Oversized memories are split to fit the embedding model budget; 0 max tokens uses the model budget. Applies to embedding scopes.'
+      chunkingHint: 'Oversized memories are split to fit the embedding model budget; 0 max tokens uses the model budget. Applies to embedding scopes.',
+      rerankEndpoint: 'Rerank endpoint',
+      rerankCandidates: 'Rerank candidates',
+      rerankMinScore: 'Minimum rerank score',
+      rerankHint: 'When set, searches send this many candidates to the reranker and keep the best. A minimum score drops weak matches so an unanswerable question returns nothing; leave it blank to keep all.'
     },
     instructions: {
       title: 'Instructions',
@@ -304,6 +309,9 @@ export const en = {
       inferenceSubtitle: 'Endpoints Isis uses for summaries, compaction, and chat.',
       addEmbedding: 'Add embedding endpoint',
       addInference: 'Add inference endpoint',
+      rerankTitle: 'Rerank Endpoints',
+      rerankSubtitle: 'Cross-encoders that rescore search candidates; attach one to a scope to rerank its searches.',
+      addRerank: 'Add rerank endpoint',
       apiFormat: 'API format',
       baseUrl: 'Base URL',
       baseUrlHint: 'Full base URL; the API path (e.g. /v1/embeddings or /api/embed) is appended automatically.',

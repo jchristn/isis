@@ -101,7 +101,7 @@ the corresponding REST request body. (Voltaic also auto-registers `ping`, `echo`
 | `scope_enumerate` | `GET .../scopes` | List the memory scopes in a tenant |
 | `scope_create` | `POST .../scopes` | Create a memory scope |
 | `scope_read` | `GET .../scopes/{sid}` | Read a scope by id |
-| `scope_update` | `PUT .../scopes/{sid}` | Update a scope's name/description |
+| `scope_update` | `GET` then `PUT .../scopes/{sid}` | Update a scope's name, description, or rerank settings, keeping everything else |
 | `scope_delete` | `DELETE .../scopes/{sid}` | Delete a scope (cascades categories, memories, scope instructions) |
 | `category_enumerate` | `GET .../categories` | List categories in a scope |
 | `category_create` | `POST .../categories` | Create a category |
@@ -278,6 +278,9 @@ Proxies `POST /v1.0/api/tenants/{tenantId}/scopes`.
 | `chunkStrategy` | string | No | `FixedTokenCount` | Chunk splitting strategy (e.g. `FixedTokenCount`, `SentenceBased`, `ParagraphBased`, `Recursive`) |
 | `chunkMaxTokens` | integer | No | 0 | Per-chunk token budget (0 = use the embedding model's resolved budget) |
 | `chunkOverlapTokens` | integer | No | 64 | Token overlap between adjacent chunks |
+| `rerankEndpointId` | string | No | null | A `Rerank` endpoint (`rep_` id); searches in the scope are then reranked by default |
+| `rerankCandidates` | integer | No | 20 | Candidates the reranker scores before the top results are kept (1..100) |
+| `rerankMinScore` | number | No | null | Drop reranked hits scoring below this (0..1), so a question with no relevant memory returns nothing |
 
 #### Example Request
 
@@ -314,7 +317,7 @@ Proxies `POST /v1.0/api/tenants/{tenantId}/scopes`.
 
 ### `endpoint_enumerate`
 
-List a tenant's configured model endpoints (embedding and inference). Use it to choose an
+List a tenant's configured model endpoints (embedding, inference, and rerank). Use it to choose an
 `embeddingEndpointId` for a semantic (`RecallDb`) scope, or to confirm whether any embedding
 endpoint exists at all.
 
@@ -325,7 +328,7 @@ Proxies `GET /v1.0/api/tenants/{tenantId}/endpoints` (optional `kind` filter).
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `tenantId` | string | Yes | n/a | Tenant identifier from `whoami` |
-| `kind` | string | No | all | Filter by endpoint kind: `Embedding` or `Inference` |
+| `kind` | string | No | all | Filter by endpoint kind: `Embedding`, `Inference`, or `Rerank` |
 
 #### Guidance
 
@@ -643,6 +646,8 @@ Proxies `POST /v1.0/api/tenants/{tenantId}/scopes/{scopeId}/memories`.
 | `title` | string | No | null | Human-readable title |
 | `summary` | string | No | null | One-line recall hook returned in list/search |
 | `type` | string | No | null | One of `User`, `Feedback`, `Project`, `Reference` |
+| `links` | string[] | No | [] | Slugs of related memories; chat follows these (and `[[slug]]` references in the body) for context |
+| `supersedes` | string[] | No | [] | Slugs of memories in the scope that this memory replaces; search ranks each replaced memory after this one and marks it `supersededBy` |
 
 #### Example Request
 
@@ -669,14 +674,25 @@ Proxies `POST /v1.0/api/tenants/{tenantId}/scopes/{scopeId}/memories`.
   "data": {
     "id": "mem_1",
     "slug": "filesystem-layout",
-    "version": 2
+    "version": 2,
+    "supersedes": [],
+    "supersededBy": null,
+    "similarMemories": [
+      { "id": "mem_4", "slug": "repo-layout", "title": "Repo layout", "categoryId": "cat_layout", "similarity": 0.94 }
+    ]
   }
 }
 ```
 
+`similarMemories` appears only on scopes with semantic search and only when an existing memory is very close to
+the one written (server setting `retrieval.duplicateSimilarityThreshold`, default 0.85).
+
 #### Guidance
 
 - Choose a stable, descriptive slug so repeated writes update one memory.
+- If `similarMemories` lists a memory that says the same thing, update that memory (reuse its slug) and delete the
+  new one, or keep the new one and pass the old slug in `supersedes`.
+- When a fact changes and the old memory should stay for history, write the new memory with `supersedes`.
 - Provide a crisp `summary`; it is the recall hook shown in enumerate and search results.
 - Do not store secrets, credentials, tokens, or raw sensitive data as memory content.
 
@@ -698,6 +714,11 @@ Proxies `POST /v1.0/api/tenants/{tenantId}/scopes/{scopeId}/memories/search`.
 | `categoryName` | string | No | null | Optional category filter: name or `cat_` id (sent as `categoryFilter`). An unknown category returns 400. |
 | `minScore` | number | No | null | Drop hits scoring below this. Hybrid scores are fused and normalized to 0..1 |
 | `recencyWeight` | number | No | 0.1 | Hybrid only: weight (0..1) of a signal favoring recently written memories; 0 disables |
+| `superseded` | string | No | `Demote` | `Demote` ranks a replaced memory right after its replacement; `Hide` drops it; `Include` keeps the order and only marks it |
+| `linkExpansion` | integer | No | 0 | Add up to this many linked memories (0..10) after the results that link to them (marked `linkedFrom`) |
+| `diversity` | number | No | 0 | 0..1: higher values move results that repeat a higher-ranked one below other relevant memories |
+| `rerank` | boolean | No | scope default | Rerank with the scope's rerank endpoint (default: when the scope has one) |
+| `minRerankScore` | number | No | scope `rerankMinScore` | Drop reranked hits scoring below this (0..1) |
 
 #### Example Request
 
@@ -730,10 +751,15 @@ Proxies `POST /v1.0/api/tenants/{tenantId}/scopes/{scopeId}/memories/search`.
         "vectorScore": 0.61,
         "textScore": 0.09,
         "vectorRank": 1,
-        "textRank": 2
+        "textRank": 2,
+        "memoryId": "mem_7",
+        "rerankScore": null,
+        "supersededBy": null,
+        "linkedFrom": null
       }
     ],
-    "effectiveMode": "Hybrid"
+    "effectiveMode": "Hybrid",
+    "reranked": false
   }
 }
 ```
@@ -741,6 +767,9 @@ Proxies `POST /v1.0/api/tenants/{tenantId}/scopes/{scopeId}/memories/search`.
 #### Guidance
 
 - `Semantic` and `Hybrid` modes require a RecallDB-backed scope; `Keyword` works on any store.
+- A hit with `supersededBy` is outdated: prefer the memory it names.
+- On a reranked search (`reranked: true`), `score` is the reranker's relevance score; an empty result under a
+  `minRerankScore` means no memory answers the question.
 - Search before writing to avoid creating a duplicate memory under a new slug.
 
 ### `memory_delete`

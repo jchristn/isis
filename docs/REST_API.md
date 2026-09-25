@@ -241,14 +241,36 @@ or `AccessKeySecret` (with `authHeaderName`/`authKeyId` + `authSecretHeaderName`
 embedding endpoint may set `maxInputTokens` to override the token budget used when chunking oversized
 memories (0 = resolve the budget automatically from the API format and model name).
 
+An endpoint's `kind` is `Embedding`, `Inference`, or `Rerank` (ids are prefixed `eep_`, `iep_`, and `rep_`). A
+**Rerank** endpoint is a cross-encoder that scores how well each candidate answers the query. Its `apiFormat` is
+`Tei` (Hugging Face Text Embeddings Inference: `POST {baseUrl}/rerank` with `query` and `texts`, health path
+`/health`) or `Cohere` (`POST {baseUrl}/v1/rerank` with `model`, `query`, and `documents`, answering
+`results[].relevance_score`; also served by vLLM, Jina, and other Cohere-compatible rerankers).
+
 Chunking of oversized memories is transparent to the API and configured on the **scope**: `chunkingMode`
 (`OnOverflow` default — split only when a body exceeds the budget — `Always`, or `Off`), `chunkStrategy`
 (`FixedTokenCount` default), `chunkMaxTokens` (0 = use the model budget), and `chunkOverlapTokens` (64).
 A memory that overflows is embedded as several chunks under the hood; upsert, read, search, and delete all
 continue to operate on the whole memory, and search returns one hit per memory regardless of chunking.
 
+Reranking is also configured on the **scope**: `rerankEndpointId` (a `Rerank` endpoint in the tenant; null, the
+default, turns reranking off), `rerankCandidates` (how many retrieved candidates the reranker scores before the top
+`topK` are kept; 1 to 100, default 20), and `rerankMinScore` (drop reranked hits scoring below it, so a question with
+no relevant memory returns nothing; null keeps every hit). Creating or updating a scope with a `rerankEndpointId` that
+is missing or not a `Rerank` endpoint returns 400. `PUT` replaces the whole scope, so send every field you want to
+keep (read the scope first).
+
+A memory upsert accepts `supersedes`, a list of slugs (or `mem_` ids) of memories in the same scope that the new
+memory replaces, for example an earlier decision it reverses. The server keeps `supersededBy` (the id of the replacing
+memory) on each replaced memory; it is read-only. Removing a slug from `supersedes`, or deleting the replacing memory,
+makes the replaced memory current again, and a memory written after the memory that replaces it is marked replaced
+when it is created. On scopes with semantic search, the upsert response also carries `similarMemories`: existing
+memories whose embedding is very close to the new one (`id`, `slug`, `title`, `categoryId`, `similarity`), so the
+writer can reuse that slug or supersede it instead of keeping a duplicate. The field is omitted when there are none.
+The threshold is the server setting `retrieval.duplicateSimilarityThreshold` (default 0.85). The threshold depends on the embedding model: with all-minilm, a memory and its replacement typically score 0.55 to 0.88, while distinct but closely related memories can reach 0.89, so treat the list as candidates to review.
+
 A search body is
-`{ "queryText": "…", "mode": "Hybrid", "topK": 10, "categoryFilter": "…", "tokenBudget": 240, "minScore": null, "recencyWeight": 0.1 }`.
+`{ "queryText": "…", "mode": "Hybrid", "topK": 10, "categoryFilter": "…", "tokenBudget": 240, "minScore": null, "recencyWeight": 0.1, "superseded": "Demote", "linkExpansion": 0, "diversity": 0, "rerank": null, "minRerankScore": null }`.
 `queryText` is required (an empty or missing query returns 400). `categoryFilter` accepts a category name or
 its `cat_` id; an unknown category returns 400. `minScore` (optional) drops hits scoring below it.
 `recencyWeight` (hybrid only, 0 to 1, default 0.1, 0 disables) adds a signal that favors more recently written
@@ -256,14 +278,34 @@ memories, which mostly breaks near-ties such as a fact and its later replacement
 memory was last written, so for scopes filled by a bulk import, where write order carries no meaning, pass
 `recencyWeight: 0`.
 
+`superseded` controls memories that another memory replaces: `Demote` (default) ranks each replaced memory
+directly after its replacement, adding the replacement when the search did not retrieve it; `Hide` drops replaced
+memories (still adding their replacement); `Include` leaves the order unchanged. Replacement chains are followed to
+the current memory. `linkExpansion` (0 to 10, default 0) adds up to that many memories linked from the results,
+through a memory's `links` list or `[[slug]]` references in its body, placed right after the result that links to
+them; they are extra to `topK`. `diversity` (0 to 1, default 0) reorders the results by maximal marginal relevance,
+so a result that mostly repeats a higher-ranked one (by word overlap) gives way to other relevant memories.
+
+When the scope has a rerank endpoint, the search retrieves `rerankCandidates` candidates, has the reranker score
+the title and up to 1,200 characters of each, and keeps the best `topK`. `rerank: false` skips it for one query, and
+`rerank: true` fails with 400 when the scope has no rerank endpoint. `minRerankScore` drops reranked hits below it,
+overriding the scope's `rerankMinScore`. `minScore` still applies to the retrieval score before reranking. The
+response's `reranked` is true when the hits were reranked.
+
 Each hit has `storeKey`, `slug`, `title`, `snippet`, and `score`, plus the evidence behind the score: `vectorScore`
 and `textScore` (the raw leg scores, null when that leg did not return the hit), and in hybrid mode `vectorRank`
 and `textRank` (1-based ranks in each leg). The meaning of `score` depends on the mode. In `Hybrid` it is the fused
 reciprocal-rank score normalized to 0..1 (1.0 means ranked first by every signal). In `Semantic` it is the vector
-similarity, and in `Keyword` the store's text relevance.
+similarity, and in `Keyword` the store's text relevance. When the search was reranked, `score` and `rerankScore`
+hold the reranker's score (0..1 for TEI and Cohere-compatible rerankers). Hits also carry `memoryId`, `supersededBy`
+(the slug of the memory that replaces this one, null when current), and `linkedFrom` (the slug of the result that
+brought this memory in by link expansion or as a replacement, null for directly retrieved memories).
 
 Chat (`POST …/scopes/{scopeId}/chat`) takes `{ "question": "…", "topK": 0, "inferenceEndpointId": "…" }`. A `topK` of 0
-(the default) retrieves the server's default number of memories, 8.
+(the default) retrieves the server's default number of memories, 8. Chat follows up to 2 links from the retrieved
+memories (server setting `retrieval.chatLinkExpansion`), tells the model which memories are outdated, and, when the
+scope's reranker rejects every candidate, grounds the answer on no memories so the model says the answer is not in
+memory.
 
 ### Instructions (tenant-scoped)
 

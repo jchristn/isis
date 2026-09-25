@@ -201,11 +201,41 @@ namespace Test.Benchmark
         /// <param name="scopeId">Scope id.</param>
         /// <param name="memory">Memory body (slug, categoryId, title, summary, body, ...).</param>
         /// <param name="token">Cancellation token.</param>
-        /// <returns>The timed outcome.</returns>
-        public async Task<TimedResponse> UpsertMemoryAsync(string scopeId, JsonObject memory, CancellationToken token)
+        /// <returns>The timed outcome, with any similar memories the server reported.</returns>
+        public async Task<UpsertResponse> UpsertMemoryAsync(string scopeId, JsonObject memory, CancellationToken token)
         {
             TimedCall call = await TimedSendAsync(HttpMethod.Post, TenantPath("/scopes/" + scopeId + "/memories"), memory, token).ConfigureAwait(false);
-            return new TimedResponse { StatusCode = call.StatusCode, ElapsedMs = call.ElapsedMs, Error = call.IsSuccess ? null : Truncate(call.Body) };
+            UpsertResponse response = new UpsertResponse { StatusCode = call.StatusCode, ElapsedMs = call.ElapsedMs, Error = call.IsSuccess ? null : Truncate(call.Body) };
+            if (call.IsSuccess && call.Body.Contains("similarMemories", StringComparison.Ordinal))
+            {
+                JsonArray? similar = JsonNode.Parse(call.Body)?["similarMemories"] as JsonArray;
+                foreach (JsonNode? item in similar ?? new JsonArray())
+                {
+                    string? slug = item?["slug"]?.GetValue<string>();
+                    if (!string.IsNullOrEmpty(slug)) response.SimilarSlugs.Add(slug);
+                }
+            }
+
+            return response;
+        }
+
+        /// <summary>
+        /// Set a scope's rerank settings, keeping the rest of the scope as it is.
+        /// </summary>
+        /// <param name="scopeId">Scope id.</param>
+        /// <param name="rerankEndpointId">Rerank endpoint id, or null to stop reranking.</param>
+        /// <param name="candidates">Candidates sent to the reranker.</param>
+        /// <param name="minScore">Scope minimum rerank score, or null for none.</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>Task.</returns>
+        public async Task ConfigureRerankAsync(string scopeId, string? rerankEndpointId, int candidates, double? minScore, CancellationToken token)
+        {
+            JsonNode scope = await GetJsonAsync(TenantPath("/scopes/" + scopeId), token).ConfigureAwait(false);
+            JsonObject body = scope.AsObject();
+            body["rerankEndpointId"] = rerankEndpointId;
+            body["rerankCandidates"] = candidates;
+            body["rerankMinScore"] = minScore;
+            await SendJsonAsync(HttpMethod.Put, TenantPath("/scopes/" + scopeId), body, token).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -217,15 +247,22 @@ namespace Test.Benchmark
         /// <param name="topK">Result count.</param>
         /// <param name="categoryFilter">Optional category name or id.</param>
         /// <param name="token">Cancellation token.</param>
-        /// <param name="recencyWeight">Optional hybrid recency weight (null = server default).</param>
-        /// <param name="minScore">Optional minimum score (null = none).</param>
+        /// <param name="options">Optional search settings (null members use the server default).</param>
         /// <returns>The parsed, timed response.</returns>
-        public async Task<SearchResponse> SearchAsync(string scopeId, string queryText, string mode, int topK, string? categoryFilter, CancellationToken token, double? recencyWeight = null, double? minScore = null)
+        public async Task<SearchResponse> SearchAsync(string scopeId, string queryText, string mode, int topK, string? categoryFilter, CancellationToken token, SearchOptions? options = null)
         {
             JsonObject body = new JsonObject { ["queryText"] = queryText, ["mode"] = mode, ["topK"] = topK };
             if (!string.IsNullOrEmpty(categoryFilter)) body["categoryFilter"] = categoryFilter;
-            if (recencyWeight.HasValue) body["recencyWeight"] = recencyWeight.Value;
-            if (minScore.HasValue) body["minScore"] = minScore.Value;
+            if (options != null)
+            {
+                if (options.RecencyWeight.HasValue) body["recencyWeight"] = options.RecencyWeight.Value;
+                if (options.MinScore.HasValue) body["minScore"] = options.MinScore.Value;
+                if (!string.IsNullOrEmpty(options.Superseded)) body["superseded"] = options.Superseded;
+                if (options.LinkExpansion.HasValue) body["linkExpansion"] = options.LinkExpansion.Value;
+                if (options.Diversity.HasValue) body["diversity"] = options.Diversity.Value;
+                if (options.Rerank.HasValue) body["rerank"] = options.Rerank.Value;
+                if (options.MinRerankScore.HasValue) body["minRerankScore"] = options.MinRerankScore.Value;
+            }
 
             TimedCall call = await TimedSendAsync(HttpMethod.Post, TenantPath("/scopes/" + scopeId + "/memories/search"), body, token).ConfigureAwait(false);
             SearchResponse response = new SearchResponse { StatusCode = call.StatusCode, ElapsedMs = call.ElapsedMs };
@@ -237,6 +274,7 @@ namespace Test.Benchmark
 
             JsonNode? parsed = JsonNode.Parse(call.Body);
             response.EffectiveMode = parsed?["effectiveMode"]?.GetValue<string>() ?? string.Empty;
+            response.Reranked = parsed?["reranked"]?.GetValue<bool>() ?? false;
             JsonArray? hits = parsed?["hits"] as JsonArray;
             if (hits != null)
             {

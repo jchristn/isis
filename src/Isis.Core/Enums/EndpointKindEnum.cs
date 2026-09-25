@@ -14,6 +14,12 @@ namespace Isis.Core.Enums
         /// An inference/completion endpoint. Used for memory hygiene (summaries, dedup, compaction)
         /// and the chat-with-memory surface.
         /// </summary>
-        Inference
+        Inference,
+
+        /// <summary>
+        /// A reranking endpoint (a cross-encoder) that scores how well each candidate passage answers a query. Used
+        /// to reorder and threshold search results after retrieval.
+        /// </summary>
+        Rerank
     }
 }

@@ -101,6 +101,11 @@ namespace Isis.Core
         public static readonly string InferenceEndpointPrefix = "iep_";
 
         /// <summary>
+        /// Prefix for rerank endpoint identifiers.
+        /// </summary>
+        public static readonly string RerankEndpointPrefix = "rep_";
+
+        /// <summary>
         /// Chat session identifier prefix.
         /// </summary>
         public static readonly string ChatSessionPrefix = "cht_";

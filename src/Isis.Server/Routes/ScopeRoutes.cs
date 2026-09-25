@@ -2,6 +2,7 @@ namespace Isis.Server.Routes
 {
     using System;
     using System.Collections.Generic;
+    using System.Threading;
     using System.Threading.Tasks;
     using Isis.Core.Database;
     using Isis.Core.Enums;
@@ -155,8 +156,25 @@ namespace Isis.Server.Routes
                 }
             }
 
+            string? rerankError = await ValidateRerankEndpointAsync(tenantId, scope.RerankEndpointId, context.Token).ConfigureAwait(false);
+            if (rerankError != null)
+            {
+                await RouteHelpers.ErrorAsync(context, 400, "BadRequest", rerankError).ConfigureAwait(false);
+                return;
+            }
+
             Scope created = await _Database.Scopes.CreateAsync(scope, context.Token).ConfigureAwait(false);
             await RouteHelpers.JsonAsync(context, 201, created).ConfigureAwait(false);
+        }
+
+        private async Task<string?> ValidateRerankEndpointAsync(string tenantId, string? rerankEndpointId, CancellationToken token)
+        {
+            if (string.IsNullOrEmpty(rerankEndpointId)) return null;
+
+            ModelEndpoint? endpoint = await _Database.ModelEndpoints.ReadAsync(tenantId, rerankEndpointId, token).ConfigureAwait(false);
+            if (endpoint == null) return "The specified rerankEndpointId was not found in this tenant.";
+            if (endpoint.Kind != EndpointKindEnum.Rerank) return "The specified rerankEndpointId is a " + endpoint.Kind + " endpoint; a Rerank endpoint is required.";
+            return null;
         }
 
         private async Task ReadAsync(HttpContextBase context)
@@ -207,6 +225,13 @@ namespace Isis.Server.Routes
             update.StoreProvider = existing.StoreProvider;
             update.Dimensionality = existing.Dimensionality;
             update.RecallCollectionId = existing.RecallCollectionId;
+            string? rerankError = await ValidateRerankEndpointAsync(tenantId, update.RerankEndpointId, context.Token).ConfigureAwait(false);
+            if (rerankError != null)
+            {
+                await RouteHelpers.ErrorAsync(context, 400, "BadRequest", rerankError).ConfigureAwait(false);
+                return;
+            }
+
             Scope saved = await _Database.Scopes.UpdateAsync(update, context.Token).ConfigureAwait(false);
             await RouteHelpers.JsonAsync(context, 200, saved).ConfigureAwait(false);
         }

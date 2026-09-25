@@ -98,6 +98,37 @@ namespace Isis.Core.Models
         public string? EmbeddingEndpointId { get; set; } = null;
 
         /// <summary>
+        /// Identifier of a rerank endpoint (rep_ id) used to rerank this scope's search results, if any. When set,
+        /// searches rerank by default (a query can opt out with <c>rerank: false</c>).
+        /// </summary>
+        public string? RerankEndpointId { get; set; } = null;
+
+        /// <summary>
+        /// How many retrieved candidates are sent to the reranker before the top results are kept. Minimum 1,
+        /// maximum 100, default 20. Never fewer than the query's topK.
+        /// </summary>
+        public int RerankCandidates
+        {
+            get
+            {
+                return _RerankCandidates;
+            }
+            set
+            {
+                if (value < 1) throw new ArgumentOutOfRangeException(nameof(RerankCandidates), "RerankCandidates must be at least 1.");
+                if (value > 100) throw new ArgumentOutOfRangeException(nameof(RerankCandidates), "RerankCandidates may not exceed 100.");
+                _RerankCandidates = value;
+            }
+        }
+
+        /// <summary>
+        /// Default minimum rerank score for this scope's searches: reranked hits scoring below it are dropped, so a
+        /// question with no relevant memory returns nothing instead of the least-bad matches. Null (the default)
+        /// keeps every reranked hit. A query's <c>minRerankScore</c> overrides it.
+        /// </summary>
+        public double? RerankMinScore { get; set; } = null;
+
+        /// <summary>
         /// For the filesystem store, the layout mode.
         /// </summary>
         public FilesystemLayoutEnum FilesystemLayout { get; set; } = FilesystemLayoutEnum.Hierarchy;
@@ -177,6 +208,7 @@ namespace Isis.Core.Models
         private int _Dimensionality = 0;
         private int _ChunkMaxTokens = 0;
         private int _ChunkOverlapTokens = 64;
+        private int _RerankCandidates = 20;
 
         #endregion
 

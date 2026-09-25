@@ -41,6 +41,26 @@ namespace Test.Benchmark.Runners
         public int Concurrency { get; set; } = 1;
 
         /// <summary>
+        /// Similar memories the server reported across all upserts (similarMemories entries).
+        /// </summary>
+        public int SimilarFlags { get; set; } = 0;
+
+        /// <summary>
+        /// Known supersession pairs in the dataset.
+        /// </summary>
+        public int SupersessionPairs { get; set; } = 0;
+
+        /// <summary>
+        /// Known supersession pairs the similarity check flagged (from either side).
+        /// </summary>
+        public int SupersessionPairsFlagged { get; set; } = 0;
+
+        /// <summary>
+        /// Distinct flagged pairs that are known supersession pairs.
+        /// </summary>
+        public int SimilarFlagsOnKnownPairs { get; set; } = 0;
+
+        /// <summary>
         /// Per-upsert client latency.
         /// </summary>
         public LatencyStats Latency { get; set; } = new LatencyStats();

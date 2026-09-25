@@ -208,6 +208,45 @@ namespace Isis.McpServer
             return Uri.EscapeDataString(value);
         }
 
+        private static List<string>? StringList(RpcParameters? parameters, string name)
+        {
+            // Accept a JSON array of strings, or a single comma-separated string from clients that flatten arrays.
+            string? raw = parameters?.RawJson;
+            if (string.IsNullOrEmpty(raw)) return null;
+
+            using JsonDocument document = JsonDocument.Parse(raw);
+            if (document.RootElement.ValueKind != JsonValueKind.Object || !document.RootElement.TryGetProperty(name, out JsonElement value)) return null;
+
+            List<string> result = new List<string>();
+            if (value.ValueKind == JsonValueKind.Array)
+            {
+                foreach (JsonElement item in value.EnumerateArray())
+                {
+                    if (item.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(item.GetString())) result.Add(item.GetString()!.Trim());
+                }
+            }
+            else if (value.ValueKind == JsonValueKind.String)
+            {
+                foreach (string part in (value.GetString() ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) result.Add(part);
+            }
+            else
+            {
+                return null;
+            }
+
+            return result;
+        }
+
+        private static void AddRerankSettings(RpcParameters? p, Dictionary<string, object?> body)
+        {
+            string? rerankEndpointId = p?.GetString("rerankEndpointId");
+            if (rerankEndpointId != null) body["rerankEndpointId"] = rerankEndpointId.Length > 0 ? rerankEndpointId : null;
+            long? rerankCandidates = p?.GetInt64("rerankCandidates");
+            if (rerankCandidates.HasValue) body["rerankCandidates"] = rerankCandidates.Value;
+            double? rerankMinScore = p?.GetDouble("rerankMinScore");
+            if (rerankMinScore.HasValue) body["rerankMinScore"] = rerankMinScore.Value;
+        }
+
         private static string BuildEndpointBody(RpcParameters? p)
         {
             Dictionary<string, object?> body = new Dictionary<string, object?>();
@@ -235,8 +274,8 @@ namespace Isis.McpServer
             return new
             {
                 name = new { type = "string" },
-                kind = new { type = "string", description = "Embedding or Inference." },
-                apiFormat = new { type = "string", description = "Ollama, OpenAI, VLlm, or Gemini." },
+                kind = new { type = "string", description = "Embedding, Inference, or Rerank." },
+                apiFormat = new { type = "string", description = "Ollama, OpenAI, VLlm, or Gemini for embedding and inference; Tei or Cohere (or VLlm) for rerank." },
                 baseUrl = new { type = "string", description = "Full base URL; the API path is appended (e.g. http://host:11434 or https://api.openai.com)." },
                 authType = new { type = "string", description = "None, BearerToken, ApiKeyHeader, QueryParam, BasicAuth, or AccessKeySecret." },
                 authHeaderName = new { type = "string", description = "Header name for ApiKeyHeader, or access-key header for AccessKeySecret." },
@@ -302,7 +341,14 @@ namespace Isis.McpServer
                         embeddingEndpointId = new { type = "string", description = "Embedding endpoint id for RecallDb semantic scopes." },
                         dimensionality = new { type = "integer", description = "Embedding vector dimension for RecallDb scopes." },
                         filesystemLayout = new { type = "string", description = "SingleFile, Hierarchy, or OkfBundle (Open Knowledge Format), for Filesystem scopes." },
-                        targetPath = new { type = "string", description = "Directory or file path, for Filesystem scopes." }
+                        targetPath = new { type = "string", description = "Directory or file path, for Filesystem scopes." },
+                        chunkingMode = new { type = "string", description = "When to chunk oversized bodies for embedding: OnOverflow (default), Always, or Off." },
+                        chunkStrategy = new { type = "string", description = "Chunk splitting strategy, for example FixedTokenCount (default), SentenceBased, ParagraphBased, Recursive." },
+                        chunkMaxTokens = new { type = "integer", description = "Per-chunk token budget (0 = the embedding model's budget)." },
+                        chunkOverlapTokens = new { type = "integer", description = "Token overlap between adjacent chunks (default 64)." },
+                        rerankEndpointId = new { type = "string", description = "Optional Rerank endpoint id (rep_); searches in the scope are then reranked by default." },
+                        rerankCandidates = new { type = "integer", description = "Candidates sent to the reranker (1..100, default 20)." },
+                        rerankMinScore = new { type = "number", description = "Drop reranked hits scoring below this (0..1). Omit to keep all." }
                     },
                     required = new[] { "tenantId", "name" }
                 },
@@ -317,14 +363,21 @@ namespace Isis.McpServer
                     if (dimensionality.HasValue) body["dimensionality"] = dimensionality.Value;
                     if (p?.GetString("filesystemLayout") != null) body["filesystemLayout"] = p.GetString("filesystemLayout");
                     if (p?.GetString("targetPath") != null) body["targetPath"] = p.GetString("targetPath");
+                    if (p?.GetString("chunkingMode") != null) body["chunkingMode"] = p.GetString("chunkingMode");
+                    if (p?.GetString("chunkStrategy") != null) body["chunkStrategy"] = p.GetString("chunkStrategy");
+                    long? chunkMaxTokens = p?.GetInt64("chunkMaxTokens");
+                    if (chunkMaxTokens.HasValue) body["chunkMaxTokens"] = chunkMaxTokens.Value;
+                    long? chunkOverlapTokens = p?.GetInt64("chunkOverlapTokens");
+                    if (chunkOverlapTokens.HasValue) body["chunkOverlapTokens"] = chunkOverlapTokens.Value;
+                    AddRerankSettings(p, body);
                     string path = "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/scopes";
                     return await ProxyAsync(HttpMethod.Post, path, JsonSerializer.Serialize(body), "scope_create", CurrentCredentials(), ct).ConfigureAwait(false);
                 });
 
             _Server.RegisterTool(
                 "endpoint_enumerate",
-                "List the tenant's configured model endpoints (embedding and inference), each with its id, kind, model, and embedding dimensionality. Use this to find an embeddingEndpointId (and its dimensionality) BEFORE creating a RecallDb semantic scope. If no embedding endpoint is listed, create Filesystem or Verbex (keyword-only) scopes instead. Required: tenantId. Optional: kind (Embedding or Inference).",
-                new { type = "object", properties = new { tenantId = new { type = "string" }, kind = new { type = "string", description = "Optional filter: Embedding or Inference." } }, required = new[] { "tenantId" } },
+                "List the tenant's configured model endpoints (embedding, inference, and rerank), each with its id, kind, model, and embedding dimensionality. Use this to find an embeddingEndpointId (and its dimensionality) BEFORE creating a RecallDb semantic scope. If no embedding endpoint is listed, create Filesystem or Verbex (keyword-only) scopes instead. Required: tenantId. Optional: kind (Embedding, Inference, or Rerank).",
+                new { type = "object", properties = new { tenantId = new { type = "string" }, kind = new { type = "string", description = "Optional filter: Embedding, Inference, or Rerank." } }, required = new[] { "tenantId" } },
                 async (RpcParameters? p, CancellationToken ct) =>
                 {
                     string path = "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/endpoints";
@@ -409,7 +462,9 @@ namespace Isis.McpServer
 
             _Server.RegisterTool(
                 "memory_upsert",
-                "Create or update a memory. Idempotent on (scope, category, slug). Required: tenantId, scopeId, categoryId, slug, body. Optional: title, summary, type.",
+                "Create or update a memory. Idempotent on (scope, category, slug). Required: tenantId, scopeId, categoryId, slug, body. Optional: title, summary, type, links, supersedes. "
+                + "When the new memory replaces an older one (a changed decision, a corrected fact), pass the old slug in supersedes: search then ranks the old memory after the new one and marks it outdated. "
+                + "The response lists existing memories that closely resemble this one in similarMemories; if one of them says the same thing, update it (reuse its slug) instead of keeping both, or supersede it.",
                 new
                 {
                     type = "object",
@@ -422,7 +477,9 @@ namespace Isis.McpServer
                         title = new { type = "string" },
                         summary = new { type = "string", description = "One-line recall hook." },
                         body = new { type = "string", description = "The memory content." },
-                        type = new { type = "string", description = "Optional classification; one of User, Feedback, Project, Reference. Unknown or omitted values default to Project." }
+                        type = new { type = "string", description = "Optional classification; one of User, Feedback, Project, Reference. Unknown or omitted values default to Project." },
+                        links = new { type = "array", items = new { type = "string" }, description = "Slugs of related memories. Chat follows these (and [[slug]] references in the body) to add linked context." },
+                        supersedes = new { type = "array", items = new { type = "string" }, description = "Slugs of memories in this scope that this memory replaces." }
                     },
                     required = new[] { "tenantId", "scopeId", "categoryId", "slug", "body" }
                 },
@@ -435,13 +492,18 @@ namespace Isis.McpServer
                     if (p?.GetString("title") != null) body["title"] = p.GetString("title");
                     if (p?.GetString("summary") != null) body["summary"] = p.GetString("summary");
                     if (p?.GetString("type") != null) body["type"] = p.GetString("type");
+                    List<string>? links = StringList(p, "links");
+                    if (links != null) body["links"] = links;
+                    List<string>? supersedes = StringList(p, "supersedes");
+                    if (supersedes != null) body["supersedes"] = supersedes;
                     string path = "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/scopes/" + Encode(Require(p, "scopeId")) + "/memories";
                     return await ProxyAsync(HttpMethod.Post, path, JsonSerializer.Serialize(body), "memory_upsert", CurrentCredentials(), ct).ConfigureAwait(false);
                 });
 
             _Server.RegisterTool(
                 "memory_search",
-                "Search a scope's memory. Required: tenantId, scopeId, queryText. Optional: mode (Keyword|Semantic|Hybrid), topK, categoryName, minScore, recencyWeight.",
+                "Search a scope's memory. Required: tenantId, scopeId, queryText. Optional: mode (Keyword|Semantic|Hybrid), topK, categoryName, minScore, recencyWeight, superseded, linkExpansion, diversity, rerank, minRerankScore. "
+                + "Hits replaced by a newer memory carry supersededBy (prefer the replacement); hits added by following links carry linkedFrom.",
                 new
                 {
                     type = "object",
@@ -454,7 +516,12 @@ namespace Isis.McpServer
                         topK = new { type = "integer" },
                         categoryName = new { type = "string", description = "Optional category filter: the category's name or its cat_ id. An unknown category is an error, not an empty result." },
                         minScore = new { type = "number", description = "Optional minimum score; weaker hits are dropped. Hybrid scores are fused and normalized to 0..1." },
-                        recencyWeight = new { type = "number", description = "Hybrid only: weight 0..1 of a signal favoring recently written memories (default 0.1; 0 disables)." }
+                        recencyWeight = new { type = "number", description = "Hybrid only: weight 0..1 of a signal favoring recently written memories (default 0.1; 0 disables)." },
+                        superseded = new { type = "string", description = "Demote (default: a replaced memory ranks right after its replacement), Hide (drop replaced memories), or Include (unchanged order, only marked)." },
+                        linkExpansion = new { type = "integer", description = "Add up to this many linked memories (0..10, default 0) after the results that link to them." },
+                        diversity = new { type = "number", description = "0..1 (default 0): higher values drop results that repeat higher-ranked ones in favor of other relevant memories." },
+                        rerank = new { type = "boolean", description = "Rerank with the scope's rerank endpoint. Default: rerank when the scope has one." },
+                        minRerankScore = new { type = "number", description = "Drop reranked hits scoring below this (0..1). Defaults to the scope's rerankMinScore." }
                     },
                     required = new[] { "tenantId", "scopeId", "queryText" }
                 },
@@ -470,6 +537,15 @@ namespace Isis.McpServer
                     if (minScore.HasValue) body["minScore"] = minScore.Value;
                     double? recencyWeight = p?.GetDouble("recencyWeight");
                     if (recencyWeight.HasValue) body["recencyWeight"] = recencyWeight.Value;
+                    if (p?.GetString("superseded") != null) body["superseded"] = p.GetString("superseded");
+                    long? linkExpansion = p?.GetInt64("linkExpansion");
+                    if (linkExpansion.HasValue) body["linkExpansion"] = linkExpansion.Value;
+                    double? diversity = p?.GetDouble("diversity");
+                    if (diversity.HasValue) body["diversity"] = diversity.Value;
+                    bool? rerank = p?.GetBoolean("rerank");
+                    if (rerank.HasValue) body["rerank"] = rerank.Value;
+                    double? minRerankScore = p?.GetDouble("minRerankScore");
+                    if (minRerankScore.HasValue) body["minRerankScore"] = minRerankScore.Value;
                     string path = "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/scopes/" + Encode(Require(p, "scopeId")) + "/memories/search";
                     return await ProxyAsync(HttpMethod.Post, path, JsonSerializer.Serialize(body), "memory_search", CurrentCredentials(), ct).ConfigureAwait(false);
                 });
@@ -492,15 +568,37 @@ namespace Isis.McpServer
 
             _Server.RegisterTool(
                 "scope_update",
-                "Update a scope's name/description (store provider and dimensionality are immutable). Required: tenantId, scopeId, name. Optional: description.",
-                new { type = "object", properties = new { tenantId = new { type = "string" }, scopeId = new { type = "string" }, name = new { type = "string" }, description = new { type = "string" } }, required = new[] { "tenantId", "scopeId", "name" } },
+                "Update a scope's name, description, or rerank settings (store provider and dimensionality are immutable); settings not passed are kept. Required: tenantId, scopeId. Optional: name, description, rerankEndpointId (empty string removes it), rerankCandidates, rerankMinScore.",
+                new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        tenantId = new { type = "string" },
+                        scopeId = new { type = "string" },
+                        name = new { type = "string" },
+                        description = new { type = "string" },
+                        rerankEndpointId = new { type = "string", description = "Rerank endpoint id (rep_), or an empty string to stop reranking." },
+                        rerankCandidates = new { type = "integer", description = "Candidates sent to the reranker (1..100)." },
+                        rerankMinScore = new { type = "number", description = "Drop reranked hits scoring below this (0..1)." }
+                    },
+                    required = new[] { "tenantId", "scopeId" }
+                },
                 async (RpcParameters? p, CancellationToken ct) =>
                 {
-                    Dictionary<string, object?> body = new Dictionary<string, object?>();
-                    body["name"] = Require(p, "name");
-                    if (p?.GetString("description") != null) body["description"] = p.GetString("description");
+                    // The REST update replaces the whole scope, so start from the current scope and change only what was
+                    // passed; sending just the name would clear the embedding endpoint and chunking settings.
                     string path = "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/scopes/" + Encode(Require(p, "scopeId"));
-                    return await ProxyAsync(HttpMethod.Put, path, JsonSerializer.Serialize(body), "scope_update", CurrentCredentials(), ct).ConfigureAwait(false);
+                    McpCallerCredentials credentials = CurrentCredentials();
+                    Dictionary<string, object?> current = (Dictionary<string, object?>)await ProxyAsync(HttpMethod.Get, path, null, "scope_update", credentials, ct).ConfigureAwait(false);
+                    if (!(current["success"] is bool ok && ok) || !(current.TryGetValue("data", out object? data) && data is JsonElement element && element.ValueKind == JsonValueKind.Object)) return current;
+
+                    Dictionary<string, object?> body = new Dictionary<string, object?>();
+                    foreach (JsonProperty property in element.EnumerateObject()) body[property.Name] = property.Value;
+                    if (p?.GetString("name") != null) body["name"] = p.GetString("name");
+                    if (p?.GetString("description") != null) body["description"] = p.GetString("description");
+                    AddRerankSettings(p, body);
+                    return await ProxyAsync(HttpMethod.Put, path, JsonSerializer.Serialize(body), "scope_update", credentials, ct).ConfigureAwait(false);
                 });
 
             _Server.RegisterTool(

@@ -44,6 +44,8 @@ namespace Test.Shared
                     TestCase.Async("mcp2", "memory-upsert-tolerant-type", "memory_upsert defaults an unknown 'type' instead of failing", MemoryUpsertTolerantTypeAsync),
                     TestCase.Async("mcp2", "memory-search", "memory_search returns hits", MemorySearchAsync),
                     TestCase.Async("mcp2", "memory-search-min-score", "memory_search forwards minScore (an unreachable threshold returns no hits)", MemorySearchMinScoreAsync),
+                    TestCase.Async("mcp2", "memory-upsert-supersedes", "memory_upsert forwards supersedes and memory_search marks the replaced hit", MemoryUpsertSupersedesAsync),
+                    TestCase.Async("mcp2", "scope-update-keeps-settings", "scope_update changes only the fields passed and keeps the rest", ScopeUpdateKeepsSettingsAsync),
                     TestCase.Async("mcp2", "memory-read", "memory_read reads a memory by id", MemoryReadAsync),
                     TestCase.Async("mcp2", "memory-enumerate", "memory_enumerate lists memories", MemoryEnumerateAsync),
                     TestCase.Async("mcp2", "category-enumerate", "category_enumerate lists categories", CategoryEnumerateAsync),
@@ -329,6 +331,72 @@ namespace Test.Shared
             using JsonDocument envelope = JsonDocument.Parse(envelopeText);
             int hits = envelope.RootElement.GetProperty("data").GetProperty("hits").GetArrayLength();
             if (hits != 0) throw new InvalidOperationException("An unreachable minScore should return no hits, got " + hits + ": " + envelopeText);
+        }
+
+        private static async Task<JsonElement> CallToolAsync(McpContext ctx, HttpClient client, string tool, Dictionary<string, object?> arguments)
+        {
+            Dictionary<string, object?> callParams = new Dictionary<string, object?> { { "name", tool }, { "arguments", arguments } };
+            using JsonDocument call = await SendStatelessAsync(client, ctx.Harness.AccessKey, "tools/call", 1, callParams, tool, HttpStatusCode.OK).ConfigureAwait(false)
+                ?? throw new InvalidOperationException("Stateless request returned no body.");
+            string envelopeText = call.RootElement.GetProperty("result").GetProperty("content")[0].GetProperty("text").GetString() ?? string.Empty;
+            using JsonDocument envelope = JsonDocument.Parse(envelopeText);
+            if (!envelope.RootElement.GetProperty("success").GetBoolean()) throw new InvalidOperationException(tool + " failed: " + envelopeText);
+            return envelope.RootElement.GetProperty("data").Clone();
+        }
+
+        private static async Task MemoryUpsertSupersedesAsync()
+        {
+            using McpContext ctx = await McpContext.StartAsync().ConfigureAwait(false);
+            string scopeId = await CreateScopeAsync(ctx).ConfigureAwait(false);
+            string categoryId = await CreateCategoryAsync(ctx, scopeId).ConfigureAwait(false);
+            await UpsertMemoryAsync(ctx, scopeId, categoryId, "ttl-old", "Cache TTL", "The quote cache TTL is 15 minutes; quote cache quote cache.").ConfigureAwait(false);
+
+            using HttpClient client = new HttpClient { BaseAddress = new Uri("http://127.0.0.1:" + ctx.McpPort) };
+            JsonElement saved = await CallToolAsync(ctx, client, "memory_upsert", new Dictionary<string, object?>
+            {
+                { "tenantId", "ten_default" },
+                { "scopeId", scopeId },
+                { "categoryId", categoryId },
+                { "slug", "ttl-new" },
+                { "body", "The quote cache TTL is 5 minutes with jitter." },
+                { "supersedes", new[] { "ttl-old" } }
+            }).ConfigureAwait(false);
+            string supersedes = saved.GetProperty("supersedes").ToString();
+            if (!supersedes.Contains("ttl-old", StringComparison.Ordinal)) throw new InvalidOperationException("memory_upsert should forward supersedes, got " + saved);
+
+            JsonElement search = await CallToolAsync(ctx, client, "memory_search", new Dictionary<string, object?>
+            {
+                { "tenantId", "ten_default" },
+                { "scopeId", scopeId },
+                { "queryText", "quote cache" },
+                { "mode", "Keyword" },
+                { "superseded", "Demote" }
+            }).ConfigureAwait(false);
+            JsonElement hits = search.GetProperty("hits");
+            if (hits.GetArrayLength() < 2 || hits[0].GetProperty("slug").GetString() != "ttl-new") throw new InvalidOperationException("The replacement should rank first: " + search);
+            if (hits[1].GetProperty("supersededBy").GetString() != "ttl-new") throw new InvalidOperationException("The replaced hit should carry supersededBy: " + search);
+        }
+
+        private static async Task ScopeUpdateKeepsSettingsAsync()
+        {
+            using McpContext ctx = await McpContext.StartAsync().ConfigureAwait(false);
+            string scopeId = await CreateScopeAsync(ctx).ConfigureAwait(false);
+            JsonElement before = Data(await ctx.Mcp.ProxyAsync(HttpMethod.Get, "/v1.0/api/tenants/ten_default/scopes/" + scopeId, null, "scope_read", ctx.Admin).ConfigureAwait(false), "read scope");
+            string targetPath = before.GetProperty("targetPath").GetString() ?? string.Empty;
+
+            using HttpClient client = new HttpClient { BaseAddress = new Uri("http://127.0.0.1:" + ctx.McpPort) };
+            JsonElement updated = await CallToolAsync(ctx, client, "scope_update", new Dictionary<string, object?>
+            {
+                { "tenantId", "ten_default" },
+                { "scopeId", scopeId },
+                { "description", "updated through MCP" },
+                { "rerankCandidates", 40 }
+            }).ConfigureAwait(false);
+
+            if (updated.GetProperty("description").GetString() != "updated through MCP") throw new InvalidOperationException("scope_update should set the description: " + updated);
+            if (updated.GetProperty("rerankCandidates").GetInt32() != 40) throw new InvalidOperationException("scope_update should set rerankCandidates: " + updated);
+            if (updated.GetProperty("name").GetString() != before.GetProperty("name").GetString()) throw new InvalidOperationException("scope_update should keep the name: " + updated);
+            if (updated.GetProperty("targetPath").GetString() != targetPath || string.IsNullOrEmpty(targetPath)) throw new InvalidOperationException("scope_update should keep the target path: " + updated);
         }
 
         private static async Task StatelessClaudeSequenceAsync()

@@ -92,6 +92,18 @@ $B retrieval --dataset benchmarks/data/longmemeval-s-60.json --modes Semantic,Hy
 $B retrieval --dataset benchmarks/datasets/atlas.json --modes Hybrid --recency-weight 0 --label recency0
 $B retrieval --dataset benchmarks/datasets/isis-live.json --modes Hybrid --min-score 0.3 --label min03
 
+# Round-3 options: superseded handling, link expansion, diversity (all per query)
+$B retrieval --dataset benchmarks/datasets/atlas.json --modes Hybrid --superseded Include --label sup-include
+$B retrieval --dataset benchmarks/datasets/isis-live.json --modes Hybrid --link-expansion 2 --label link2
+$B retrieval --dataset benchmarks/datasets/isis-live.json --modes Hybrid --diversity 0.3 --label div03
+
+# Reranking: start the optional TEI cross-encoder, then --rerank attaches it to every scope in the run (runs without
+# --rerank detach it). --min-rerank-score is a per-query cutoff; --scope-min-rerank-score sets the scope's cutoff,
+# which is what chat uses.
+docker compose -f benchmarks/docker/compose.yaml --profile rerank up -d
+$B retrieval --dataset benchmarks/datasets/isis-live.json --modes Hybrid --rerank --label rerank
+$B chat --dataset benchmarks/datasets/isis-live.json --rerank --scope-min-rerank-score 0.02 --label rerank-cut
+
 # Chunking sweep: a suffix keeps the variants in separate scopes
 $B retrieval --dataset benchmarks/data/longmemeval-s-60.json --chunk-overlap 0   --scope-suffix ov0
 $B retrieval --dataset benchmarks/data/longmemeval-s-60.json --chunk-overlap 128 --scope-suffix ov128
@@ -118,6 +130,9 @@ report records the git commit (marked `-dirty` for uncommitted changes), the mac
 endpoints, and the configuration. Scope names are deterministic (dataset, corpus, embedding model, suffix), so a
 rerun reuses an already-ingested scope. Pass `--reingest` after changing chunking or embedding code.
 
+Atlas documents that replace an earlier one carry `supersedes`, which the harness sends on upsert. On a fresh ingest
+the report also shows how many of those known pairs the server's similarity check flagged (`similarMemories`).
+
 ## 4. How to read the results
 
 A few of the report sections are easy to misread.
@@ -129,6 +144,8 @@ so on). Compare that with client latency to see where the time actually goes.
 **Score separation.** The report compares the mean top-hit score of answerable and unanswerable questions. When the
 two are close, no score threshold can say "nothing relevant", however it is tuned. Hybrid scores are fused
 reciprocal-rank scores normalized to 0..1, so they are comparable across queries in a way raw similarities are not.
+On a reranked run the top score is the reranker's score. The table also shows how often a cutoff returned no hits
+for answerable questions (lost answers) and for unanswerable ones (correct "nothing relevant").
 
 **Evidence retrieved vs. missed (chat).** Accuracy is reported separately for questions where retrieval did and did
 not put the evidence in the prompt. That split tells retrieval failures apart from generation failures.

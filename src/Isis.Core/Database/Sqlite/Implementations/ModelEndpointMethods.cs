@@ -39,7 +39,7 @@ namespace Isis.Core.Database.Sqlite.Implementations
         public async Task<ModelEndpoint> CreateAsync(ModelEndpoint endpoint, CancellationToken token = default)
         {
             if (endpoint == null) throw new ArgumentNullException(nameof(endpoint));
-            string expectedPrefix = endpoint.Kind == EndpointKindEnum.Inference ? Constants.InferenceEndpointPrefix : Constants.EmbeddingEndpointPrefix;
+            string expectedPrefix = IdGenerator.EndpointPrefix(endpoint.Kind);
             if (String.IsNullOrEmpty(endpoint.Id) || !endpoint.Id.StartsWith(expectedPrefix, StringComparison.Ordinal)) endpoint.Id = IdGenerator.Endpoint(endpoint.Kind);
             endpoint.LastUpdateUtc = DateTime.UtcNow;
 

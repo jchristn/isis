@@ -63,6 +63,7 @@ namespace Test.Benchmark.Runners
             ProvisionedScope?[] scopes = new ProvisionedScope?[dataset.Corpora.Count];
             ConcurrentBag<double> latencies = new ConcurrentBag<double>();
             ConcurrentQueue<string> errors = new ConcurrentQueue<string>();
+            ConcurrentQueue<KeyValuePair<string, string>> flags = new ConcurrentQueue<KeyValuePair<string, string>>();
             int failures = 0;
             int documents = 0;
             int reused = 0;
@@ -110,8 +111,9 @@ namespace Test.Benchmark.Runners
                             {
                                 try
                                 {
-                                    TimedResponse response = await _Context.Client.UpsertMemoryAsync(scope.ScopeId, MemoryBody(scope, document), token).ConfigureAwait(false);
+                                    UpsertResponse response = await _Context.Client.UpsertMemoryAsync(scope.ScopeId, MemoryBody(scope, document), token).ConfigureAwait(false);
                                     latencies.Add(response.ElapsedMs);
+                                    foreach (string similar in response.SimilarSlugs) flags.Enqueue(new KeyValuePair<string, string>(document.Id, similar));
                                     if (!response.IsSuccess)
                                     {
                                         Interlocked.Increment(ref failures);
@@ -151,7 +153,11 @@ namespace Test.Benchmark.Runners
             summary.Latency = LatencyStats.From(latencies);
             summary.Stages = after.Since(before);
             summary.SampleErrors.AddRange(errors);
-            return scopes.Select(s => s!).ToList();
+            ScoreSimilarityFlags(dataset, flags.ToList(), summary);
+
+            List<ProvisionedScope> provisioned = scopes.Select(s => s!).ToList();
+            await ConfigureRerankAsync(provisioned, token).ConfigureAwait(false);
+            return provisioned;
         }
 
         /// <summary>
@@ -171,6 +177,39 @@ namespace Test.Benchmark.Runners
         #endregion
 
         #region Private-Methods
+
+        private async Task ConfigureRerankAsync(List<ProvisionedScope> scopes, CancellationToken token)
+        {
+            // Every run sets the rerank settings explicitly, so a reused scope never keeps a previous run's reranker.
+            string? endpointId = _Context.RerankEndpointId;
+            int candidates = Math.Max(1, _Context.Arguments.GetInt("rerank-candidates", 20));
+            double? minScore = _Context.Arguments.GetOptional("scope-min-rerank-score") != null ? _Context.Arguments.GetDouble("scope-min-rerank-score", 0.0) : (double?)null;
+            foreach (ProvisionedScope scope in scopes)
+            {
+                await _Context.Client.ConfigureRerankAsync(scope.ScopeId, endpointId, candidates, minScore, token).ConfigureAwait(false);
+            }
+        }
+
+        private static void ScoreSimilarityFlags(BenchmarkDataset dataset, List<KeyValuePair<string, string>> flags, IngestSummary summary)
+        {
+            // A known pair (replacement, replaced) counts as detected when writing either one flagged the other.
+            HashSet<string> known = new HashSet<string>(StringComparer.Ordinal);
+            foreach (BenchmarkDocument document in dataset.Corpora.SelectMany(c => c.Documents))
+            {
+                foreach (string replaced in document.Supersedes ?? new List<string>()) known.Add(PairKey(document.Id, replaced));
+            }
+
+            HashSet<string> flagged = new HashSet<string>(flags.Select(f => PairKey(f.Key, f.Value)), StringComparer.Ordinal);
+            summary.SimilarFlags = flags.Count;
+            summary.SupersessionPairs = known.Count;
+            summary.SupersessionPairsFlagged = known.Count(k => flagged.Contains(k));
+            summary.SimilarFlagsOnKnownPairs = flagged.Count(k => known.Contains(k));
+        }
+
+        private static string PairKey(string a, string b)
+        {
+            return string.CompareOrdinal(a, b) < 0 ? a + "|" + b : b + "|" + a;
+        }
 
         private async Task<ProvisionedScope?> TryReuseAsync(BenchmarkDataset dataset, BenchmarkCorpus corpus, CancellationToken token)
         {
@@ -254,6 +293,13 @@ namespace Test.Benchmark.Runners
             if (!string.IsNullOrEmpty(document.Title)) body["title"] = document.Title;
             if (!string.IsNullOrEmpty(document.Summary)) body["summary"] = document.Summary;
             if (!string.IsNullOrEmpty(document.Date)) body["metadata"] = new JsonObject { ["date"] = document.Date };
+            if (document.Supersedes != null && document.Supersedes.Count > 0)
+            {
+                JsonArray supersedes = new JsonArray();
+                foreach (string replaced in document.Supersedes) supersedes.Add(replaced);
+                body["supersedes"] = supersedes;
+            }
+
             return body;
         }
 

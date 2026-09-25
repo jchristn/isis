@@ -11,6 +11,32 @@ All notable changes to Isis are documented here. This project adheres to
   `agent`, `load`, `stub`, `prepare`, and `compare` commands, an isolated pgvector + RecallDB stack, hand-labelled
   datasets (`isis-live`, `atlas`), converters for BEIR and LongMemEval, and a CI regression gate. The first baseline
   is in `benchmarks/RESULTS.md`.
+- **Memory supersession.** An upsert can name the memories it replaces (`supersedes`, a list of slugs or ids). The
+  server keeps `supersededBy` on each replaced memory (migration `2026-09-24-memory-supersession`). Search demotes a
+  replaced memory to directly after its replacement by default (`superseded`: `Demote`, `Hide`, or `Include`),
+  adds the replacement when the search missed it, follows replacement chains, and marks hits with `supersededBy`.
+  Chat labels outdated memories for the model.
+- **Rerank endpoints.** A new endpoint kind, `Rerank` (`rep_` ids), with the `Tei` (Hugging Face Text Embeddings
+  Inference) and `Cohere` (Cohere-compatible, also vLLM) API formats. A scope can name a `rerankEndpointId`, how many
+  `rerankCandidates` to score (default 20), and a `rerankMinScore` cutoff (migration `2026-09-24-scope-rerank`).
+  Searches in the scope are reranked by default (`rerank: false` opts out) and hits carry `rerankScore`.
+- **Relevance cutoff.** `minRerankScore` on a search (or the scope's `rerankMinScore`) drops reranked hits below
+  it, so a question with no relevant memory returns no hits. When that happens in chat, the model is grounded on no
+  memories and says the answer is not in memory, instead of receiving the scope overview.
+- **Link expansion.** `linkExpansion` (0 to 10) adds memories linked from the results, through `links` or
+  `[[slug]]` references in the body, directly after the result that links to them (`linkedFrom`). Chat follows up
+  to 2 links by default (`retrieval.chatLinkExpansion`).
+- **Result diversity.** `diversity` (0 to 1, default 0) reorders results by maximal marginal relevance over word
+  overlap, so near-duplicate results give way to other relevant memories.
+- **Similar memories on upsert.** On scopes with semantic search, the upsert response lists existing memories whose
+  embedding is close to the new one (`similarMemories`, threshold `retrieval.duplicateSimilarityThreshold`, default
+  0.85), so a writer can reuse the slug or supersede the old memory.
+- **Lookup cache.** Credentials, users, scopes, and model endpoints read on every request are cached for a few
+  seconds (`cache.enabled`, `cache.ttlSeconds`, default 10). Writes through the node invalidate the affected entries
+  immediately; the time to live bounds how long a change made on another node goes unnoticed.
+- **MCP.** `memory_upsert` accepts `links` and `supersedes`; `memory_search` accepts `superseded`, `linkExpansion`,
+  `diversity`, `rerank`, and `minRerankScore`; `scope_create` accepts the chunking and rerank settings. The
+  dashboard has a Rerank Endpoints page and rerank settings on the scope form.
 
 ### Changed
 
@@ -33,6 +59,9 @@ All notable changes to Isis are documented here. This project adheres to
 
 ### Fixed
 
+- **`scope_update` over MCP no longer clears scope settings.** It sent only the name and description to a
+  full-replace `PUT`, which dropped the embedding endpoint and chunking settings. It now reads the scope and changes
+  only the fields passed.
 - **Concurrent scope provisioning across a tenant.** Collection creation is serialized per tenant, and a failed
   create adopts an existing collection for the scope instead of retrying forever. It had caused 183 failed
   LongMemEval ingests when 8 scopes were provisioned in parallel.

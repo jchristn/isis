@@ -166,6 +166,14 @@ namespace Isis.Core.Observability
         public static readonly Counter<long> EmbeddingRequests = Meter.CreateCounter<long>(
             "isis.embedding.requests", "{request}", "Count of embedding requests.");
 
+        /// <summary>Duration of a rerank request.</summary>
+        public static readonly Histogram<double> RerankDuration = Meter.CreateHistogram<double>(
+            "isis.rerank.duration", "s", "Duration of a rerank request.");
+
+        /// <summary>Count of rerank requests.</summary>
+        public static readonly Counter<long> RerankRequests = Meter.CreateCounter<long>(
+            "isis.rerank.requests", "{request}", "Count of rerank requests.");
+
         // ----- Chat instruments -----
 
         /// <summary>Duration of a chat-with-memory ask, in seconds.</summary>

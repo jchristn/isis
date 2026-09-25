@@ -33,11 +33,18 @@ const EMPTY = {
   chunkingMode: 'OnOverflow',
   chunkStrategy: 'FixedTokenCount',
   chunkMaxTokens: 0,
-  chunkOverlapTokens: 64
+  chunkOverlapTokens: 64,
+  rerankEndpointId: '',
+  rerankCandidates: 20,
+  rerankMinScore: ''
 };
 
-function ScopeForm({ initial, onSubmit, onClose, endpoints, t }) {
-  const [form, setForm] = useState({ ...EMPTY, ...(initial || {}) });
+function ScopeForm({ initial, onSubmit, onClose, endpoints, rerankEndpoints, t }) {
+  const [form, setForm] = useState(() => {
+    const merged = { ...EMPTY, ...(initial || {}) };
+    // Nulls from the API would make the inputs uncontrolled.
+    return { ...merged, rerankEndpointId: merged.rerankEndpointId || '', rerankMinScore: merged.rerankMinScore ?? '' };
+  });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -60,7 +67,11 @@ function ScopeForm({ initial, onSubmit, onClose, endpoints, t }) {
         chunkingMode: form.chunkingMode,
         chunkStrategy: form.chunkStrategy,
         chunkMaxTokens: Number(form.chunkMaxTokens) || 0,
-        chunkOverlapTokens: Number(form.chunkOverlapTokens) || 0
+        chunkOverlapTokens: Number(form.chunkOverlapTokens) || 0,
+        // The scope update replaces the whole scope, so always send the rerank settings.
+        rerankEndpointId: form.rerankEndpointId || null,
+        rerankCandidates: Number(form.rerankCandidates) || 20,
+        rerankMinScore: form.rerankMinScore === '' || form.rerankMinScore === null ? null : Number(form.rerankMinScore)
       });
       onClose();
     } catch (e2) {
@@ -204,6 +215,28 @@ function ScopeForm({ initial, onSubmit, onClose, endpoints, t }) {
             <div className="field-hint">{t('scopes.chunkingHint')}</div>
           </>
         )}
+        <div className="field-row">
+          <div className="field">
+            <label>{t('scopes.rerankEndpoint')}</label>
+            <select value={form.rerankEndpointId} onChange={(e) => set('rerankEndpointId', e.target.value)}>
+              <option value="">{t('common.none')}</option>
+              {rerankEndpoints.map((ep) => (
+                <option key={ep.id || ep.Id} value={ep.id || ep.Id}>
+                  {ep.name || ep.id} ({ep.model})
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label>{t('scopes.rerankCandidates')}</label>
+            <input type="number" min={1} max={100} value={form.rerankCandidates} onChange={(e) => set('rerankCandidates', e.target.value)} />
+          </div>
+          <div className="field">
+            <label>{t('scopes.rerankMinScore')}</label>
+            <input type="number" min={0} max={1} step={0.01} value={form.rerankMinScore} onChange={(e) => set('rerankMinScore', e.target.value)} />
+          </div>
+        </div>
+        <div className="field-hint">{t('scopes.rerankHint')}</div>
       </form>
     </Modal>
   );
@@ -217,6 +250,7 @@ function ScopesView() {
 
   const [scopes, setScopes] = useState([]);
   const [endpoints, setEndpoints] = useState([]);
+  const [rerankEndpoints, setRerankEndpoints] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [editing, setEditing] = useState(null); // scope object or EMPTY sentinel
@@ -241,6 +275,12 @@ function ScopesView() {
       setEndpoints(eps.items || []);
     } catch {
       setEndpoints([]);
+    }
+    try {
+      const reps = await apiClient.listEndpoints(tenantId, 'Rerank', { maxResults: 1000 });
+      setRerankEndpoints(reps.items || []);
+    } catch {
+      setRerankEndpoints([]);
     }
   }, [apiClient, tenantId]);
 
@@ -369,6 +409,7 @@ function ScopesView() {
         <ScopeForm
           initial={editing}
           endpoints={endpoints}
+          rerankEndpoints={rerankEndpoints}
           t={t}
           onSubmit={handleSubmit}
           onClose={() => setShowForm(false)}

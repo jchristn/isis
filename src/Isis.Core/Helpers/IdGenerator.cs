@@ -152,13 +152,36 @@ namespace Isis.Core.Helpers
         }
 
         /// <summary>
+        /// Generate a rerank endpoint identifier.
+        /// </summary>
+        /// <returns>Rerank endpoint identifier.</returns>
+        public static string RerankEndpoint()
+        {
+            return _Generator.GenerateKSortable(Constants.RerankEndpointPrefix, Constants.IdLength);
+        }
+
+        /// <summary>
         /// Generate a model endpoint identifier appropriate for the given kind.
         /// </summary>
         /// <param name="kind">The endpoint kind.</param>
         /// <returns>An endpoint identifier.</returns>
         public static string Endpoint(EndpointKindEnum kind)
         {
-            return kind == EndpointKindEnum.Inference ? InferenceEndpoint() : EmbeddingEndpoint();
+            if (kind == EndpointKindEnum.Inference) return InferenceEndpoint();
+            if (kind == EndpointKindEnum.Rerank) return RerankEndpoint();
+            return EmbeddingEndpoint();
+        }
+
+        /// <summary>
+        /// The identifier prefix used for model endpoints of the given kind.
+        /// </summary>
+        /// <param name="kind">The endpoint kind.</param>
+        /// <returns>The prefix.</returns>
+        public static string EndpointPrefix(EndpointKindEnum kind)
+        {
+            if (kind == EndpointKindEnum.Inference) return Constants.InferenceEndpointPrefix;
+            if (kind == EndpointKindEnum.Rerank) return Constants.RerankEndpointPrefix;
+            return Constants.EmbeddingEndpointPrefix;
         }
 
         /// <summary>

@@ -1,5 +1,7 @@
 namespace Test.Benchmark.Datasets
 {
+    using System.Collections.Generic;
+
     /// <summary>
     /// A document to ingest as a memory.
     /// </summary>
@@ -36,6 +38,11 @@ namespace Test.Benchmark.Datasets
         /// Optional date (informational; recorded in memory metadata).
         /// </summary>
         public string? Date { get; set; } = null;
+
+        /// <summary>
+        /// Ids of documents in the same corpus that this document replaces (sent as the memory's supersedes list).
+        /// </summary>
+        public List<string>? Supersedes { get; set; } = null;
 
         #endregion
     }

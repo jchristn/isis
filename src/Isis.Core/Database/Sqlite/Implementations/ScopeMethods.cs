@@ -42,7 +42,7 @@ namespace Isis.Core.Database.Sqlite.Implementations
             scope.LastUpdateUtc = DateTime.UtcNow;
 
             string query =
-                "INSERT INTO scopes (id, tenantid, name, description, storeprovider, recallcollectionid, dimensionality, embeddingendpointid, filesystemlayout, targetpath, chunkingmode, chunkstrategy, chunkmaxtokens, chunkoverlaptokens, active, createdutc, lastupdateutc) VALUES (" +
+                "INSERT INTO scopes (id, tenantid, name, description, storeprovider, recallcollectionid, dimensionality, embeddingendpointid, filesystemlayout, targetpath, chunkingmode, chunkstrategy, chunkmaxtokens, chunkoverlaptokens, active, createdutc, lastupdateutc, rerankendpointid, rerankcandidates, rerankminscore) VALUES (" +
                 SqliteHelpers.ToSqlRequired(scope.Id) + ", " +
                 SqliteHelpers.ToSqlRequired(scope.TenantId) + ", " +
                 SqliteHelpers.ToSqlRequired(scope.Name) + ", " +
@@ -59,7 +59,10 @@ namespace Isis.Core.Database.Sqlite.Implementations
                 scope.ChunkOverlapTokens + ", " +
                 SqliteHelpers.ToSql(scope.Active) + ", " +
                 SqliteHelpers.ToSqlRequired(scope.CreatedUtc) + ", " +
-                SqliteHelpers.ToSqlRequired(scope.LastUpdateUtc) + ");";
+                SqliteHelpers.ToSqlRequired(scope.LastUpdateUtc) + ", " +
+                SqliteHelpers.ToSql(scope.RerankEndpointId) + ", " +
+                scope.RerankCandidates + ", " +
+                NullableDouble(scope.RerankMinScore) + ");";
 
             await _Driver.ExecuteQueryAsync(query, true, token).ConfigureAwait(false);
             return scope;
@@ -140,6 +143,9 @@ namespace Isis.Core.Database.Sqlite.Implementations
                 "chunkstrategy = " + SqliteHelpers.ToSqlRequired(scope.ChunkStrategy) + ", " +
                 "chunkmaxtokens = " + scope.ChunkMaxTokens + ", " +
                 "chunkoverlaptokens = " + scope.ChunkOverlapTokens + ", " +
+                "rerankendpointid = " + SqliteHelpers.ToSql(scope.RerankEndpointId) + ", " +
+                "rerankcandidates = " + scope.RerankCandidates + ", " +
+                "rerankminscore = " + NullableDouble(scope.RerankMinScore) + ", " +
                 "active = " + SqliteHelpers.ToSql(scope.Active) + ", " +
                 "lastupdateutc = " + SqliteHelpers.ToSqlRequired(scope.LastUpdateUtc) + " " +
                 "WHERE tenantid = " + SqliteHelpers.ToSqlRequired(scope.TenantId) +
@@ -226,7 +232,25 @@ namespace Isis.Core.Database.Sqlite.Implementations
             scope.Active = SqliteHelpers.GetBool(row["active"]);
             scope.CreatedUtc = SqliteHelpers.ParseTimestamp(row["createdutc"]);
             scope.LastUpdateUtc = SqliteHelpers.ParseTimestamp(row["lastupdateutc"]);
+            if (row.Table.Columns.Contains("rerankendpointid")) scope.RerankEndpointId = SqliteHelpers.NullIfEmpty(SqliteHelpers.GetString(row["rerankendpointid"]));
+            if (row.Table.Columns.Contains("rerankcandidates"))
+            {
+                int candidates = SqliteHelpers.GetInt(row["rerankcandidates"], 20);
+                scope.RerankCandidates = candidates < 1 ? 1 : (candidates > 100 ? 100 : candidates);
+            }
+
+            // Drivers surface a NULL column as DBNull or an empty string; either means no minimum.
+            if (row.Table.Columns.Contains("rerankminscore") && !string.IsNullOrEmpty(SqliteHelpers.GetString(row["rerankminscore"])))
+            {
+                scope.RerankMinScore = SqliteHelpers.GetDouble(row["rerankminscore"]);
+            }
+
             return scope;
+        }
+
+        private static string NullableDouble(double? value)
+        {
+            return value.HasValue ? value.Value.ToString("R", System.Globalization.CultureInfo.InvariantCulture) : "NULL";
         }
 
         #endregion

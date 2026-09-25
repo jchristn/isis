@@ -108,6 +108,9 @@ IF OBJECT_ID(N'dbo.scopes', N'U') IS NULL CREATE TABLE scopes (
     active INT NOT NULL DEFAULT 1,
     createdutc NVARCHAR(40) NOT NULL,
     lastupdateutc NVARCHAR(40) NOT NULL,
+    rerankendpointid NVARCHAR(64) NULL,
+    rerankcandidates INT NOT NULL DEFAULT 20,
+    rerankminscore FLOAT NULL,
     INDEX uk_scopes_tenant_name UNIQUE (tenantid, name)
 );
 
@@ -148,6 +151,8 @@ IF OBJECT_ID(N'dbo.memories', N'U') IS NULL CREATE TABLE memories (
     createdutc NVARCHAR(40) NOT NULL,
     lastupdateutc NVARCHAR(40) NOT NULL,
     lastaccessedutc NVARCHAR(40),
+    supersedes NVARCHAR(MAX) NULL,
+    supersededby NVARCHAR(64) NULL,
     INDEX idx_memories_scope_category (scopeid, categoryid),
     INDEX uk_memories_scope_category_slug UNIQUE (scopeid, categoryid, slug)
 );

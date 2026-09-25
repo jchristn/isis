@@ -41,6 +41,11 @@ namespace Test.Benchmark.Runners
         /// </summary>
         public string? Inference { get; set; } = null;
 
+        /// <summary>
+        /// Rerank endpoint description, when used.
+        /// </summary>
+        public string? Rerank { get; set; } = null;
+
         #endregion
 
         #region Constructors-and-Factories

@@ -76,6 +76,46 @@ namespace Isis.Core.Database.Interfaces
         Task<List<Memory>> ReadManyAsync(string tenantId, IReadOnlyCollection<string> ids, CancellationToken token = default);
 
         /// <summary>
+        /// Read the memories in a scope with any of the given slugs (across categories).
+        /// </summary>
+        /// <param name="tenantId">Tenant id.</param>
+        /// <param name="scopeId">Scope id.</param>
+        /// <param name="slugs">Slugs.</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>The matching memories (a slug may match one memory per category).</returns>
+        Task<List<Memory>> ReadBySlugsAsync(string tenantId, string scopeId, IReadOnlyCollection<string> slugs, CancellationToken token = default);
+
+        /// <summary>
+        /// Read the memories currently marked as replaced by a given memory.
+        /// </summary>
+        /// <param name="tenantId">Tenant id.</param>
+        /// <param name="supersederId">Id of the replacing memory.</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>The replaced memories.</returns>
+        Task<List<Memory>> ReadSupersededByAsync(string tenantId, string supersederId, CancellationToken token = default);
+
+        /// <summary>
+        /// Read the memories in a scope whose <c>Supersedes</c> list names a slug.
+        /// </summary>
+        /// <param name="tenantId">Tenant id.</param>
+        /// <param name="scopeId">Scope id.</param>
+        /// <param name="slug">The replaced slug.</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>The replacing memories.</returns>
+        Task<List<Memory>> ReadSupersedingAsync(string tenantId, string scopeId, string slug, CancellationToken token = default);
+
+        /// <summary>
+        /// Set (or clear) the replacing memory of several memories, touching only that column so a concurrent
+        /// edit of the same memories is never overwritten.
+        /// </summary>
+        /// <param name="tenantId">Tenant id.</param>
+        /// <param name="ids">Ids of the memories to mark.</param>
+        /// <param name="supersederId">Id of the replacing memory, or null to mark them current again.</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>Rows affected.</returns>
+        Task<int> SetSupersededByAsync(string tenantId, IReadOnlyCollection<string> ids, string? supersederId, CancellationToken token = default);
+
+        /// <summary>
         /// Create multiple memory index rows.
         /// </summary>
         /// <param name="items">The memories to create.</param>

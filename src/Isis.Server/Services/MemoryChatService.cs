@@ -40,11 +40,30 @@ namespace Isis.Server.Services
             }
         }
 
+        /// <summary>
+        /// How many linked memories are added to the grounding context by following links (and <c>[[slug]]</c>
+        /// references) from the retrieved memories. Default 2, minimum 0, maximum 10.
+        /// </summary>
+        /// <exception cref="ArgumentOutOfRangeException">Thrown when set outside [0, 10].</exception>
+        public int LinkExpansion
+        {
+            get
+            {
+                return _LinkExpansion;
+            }
+            set
+            {
+                if (value < 0 || value > 10) throw new ArgumentOutOfRangeException(nameof(LinkExpansion), "LinkExpansion must be between 0 and 10.");
+                _LinkExpansion = value;
+            }
+        }
+
         #endregion
 
         #region Private-Members
 
         private int _DefaultTopK = 8;
+        private int _LinkExpansion = 2;
 
         private readonly MemoryService _MemoryService;
         private readonly InferenceService _InferenceService;
@@ -313,11 +332,24 @@ namespace Isis.Server.Services
             // token budget (roughly a thousand characters for small encoders), so this is the entire memory for a
             // typical memory and the relevant region of a long one. A 240-character snippet hid any answer that was
             // not in a memory's opening sentence.
-            MemorySearchQuery query = new MemorySearchQuery { QueryText = question, Mode = SearchModeEnum.Hybrid, TopK = k, TokenBudget = _ContextCharsPerMemory };
+            MemorySearchQuery query = new MemorySearchQuery { QueryText = question, Mode = SearchModeEnum.Hybrid, TopK = k, TokenBudget = _ContextCharsPerMemory, LinkExpansion = _LinkExpansion };
             MemorySearchResult retrieval = await _MemoryService.SearchAsync(scope, query, token).ConfigureAwait(false);
 
             if (retrieval.Hits.Count == 0)
             {
+                // A reranker that rejected every candidate has judged that nothing answers the question: ground on no
+                // memories so the model says so, rather than on an overview it would try to answer from.
+                if (retrieval.Reranked)
+                {
+                    return new ContextResult
+                    {
+                        Mode = retrieval.EffectiveMode,
+                        ModeLabel = retrieval.EffectiveMode.ToString(),
+                        ContextText = "(none)",
+                        Notice = "No memory passed the relevance threshold."
+                    };
+                }
+
                 return await BuildOverviewContextAsync(scope, "No memory directly matched the question; listing the scope's memories.", token).ConfigureAwait(false);
             }
 
@@ -325,7 +357,10 @@ namespace Isis.Server.Services
             StringBuilder sb = new StringBuilder();
             foreach (MemorySearchHit hit in retrieval.Hits)
             {
-                AppendContextItem(sb, ctx, hit.Slug, hit.Title, hit.Snippet, hit.Score);
+                string? note = null;
+                if (!string.IsNullOrEmpty(hit.SupersededBy)) note = "(outdated: superseded by [" + hit.SupersededBy + "])";
+                else if (!string.IsNullOrEmpty(hit.LinkedFrom)) note = "(linked from [" + hit.LinkedFrom + "])";
+                AppendContextItem(sb, ctx, hit.Slug, hit.Title, hit.Snippet, hit.Score, note);
             }
 
             ctx.ContextText = sb.Length > 0 ? sb.ToString() : "(none)";
@@ -393,9 +428,10 @@ namespace Isis.Server.Services
             return ctx;
         }
 
-        private static void AppendContextItem(StringBuilder sb, ContextResult ctx, string? slug, string? title, string? snippet, double? score)
+        private static void AppendContextItem(StringBuilder sb, ContextResult ctx, string? slug, string? title, string? snippet, double? score, string? note = null)
         {
             sb.Append("- [").Append(slug ?? "memory").Append("] ");
+            if (!string.IsNullOrEmpty(note)) sb.Append(note).Append(' ');
             if (!string.IsNullOrEmpty(title)) sb.Append(title).Append(": ");
             sb.Append(snippet).Append('\n');
             ctx.Citations.Add(new ChatCitation { Slug = slug, Title = title, Score = score ?? 0.0 });

@@ -18,6 +18,16 @@ namespace Test.Shared
         /// </summary>
         internal string? LastRequestBody { get; private set; } = null;
 
+        /// <summary>
+        /// The URI of the most recent request.
+        /// </summary>
+        internal System.Uri? LastRequestUri { get; private set; } = null;
+
+        /// <summary>
+        /// The number of requests handled.
+        /// </summary>
+        internal int RequestCount { get; private set; } = 0;
+
         #endregion
 
         #region Private-Members
@@ -47,6 +57,8 @@ namespace Test.Shared
         /// <inheritdoc />
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            RequestCount++;
+            LastRequestUri = request.RequestUri;
             if (request.Content != null) LastRequestBody = await request.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
             HttpResponseMessage response = new HttpResponseMessage(_Status);
             response.Content = new StringContent(_Body, Encoding.UTF8, "application/json");

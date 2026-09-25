@@ -45,8 +45,10 @@ export const FILESYSTEM_LAYOUT_LABELS = {
 };
 export const MEMORY_TYPES = ['User', 'Feedback', 'Project', 'Reference'];
 export const SEARCH_MODES = ['Keyword', 'Semantic', 'Hybrid'];
-export const ENDPOINT_KINDS = ['Embedding', 'Inference'];
+export const ENDPOINT_KINDS = ['Embedding', 'Inference', 'Rerank'];
 export const API_FORMATS = ['Ollama', 'OpenAI', 'VLlm', 'Gemini'];
+// Rerank endpoints speak a rerank API: Hugging Face TEI, or Cohere-compatible (also vLLM).
+export const RERANK_API_FORMATS = ['Tei', 'Cohere', 'VLlm'];
 export const HEALTH_METHODS = ['GET', 'HEAD'];
 export const AUTH_TYPES = ['None', 'BearerToken', 'ApiKeyHeader', 'QueryParam', 'BasicAuth', 'AccessKeySecret'];
 export const INSTRUCTION_MERGE_MODES = ['Append', 'Replace', 'Hide'];

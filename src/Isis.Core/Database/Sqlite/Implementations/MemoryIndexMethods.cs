@@ -5,6 +5,7 @@ namespace Isis.Core.Database.Sqlite.Implementations
     using System.Data;
     using System.Linq;
     using System.Text;
+    using System.Text.Json;
     using System.Threading;
     using System.Threading.Tasks;
     using Isis.Core.Database.Interfaces;
@@ -42,7 +43,7 @@ namespace Isis.Core.Database.Sqlite.Implementations
             memory.LastUpdateUtc = DateTime.UtcNow;
 
             string query =
-                "INSERT INTO memories (id, tenantid, scopeid, categoryid, slug, storekey, title, type, summary, resource, body, tags, links, metadata, salience, author, sessionid, model, version, createdutc, lastupdateutc, lastaccessedutc) VALUES (" +
+                "INSERT INTO memories (id, tenantid, scopeid, categoryid, slug, storekey, title, type, summary, resource, body, tags, links, metadata, salience, author, sessionid, model, version, createdutc, lastupdateutc, lastaccessedutc, supersedes, supersededby) VALUES (" +
                 SqliteHelpers.ToSqlRequired(memory.Id) + ", " +
                 SqliteHelpers.ToSqlRequired(memory.TenantId) + ", " +
                 SqliteHelpers.ToSqlRequired(memory.ScopeId) + ", " +
@@ -64,7 +65,9 @@ namespace Isis.Core.Database.Sqlite.Implementations
                 memory.Version + ", " +
                 SqliteHelpers.ToSqlRequired(memory.CreatedUtc) + ", " +
                 SqliteHelpers.ToSqlRequired(memory.LastUpdateUtc) + ", " +
-                SqliteHelpers.ToSql(memory.LastAccessedUtc) + ");";
+                SqliteHelpers.ToSql(memory.LastAccessedUtc) + ", " +
+                SqliteHelpers.ToSqlRequired(SqliteHelpers.SerializeList(memory.Supersedes)) + ", " +
+                SqliteHelpers.ToSql(memory.SupersededBy) + ");";
 
             await _Driver.ExecuteQueryAsync(query, true, token).ConfigureAwait(false);
             return memory;
@@ -154,6 +157,8 @@ namespace Isis.Core.Database.Sqlite.Implementations
                 "body = " + SqliteHelpers.ToSqlRequired(memory.Body) + ", " +
                 "tags = " + SqliteHelpers.ToSqlRequired(SqliteHelpers.SerializeList(memory.Tags)) + ", " +
                 "links = " + SqliteHelpers.ToSqlRequired(SqliteHelpers.SerializeList(memory.Links)) + ", " +
+                "supersedes = " + SqliteHelpers.ToSqlRequired(SqliteHelpers.SerializeList(memory.Supersedes)) + ", " +
+                "supersededby = " + SqliteHelpers.ToSql(memory.SupersededBy) + ", " +
                 "metadata = " + SqliteHelpers.ToSqlRequired(SqliteHelpers.SerializeMap(memory.Metadata)) + ", " +
                 "salience = " + memory.Salience.ToString(System.Globalization.CultureInfo.InvariantCulture) + ", " +
                 "author = " + SqliteHelpers.ToSql(memory.Author) + ", " +
@@ -197,6 +202,68 @@ namespace Isis.Core.Database.Sqlite.Implementations
             List<Memory> results = new List<Memory>();
             foreach (DataRow row in table.Rows) results.Add(FromRow(row));
             return results;
+        }
+
+        /// <inheritdoc />
+        public async Task<List<Memory>> ReadBySlugsAsync(string tenantId, string scopeId, IReadOnlyCollection<string> slugs, CancellationToken token = default)
+        {
+            if (slugs == null || slugs.Count == 0) return new List<Memory>();
+
+            string inList = String.Join(", ", slugs.Distinct(StringComparer.Ordinal).Select(slug => SqliteHelpers.ToSqlRequired(slug)));
+            DataTable table = await _Driver.ExecuteQueryAsync(
+                "SELECT * FROM memories WHERE tenantid = " + SqliteHelpers.ToSqlRequired(tenantId) +
+                " AND scopeid = " + SqliteHelpers.ToSqlRequired(scopeId) +
+                " AND slug IN (" + inList + ");", false, token).ConfigureAwait(false);
+
+            List<Memory> results = new List<Memory>();
+            foreach (DataRow row in table.Rows) results.Add(FromRow(row));
+            return results;
+        }
+
+        /// <inheritdoc />
+        public async Task<List<Memory>> ReadSupersededByAsync(string tenantId, string supersederId, CancellationToken token = default)
+        {
+            DataTable table = await _Driver.ExecuteQueryAsync(
+                "SELECT * FROM memories WHERE tenantid = " + SqliteHelpers.ToSqlRequired(tenantId) +
+                " AND supersededby = " + SqliteHelpers.ToSqlRequired(supersederId) + ";", false, token).ConfigureAwait(false);
+
+            List<Memory> results = new List<Memory>();
+            foreach (DataRow row in table.Rows) results.Add(FromRow(row));
+            return results;
+        }
+
+        /// <inheritdoc />
+        public async Task<List<Memory>> ReadSupersedingAsync(string tenantId, string scopeId, string slug, CancellationToken token = default)
+        {
+            // supersedes is a JSON string array; a LIKE on the quoted slug narrows the scan and the exact match is
+            // confirmed after deserializing, so LIKE wildcards in a slug cannot produce a false result.
+            string pattern = "%" + JsonSerializer.Serialize(slug) + "%";
+            DataTable table = await _Driver.ExecuteQueryAsync(
+                "SELECT * FROM memories WHERE tenantid = " + SqliteHelpers.ToSqlRequired(tenantId) +
+                " AND scopeid = " + SqliteHelpers.ToSqlRequired(scopeId) +
+                " AND supersedes LIKE " + SqliteHelpers.ToSqlRequired(pattern) + ";", false, token).ConfigureAwait(false);
+
+            List<Memory> results = new List<Memory>();
+            foreach (DataRow row in table.Rows)
+            {
+                Memory memory = FromRow(row);
+                if (memory.Supersedes.Contains(slug, StringComparer.Ordinal)) results.Add(memory);
+            }
+
+            return results;
+        }
+
+        /// <inheritdoc />
+        public async Task<int> SetSupersededByAsync(string tenantId, IReadOnlyCollection<string> ids, string? supersederId, CancellationToken token = default)
+        {
+            if (ids == null || ids.Count == 0) return 0;
+
+            string inList = String.Join(", ", ids.Distinct(StringComparer.Ordinal).Select(id => SqliteHelpers.ToSqlRequired(id)));
+            await _Driver.ExecuteQueryAsync(
+                "UPDATE memories SET supersededby = " + SqliteHelpers.ToSql(supersederId) +
+                " WHERE tenantid = " + SqliteHelpers.ToSqlRequired(tenantId) +
+                " AND id IN (" + inList + ");", true, token).ConfigureAwait(false);
+            return ids.Count;
         }
 
         /// <inheritdoc />
@@ -250,6 +317,8 @@ namespace Isis.Core.Database.Sqlite.Implementations
             memory.CreatedUtc = SqliteHelpers.ParseTimestamp(row["createdutc"]);
             memory.LastUpdateUtc = SqliteHelpers.ParseTimestamp(row["lastupdateutc"]);
             memory.LastAccessedUtc = SqliteHelpers.ParseNullableTimestamp(row["lastaccessedutc"]);
+            if (row.Table.Columns.Contains("supersedes")) memory.Supersedes = SqliteHelpers.DeserializeList(row["supersedes"]);
+            if (row.Table.Columns.Contains("supersededby")) memory.SupersededBy = SqliteHelpers.NullIfEmpty(SqliteHelpers.GetString(row["supersededby"]));
             return memory;
         }
 

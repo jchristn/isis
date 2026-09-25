@@ -7,7 +7,9 @@ namespace Isis.Server.Services
     using System.Linq;
     using System.Threading;
     using System.Threading.Tasks;
+    using Isis.Core;
     using Isis.Core.Database;
+    using Isis.Core.Enums;
     using Isis.Core.Helpers;
     using Isis.Core.Models;
     using Isis.Core.Observability;
@@ -22,14 +24,81 @@ namespace Isis.Server.Services
     /// </summary>
     public class MemoryService
     {
+        #region Public-Members
+
+        /// <summary>
+        /// Whether an upsert looks for existing memories that closely resemble the one written and reports them in
+        /// <c>similarMemories</c>. Only scopes with semantic search (RecallDB) are checked. Default true.
+        /// </summary>
+        public bool DuplicateCheckEnabled { get; set; } = true;
+
+        /// <summary>
+        /// Minimum vector similarity for an existing memory to be reported as similar on upsert, in the range 0.0 to
+        /// 1.0. Default 0.85.
+        /// </summary>
+        public double DuplicateSimilarityThreshold
+        {
+            get
+            {
+                return _DuplicateSimilarityThreshold;
+            }
+            set
+            {
+                if (value < 0.0 || value > 1.0) throw new ArgumentOutOfRangeException(nameof(DuplicateSimilarityThreshold), "DuplicateSimilarityThreshold must be in [0, 1].");
+                _DuplicateSimilarityThreshold = value;
+            }
+        }
+
+        /// <summary>
+        /// Maximum number of similar memories reported on upsert. Minimum 1, maximum 20, default 3.
+        /// </summary>
+        public int DuplicateMaxResults
+        {
+            get
+            {
+                return _DuplicateMaxResults;
+            }
+            set
+            {
+                if (value < 1 || value > 20) throw new ArgumentOutOfRangeException(nameof(DuplicateMaxResults), "DuplicateMaxResults must be in [1, 20].");
+                _DuplicateMaxResults = value;
+            }
+        }
+
+        /// <summary>
+        /// Characters of each candidate's text sent to the reranker (the reranker sees the title and this much of the
+        /// best-matching chunk). Minimum 100, default 1200.
+        /// </summary>
+        public int RerankPassageChars
+        {
+            get
+            {
+                return _RerankPassageChars;
+            }
+            set
+            {
+                if (value < 100) throw new ArgumentOutOfRangeException(nameof(RerankPassageChars), "RerankPassageChars must be at least 100.");
+                _RerankPassageChars = value;
+            }
+        }
+
+        #endregion
+
         #region Private-Members
 
         private readonly DatabaseDriverBase _Database;
         private readonly EmbeddingService? _EmbeddingService;
+        private readonly LookupCache? _Cache;
         private const int _ChunkEmbeddingParallelism = 4;
         private static readonly KeyedAsyncLock _MemoryLocks = new KeyedAsyncLock();
         private static readonly ConcurrentDictionary<string, SemaphoreSlim> _ProvisioningLocks = new ConcurrentDictionary<string, SemaphoreSlim>(StringComparer.Ordinal);
         private readonly StoreOptions? _StoreOptions;
+        private readonly RerankService? _RerankService;
+        private readonly SearchRefiner _Refiner;
+        private const int _DefaultSnippetChars = 240;
+        private double _DuplicateSimilarityThreshold = 0.85;
+        private int _DuplicateMaxResults = 3;
+        private int _RerankPassageChars = 1200;
 
         #endregion
 
@@ -41,12 +110,17 @@ namespace Isis.Server.Services
         /// <param name="database">The database driver.</param>
         /// <param name="embeddingService">The embedding service, required for embedding-based stores.</param>
         /// <param name="storeOptions">Options used to configure external stores (RecallDB, Verbex).</param>
+        /// <param name="cache">Optional lookup cache for embedding-endpoint reads; also invalidated when provisioning fills in a scope's collection id.</param>
+        /// <param name="rerankService">Optional rerank service, required to rerank searches in scopes with a rerank endpoint.</param>
         /// <exception cref="ArgumentNullException">Thrown when database is null.</exception>
-        public MemoryService(DatabaseDriverBase database, EmbeddingService? embeddingService = null, StoreOptions? storeOptions = null)
+        public MemoryService(DatabaseDriverBase database, EmbeddingService? embeddingService = null, StoreOptions? storeOptions = null, LookupCache? cache = null, RerankService? rerankService = null)
         {
+            _Cache = cache;
             _Database = database ?? throw new ArgumentNullException(nameof(database));
             _EmbeddingService = embeddingService;
             _StoreOptions = storeOptions;
+            _RerankService = rerankService;
+            _Refiner = new SearchRefiner(_Database);
         }
 
         #endregion
@@ -93,6 +167,7 @@ namespace Isis.Server.Services
                 {
                     Memory? existing = await _Database.Memories.ReadBySlugAsync(scope.TenantId, scope.Id, category.Id, incoming.Slug, token).ConfigureAwait(false);
                     Memory target = existing ?? incoming;
+                    List<string> supersedes = NormalizeSupersedes(incoming, existing);
 
                     if (existing != null)
                     {
@@ -106,6 +181,7 @@ namespace Isis.Server.Services
                         existing.Author = incoming.Author;
                         existing.SessionId = incoming.SessionId;
                         existing.Model = incoming.Model;
+                        existing.Supersedes = supersedes;
                         existing.Version = existing.Version + 1;
                     }
                     else
@@ -113,7 +189,11 @@ namespace Isis.Server.Services
                         incoming.TenantId = scope.TenantId;
                         incoming.ScopeId = scope.Id;
                         incoming.CategoryId = category.Id;
+                        incoming.Supersedes = supersedes;
+                        incoming.SupersededBy = null;
                     }
+
+                    incoming.SimilarMemories = null;
 
                     IReadOnlyList<MemoryChunk> chunks;
                     if (store.Capabilities.RequiresEmbedding)
@@ -130,9 +210,17 @@ namespace Isis.Server.Services
 
                     target.StoreKey = await store.UpsertAsync(scope, target, chunks, token).ConfigureAwait(false);
 
-                    return existing != null
+                    Memory saved = existing != null
                         ? await _Database.Memories.UpdateAsync(target, token).ConfigureAwait(false)
                         : await _Database.Memories.CreateAsync(target, token).ConfigureAwait(false);
+
+                    await ApplySupersessionAsync(scope, saved, existing == null, token).ConfigureAwait(false);
+                    if (DuplicateCheckEnabled && store.Capabilities.SupportsSemantic && chunks.Count > 0 && chunks[0].Embedding != null)
+                    {
+                        saved.SimilarMemories = await FindSimilarAsync(store, scope, saved, chunks[0].Embedding!, token).ConfigureAwait(false);
+                    }
+
+                    return saved;
                 }
                 finally
                 {
@@ -180,7 +268,12 @@ namespace Isis.Server.Services
                 try
                 {
                     await store.DeleteAsync(scope, memory, token).ConfigureAwait(false);
-                    return await _Database.Memories.DeleteAsync(scope.TenantId, memory.Id, token).ConfigureAwait(false);
+                    bool deleted = await _Database.Memories.DeleteAsync(scope.TenantId, memory.Id, token).ConfigureAwait(false);
+
+                    // Memories this one replaced become current again.
+                    List<Memory> replaced = await _Database.Memories.ReadSupersededByAsync(scope.TenantId, memory.Id, token).ConfigureAwait(false);
+                    if (replaced.Count > 0) await _Database.Memories.SetSupersededByAsync(scope.TenantId, replaced.Select(m => m.Id).ToList(), null, token).ConfigureAwait(false);
+                    return deleted;
                 }
                 finally
                 {
@@ -351,35 +444,66 @@ namespace Isis.Server.Services
                 // Stores label documents with the category id; callers (agents especially) usually know the
                 // name. Resolve either form to the id so a name filter does not silently match nothing.
                 string? categoryId = await ResolveCategoryFilterAsync(scope, query.CategoryFilter, token).ConfigureAwait(false);
-                if (!string.Equals(categoryId, query.CategoryFilter, StringComparison.Ordinal))
+                query = query.Clone();
+                query.CategoryFilter = categoryId;
+
+                // Reranking and diversity choose from a wider candidate pool than topK, and the reranker reads more
+                // of each candidate than the caller's snippet budget; both are cut back after.
+                ModelEndpoint? rerankEndpoint = await ResolveRerankEndpointAsync(scope, query, token).ConfigureAwait(false);
+                int topK = query.TopK;
+                int snippetChars = query.TokenBudget.HasValue && query.TokenBudget.Value > 0 ? query.TokenBudget.Value : _DefaultSnippetChars;
+                MemorySearchQuery storeQuery = query.Clone();
+                if (rerankEndpoint != null)
                 {
-                    query = new MemorySearchQuery
-                    {
-                        QueryText = query.QueryText,
-                        Mode = query.Mode,
-                        CategoryFilter = categoryId,
-                        TopK = query.TopK,
-                        TokenBudget = query.TokenBudget,
-                        TextWeight = query.TextWeight,
-                        MinScore = query.MinScore,
-                        RecencyWeight = query.RecencyWeight
-                    };
+                    storeQuery.TopK = Math.Max(topK, scope.RerankCandidates);
+                    storeQuery.TokenBudget = Math.Max(snippetChars, _RerankPassageChars);
                 }
 
+                if (query.Diversity > 0.0) storeQuery.TopK = Math.Max(storeQuery.TopK, Math.Min(100, topK * 3));
+
                 float[]? queryEmbedding = null;
-                if (store.Capabilities.RequiresEmbedding && query.Mode != Isis.Core.Enums.SearchModeEnum.Keyword)
+                if (store.Capabilities.RequiresEmbedding && query.Mode != SearchModeEnum.Keyword)
                 {
                     queryEmbedding = await EmbedAsync(scope, query.QueryText, token).ConfigureAwait(false);
                 }
 
-                MemorySearchResult result = await store.SearchAsync(scope, query, queryEmbedding, token).ConfigureAwait(false);
-                if (query.MinScore.HasValue && result.Hits != null)
+                MemorySearchResult result = await store.SearchAsync(scope, storeQuery, queryEmbedding, token).ConfigureAwait(false);
+                List<MemorySearchHit> hits = result.Hits ?? new List<MemorySearchHit>();
+                if (query.MinScore.HasValue)
                 {
                     double minimum = query.MinScore.Value;
-                    result.Hits = result.Hits.Where(h => h.Score >= minimum).ToList();
+                    hits = hits.Where(h => h.Score >= minimum).ToList();
                 }
 
-                telemetryHits = result.Hits != null ? result.Hits.Count : 0;
+                if (rerankEndpoint != null && hits.Count > 0)
+                {
+                    // A reranker outage degrades the search to retrieval order rather than failing it.
+                    try
+                    {
+                        hits = await RerankAsync(rerankEndpoint, query.QueryText, hits, token).ConfigureAwait(false);
+                        result.Reranked = true;
+                    }
+                    catch (Exception e) when (!(e is OperationCanceledException && token.IsCancellationRequested))
+                    {
+                        result.Notice = "Reranking failed (" + e.Message + "); results are in retrieval order.";
+                    }
+
+                    double? minRerank = query.MinRerankScore ?? scope.RerankMinScore;
+                    if (result.Reranked && minRerank.HasValue)
+                    {
+                        double minimum = minRerank.Value;
+                        hits = hits.Where(h => h.Score >= minimum).ToList();
+                    }
+                }
+
+                hits = SearchDiversifier.Diversify(hits, query.Diversity, topK);
+                foreach (MemorySearchHit hit in hits)
+                {
+                    if (hit.Snippet != null && hit.Snippet.Length > snippetChars + 1) hit.Snippet = hit.Snippet.Substring(0, snippetChars) + "\u2026";
+                }
+
+                result.Hits = await _Refiner.RefineAsync(scope, hits, query.Superseded, query.LinkExpansion, topK, snippetChars, token).ConfigureAwait(false);
+                telemetryHits = result.Hits.Count;
                 return result;
             }
             catch (Exception e)
@@ -489,6 +613,7 @@ namespace Isis.Server.Services
                 if (!string.Equals(before, scope.RecallCollectionId, StringComparison.Ordinal))
                 {
                     await _Database.Scopes.UpdateAsync(scope, token).ConfigureAwait(false);
+                    _Cache?.InvalidateScope(scope.TenantId, scope.Id);
                 }
             }
             finally
@@ -516,6 +641,159 @@ namespace Isis.Server.Services
             }
 
             throw new InvalidOperationException("Category '" + filter + "' was not found in this scope (pass a category name or cat_ id).");
+        }
+
+        private static List<string> NormalizeSupersedes(Memory incoming, Memory? existing)
+        {
+            List<string> result = new List<string>();
+            HashSet<string> seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (string entry in incoming.Supersedes ?? new List<string>())
+            {
+                string value = (entry ?? string.Empty).Trim();
+                if (value.Length == 0) continue;
+                if (string.Equals(value, incoming.Slug, StringComparison.Ordinal)) continue;
+                if (existing != null && string.Equals(value, existing.Id, StringComparison.Ordinal)) continue;
+                if (seen.Add(value)) result.Add(value);
+            }
+
+            return result;
+        }
+
+        private async Task ApplySupersessionAsync(Scope scope, Memory saved, bool created, CancellationToken token)
+        {
+            // Mark the memories this one names as replaced, and release any it named before but no longer does.
+            List<Memory> targets = new List<Memory>();
+            if (saved.Supersedes.Count > 0)
+            {
+                List<string> ids = saved.Supersedes.Where(s => s.StartsWith(Constants.MemoryPrefix, StringComparison.Ordinal)).ToList();
+                targets.AddRange(await _Database.Memories.ReadBySlugsAsync(scope.TenantId, scope.Id, saved.Supersedes, token).ConfigureAwait(false));
+                if (ids.Count > 0)
+                {
+                    List<Memory> byIds = await _Database.Memories.ReadManyAsync(scope.TenantId, ids, token).ConfigureAwait(false);
+                    targets.AddRange(byIds.Where(m => string.Equals(m.ScopeId, scope.Id, StringComparison.Ordinal)));
+                }
+
+                targets = targets.Where(m => !string.Equals(m.Id, saved.Id, StringComparison.Ordinal)).GroupBy(m => m.Id).Select(g => g.First()).ToList();
+                List<string> toMark = targets.Where(m => !string.Equals(m.SupersededBy, saved.Id, StringComparison.Ordinal)).Select(m => m.Id).ToList();
+                if (toMark.Count > 0) await _Database.Memories.SetSupersededByAsync(scope.TenantId, toMark, saved.Id, token).ConfigureAwait(false);
+            }
+
+            if (!created)
+            {
+                HashSet<string> current = new HashSet<string>(targets.Select(m => m.Id), StringComparer.Ordinal);
+                List<Memory> previous = await _Database.Memories.ReadSupersededByAsync(scope.TenantId, saved.Id, token).ConfigureAwait(false);
+                List<string> released = previous.Where(m => !current.Contains(m.Id)).Select(m => m.Id).ToList();
+                if (released.Count > 0) await _Database.Memories.SetSupersededByAsync(scope.TenantId, released, null, token).ConfigureAwait(false);
+            }
+            else
+            {
+                // A replacement written before the memory it replaces (for example on re-import) already names it.
+                List<Memory> superseders = await _Database.Memories.ReadSupersedingAsync(scope.TenantId, scope.Id, saved.Slug, token).ConfigureAwait(false);
+                Memory? superseder = superseders.Where(m => !string.Equals(m.Id, saved.Id, StringComparison.Ordinal)).OrderByDescending(m => m.CreatedUtc).FirstOrDefault();
+                if (superseder != null)
+                {
+                    await _Database.Memories.SetSupersededByAsync(scope.TenantId, new List<string> { saved.Id }, superseder.Id, token).ConfigureAwait(false);
+                    saved.SupersededBy = superseder.Id;
+                }
+            }
+        }
+
+        private async Task<List<SimilarMemory>?> FindSimilarAsync(IMemoryStore store, Scope scope, Memory saved, float[] embedding, CancellationToken token)
+        {
+            // Best effort: the memory is already written, so a failed lookup only means no similarity report.
+            try
+            {
+                MemorySearchQuery query = new MemorySearchQuery
+                {
+                    QueryText = saved.Title ?? saved.Slug,
+                    Mode = SearchModeEnum.Semantic,
+                    TopK = DuplicateMaxResults + 1,
+                    TokenBudget = 1
+                };
+
+                MemorySearchResult result = await store.SearchAsync(scope, query, embedding, token).ConfigureAwait(false);
+                List<MemorySearchHit> close = (result.Hits ?? new List<MemorySearchHit>())
+                    .Where(h => !string.Equals(h.StoreKey, saved.StoreKey, StringComparison.Ordinal) && !string.Equals(h.StoreKey, saved.Id, StringComparison.Ordinal))
+                    .Where(h => (h.VectorScore ?? h.Score) >= _DuplicateSimilarityThreshold)
+                    .Take(DuplicateMaxResults)
+                    .ToList();
+                if (close.Count == 0) return null;
+
+                List<Memory> memories = await _Database.Memories.ReadBySlugsAsync(scope.TenantId, scope.Id, close.Where(h => h.Slug != null).Select(h => h.Slug!).Distinct(StringComparer.Ordinal).ToList(), token).ConfigureAwait(false);
+                List<SimilarMemory> similar = new List<SimilarMemory>();
+                foreach (MemorySearchHit hit in close)
+                {
+                    Memory? memory = memories.FirstOrDefault(m => string.Equals(m.StoreKey, hit.StoreKey, StringComparison.Ordinal) || string.Equals(m.Id, hit.StoreKey, StringComparison.Ordinal))
+                        ?? memories.FirstOrDefault(m => string.Equals(m.Slug, hit.Slug, StringComparison.Ordinal));
+                    if (memory == null || string.Equals(memory.Id, saved.Id, StringComparison.Ordinal)) continue;
+                    if (string.Equals(memory.SupersededBy, saved.Id, StringComparison.Ordinal)) continue;
+
+                    similar.Add(new SimilarMemory
+                    {
+                        Id = memory.Id,
+                        Slug = memory.Slug,
+                        Title = memory.Title,
+                        CategoryId = memory.CategoryId,
+                        Similarity = Math.Round(hit.VectorScore ?? hit.Score, 4)
+                    });
+                }
+
+                return similar.Count > 0 ? similar : null;
+            }
+            catch (InvalidOperationException)
+            {
+                return null;
+            }
+            catch (NotSupportedException)
+            {
+                return null;
+            }
+        }
+
+        private async Task<ModelEndpoint?> ResolveRerankEndpointAsync(Scope scope, MemorySearchQuery query, CancellationToken token)
+        {
+            if (query.Rerank == false) return null;
+            if (string.IsNullOrEmpty(scope.RerankEndpointId))
+            {
+                if (query.Rerank == true) throw new InvalidOperationException("Reranking was requested but this scope has no rerank endpoint configured.");
+                return null;
+            }
+
+            if (_RerankService == null) throw new InvalidOperationException("This scope reranks results but no rerank service is configured on the server.");
+
+            ModelEndpoint? endpoint = _Cache != null
+                ? await _Cache.GetEndpointAsync(scope.TenantId, scope.RerankEndpointId, token).ConfigureAwait(false)
+                : await _Database.ModelEndpoints.ReadAsync(scope.TenantId, scope.RerankEndpointId, token).ConfigureAwait(false);
+            if (endpoint == null) throw new InvalidOperationException("The scope's configured rerank endpoint was not found.");
+            if (!endpoint.Active)
+            {
+                if (query.Rerank == true) throw new InvalidOperationException("The scope's rerank endpoint is inactive.");
+                return null;
+            }
+
+            return endpoint;
+        }
+
+        private async Task<List<MemorySearchHit>> RerankAsync(ModelEndpoint endpoint, string queryText, List<MemorySearchHit> hits, CancellationToken token)
+        {
+            List<string> passages = hits
+                .Select(h => (string.IsNullOrEmpty(h.Title) ? string.Empty : h.Title + "\n") + (h.Snippet ?? string.Empty))
+                .Select(p => p.Length > _RerankPassageChars ? p.Substring(0, _RerankPassageChars) : p)
+                .ToList();
+            double[] scores = await _RerankService!.RerankAsync(endpoint, queryText, passages, token).ConfigureAwait(false);
+
+            for (int i = 0; i < hits.Count; i++)
+            {
+                hits[i].RerankScore = scores[i];
+                hits[i].Score = scores[i];
+            }
+
+            // Stable: ties keep the retrieval order.
+            return hits.Select((h, i) => new KeyValuePair<int, MemorySearchHit>(i, h))
+                .OrderByDescending(p => p.Value.Score)
+                .ThenBy(p => p.Key)
+                .Select(p => p.Value)
+                .ToList();
         }
 
         private async Task EmbedChunksAsync(ModelEndpoint endpoint, IReadOnlyList<MemoryChunk> chunks, CancellationToken token)
@@ -606,7 +884,9 @@ namespace Isis.Server.Services
             if (_EmbeddingService == null) throw new InvalidOperationException("This scope requires embeddings but no embedding service is configured on the server.");
             if (string.IsNullOrEmpty(scope.EmbeddingEndpointId)) throw new InvalidOperationException("This scope requires embeddings but has no embedding endpoint configured.");
 
-            ModelEndpoint? endpoint = await _Database.ModelEndpoints.ReadAsync(scope.TenantId, scope.EmbeddingEndpointId, token).ConfigureAwait(false);
+            ModelEndpoint? endpoint = _Cache != null
+                ? await _Cache.GetEndpointAsync(scope.TenantId, scope.EmbeddingEndpointId, token).ConfigureAwait(false)
+                : await _Database.ModelEndpoints.ReadAsync(scope.TenantId, scope.EmbeddingEndpointId, token).ConfigureAwait(false);
             if (endpoint == null) throw new InvalidOperationException("The scope's configured embedding endpoint was not found.");
 
             return endpoint;

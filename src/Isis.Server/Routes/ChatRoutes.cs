@@ -26,6 +26,7 @@ namespace Isis.Server.Routes
         private readonly DatabaseDriverBase _Database;
         private readonly AuthorizationService _Authorization;
         private readonly MemoryChatService _ChatService;
+        private readonly LookupCache? _Cache;
 
         #endregion
 
@@ -37,9 +38,11 @@ namespace Isis.Server.Routes
         /// <param name="database">The database driver.</param>
         /// <param name="authorization">The authorization service.</param>
         /// <param name="chatService">The chat service.</param>
+        /// <param name="cache">Optional lookup cache for scope reads.</param>
         /// <exception cref="ArgumentNullException">Thrown when a required argument is null.</exception>
-        public ChatRoutes(DatabaseDriverBase database, AuthorizationService authorization, MemoryChatService chatService)
+        public ChatRoutes(DatabaseDriverBase database, AuthorizationService authorization, MemoryChatService chatService, LookupCache? cache = null)
         {
+            _Cache = cache;
             _Database = database ?? throw new ArgumentNullException(nameof(database));
             _Authorization = authorization ?? throw new ArgumentNullException(nameof(authorization));
             _ChatService = chatService ?? throw new ArgumentNullException(nameof(chatService));
@@ -87,7 +90,9 @@ namespace Isis.Server.Routes
                 return;
             }
 
-            Scope? scope = await _Database.Scopes.ReadAsync(tenantId, scopeId, context.Token).ConfigureAwait(false);
+            Scope? scope = _Cache != null
+                ? await _Cache.GetScopeAsync(tenantId, scopeId, context.Token).ConfigureAwait(false)
+                : await _Database.Scopes.ReadAsync(tenantId, scopeId, context.Token).ConfigureAwait(false);
             if (scope == null)
             {
                 await RouteHelpers.ErrorAsync(context, 404, "NotFound", "Scope not found.").ConfigureAwait(false);
@@ -135,7 +140,9 @@ namespace Isis.Server.Routes
                 return;
             }
 
-            Scope? scope = await _Database.Scopes.ReadAsync(tenantId, scopeId, context.Token).ConfigureAwait(false);
+            Scope? scope = _Cache != null
+                ? await _Cache.GetScopeAsync(tenantId, scopeId, context.Token).ConfigureAwait(false)
+                : await _Database.Scopes.ReadAsync(tenantId, scopeId, context.Token).ConfigureAwait(false);
             if (scope == null)
             {
                 await RouteHelpers.ErrorAsync(context, 404, "NotFound", "Scope not found.").ConfigureAwait(false);

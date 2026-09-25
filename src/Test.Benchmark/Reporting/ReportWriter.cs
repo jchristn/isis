@@ -64,6 +64,12 @@ namespace Test.Benchmark.Reporting
               .Append(" | ").Append(report.Ingest.Latency.P50).Append(" ms | ").Append(report.Ingest.Latency.P95).Append(" ms | ").Append(report.Ingest.Latency.P99).Append(" ms |\n\n");
             AppendStages(md, report.Ingest.Stages);
             foreach (string error in report.Ingest.SampleErrors) md.Append("- ingest error: `").Append(error.Replace("`", "'")).Append("`\n");
+            if (report.Ingest.SimilarFlags > 0 || report.Ingest.SupersessionPairs > 0)
+            {
+                md.Append("\nSimilarity check on upsert: ").Append(report.Ingest.SimilarFlags).Append(" similar-memory flags; ")
+                  .Append(report.Ingest.SupersessionPairsFlagged).Append(" of ").Append(report.Ingest.SupersessionPairs).Append(" known supersession pairs flagged; ")
+                  .Append(report.Ingest.SimilarFlagsOnKnownPairs).Append(" flagged pairs are known pairs.\n\n");
+            }
 
             md.Append("## Accuracy by mode\n\n");
             md.Append("| Mode | Queries | ").Append(string.Join(" | ", RetrievalRunner.MetricNames)).Append(" | Errors |\n");
@@ -102,13 +108,14 @@ namespace Test.Benchmark.Reporting
             }
 
             md.Append("\n## Score separation (can a score threshold detect \"nothing relevant\"?)\n\n");
-            md.Append("| Mode | Mean top score, answerable | Mean top score, unanswerable | Score AUROC | Vector-score AUROC | Unanswerable queries |\n|---|---|---|---|---|---|\n");
+            md.Append("| Mode | Mean top score, answerable | Mean top score, unanswerable | Score AUROC | Vector-score AUROC | Unanswerable queries | Answerable with no hits | Unanswerable with no hits |\n|---|---|---|---|---|---|---|---|\n");
             foreach (ModeSummary mode in report.Modes)
             {
                 md.Append("| ").Append(mode.Mode).Append(" | ").Append(mode.MeanTopScoreAnswerable).Append(" | ").Append(mode.MeanTopScoreNegative)
                   .Append(" | ").Append(mode.ScoreAuroc.HasValue ? mode.ScoreAuroc.Value.ToString("F3") : "n/a")
                   .Append(" | ").Append(mode.VectorScoreAuroc.HasValue ? mode.VectorScoreAuroc.Value.ToString("F3") : "n/a")
-                  .Append(" | ").Append(mode.NegativeQueries).Append(" |\n");
+                  .Append(" | ").Append(mode.NegativeQueries)
+                  .Append(" | ").Append(mode.AnswerableEmptyRate.ToString("P1")).Append(" | ").Append(mode.NegativeEmptyRate.ToString("P1")).Append(" |\n");
             }
 
             md.Append("\n## Accuracy by query type\n\n");
@@ -281,6 +288,7 @@ namespace Test.Benchmark.Reporting
             md.Append("| Machine | ").Append(environment.Machine).Append(" |\n");
             md.Append("| Embedding | ").Append(environment.Embedding).Append(" |\n");
             if (!string.IsNullOrEmpty(environment.Inference)) md.Append("| Inference | ").Append(environment.Inference).Append(" |\n");
+            if (!string.IsNullOrEmpty(environment.Rerank)) md.Append("| Rerank | ").Append(environment.Rerank).Append(" |\n");
             foreach (KeyValuePair<string, string> item in config) md.Append("| ").Append(item.Key).Append(" | ").Append(item.Value).Append(" |\n");
             md.Append("\n");
         }

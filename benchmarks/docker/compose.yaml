@@ -3,6 +3,7 @@
 # source against this stack (see benchmarks/README.md) so benchmarks always measure the working tree.
 #
 #   docker compose -f benchmarks/docker/compose.yaml up -d
+#   docker compose -f benchmarks/docker/compose.yaml --profile rerank up -d   # also start the cross-encoder reranker
 #   docker compose -f benchmarks/docker/compose.yaml down -v     # discard all benchmark data
 
 name: isis-bench
@@ -48,5 +49,18 @@ services:
       postgres:
         condition: service_healthy
 
+  # Optional cross-encoder reranker (Hugging Face Text Embeddings Inference) for --rerank runs. Isis calls it as a
+  # Rerank endpoint with apiFormat Tei at http://127.0.0.1:18800.
+  rerank:
+    container_name: 'isis-bench-rerank'
+    image: 'ghcr.io/huggingface/text-embeddings-inference:cpu-1.8'
+    profiles: ['rerank']
+    ports:
+      - '127.0.0.1:18800:80'
+    command: ['--model-id', 'cross-encoder/ms-marco-MiniLM-L-6-v2']
+    volumes:
+      - isis-bench-rerank:/data
+
 volumes:
   isis-bench-postgres:
+  isis-bench-rerank:

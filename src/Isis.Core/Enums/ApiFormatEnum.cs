@@ -24,6 +24,19 @@ namespace Isis.Core.Enums
         /// <summary>
         /// Google Gemini API (probe path <c>/v1beta/models</c>, auth header <c>x-goog-api-key</c>).
         /// </summary>
-        Gemini
+        Gemini,
+
+        /// <summary>
+        /// Hugging Face Text Embeddings Inference reranker API (<c>POST /rerank</c> with <c>query</c> and <c>texts</c>;
+        /// probe path <c>/health</c>). Rerank endpoints only.
+        /// </summary>
+        Tei,
+
+        /// <summary>
+        /// Cohere-compatible rerank API (<c>POST /v1/rerank</c> with <c>query</c> and <c>documents</c>, answering
+        /// <c>results[].relevance_score</c>), also served by Jina, Voyage, and several self-hosted rerankers. Rerank
+        /// endpoints only.
+        /// </summary>
+        Cohere
     }
 }

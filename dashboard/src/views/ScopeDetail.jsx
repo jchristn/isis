@@ -89,6 +89,16 @@ function ScopeDetail() {
           <dd>{scope?.recallCollectionId ? <CopyableId value={scope.recallCollectionId} /> : '—'}</dd>
           <dt>{t('scopes.embeddingEndpoint')}</dt>
           <dd>{scope?.embeddingEndpointId ? <CopyableId value={scope.embeddingEndpointId} /> : '—'}</dd>
+          <dt>{t('scopes.rerankEndpoint')}</dt>
+          <dd>{scope?.rerankEndpointId ? <CopyableId value={scope.rerankEndpointId} /> : '—'}</dd>
+          {scope?.rerankEndpointId && (
+            <>
+              <dt>{t('scopes.rerankCandidates')}</dt>
+              <dd>{scope.rerankCandidates}</dd>
+              <dt>{t('scopes.rerankMinScore')}</dt>
+              <dd>{scope.rerankMinScore ?? '—'}</dd>
+            </>
+          )}
           {scope?.targetPath && (
             <>
               <dt>{t('scopes.targetPath')}</dt>

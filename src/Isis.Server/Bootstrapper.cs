@@ -55,7 +55,8 @@ namespace Isis.Server
                 return;
             }
 
-            AuthenticationService authenticationService = new AuthenticationService(database, settings.Auth);
+            LookupCache lookupCache = new LookupCache(database, settings.Cache.Enabled, TimeSpan.FromSeconds(settings.Cache.TtlSeconds));
+            AuthenticationService authenticationService = new AuthenticationService(database, settings.Auth, lookupCache);
             AuthorizationService authorizationService = new AuthorizationService();
 
             HttpClient embeddingClient = new HttpClient();
@@ -66,13 +67,17 @@ namespace Isis.Server
                 RecallDbAdminKey = settings.RecallDb.AdminApiKey,
                 VerbexEndpoint = settings.Verbex.Endpoint
             };
-            MemoryService memoryService = new MemoryService(database, embeddingService, storeOptions);
+            RerankService rerankService = new RerankService(embeddingClient);
+            MemoryService memoryService = new MemoryService(database, embeddingService, storeOptions, lookupCache, rerankService);
+            memoryService.DuplicateCheckEnabled = settings.Retrieval.DuplicateCheckEnabled;
+            memoryService.DuplicateSimilarityThreshold = settings.Retrieval.DuplicateSimilarityThreshold;
+            memoryService.RerankPassageChars = settings.Retrieval.RerankPassageChars;
 
             // Start the observability pipeline before the server so Watson's instrumentation is collected from
             // the first request. A telemetry failure never prevents startup (Start returns null and logs).
             ObservabilityHost? observability = ObservabilityHost.Start(settings.Observability, log);
 
-            IsisServer server = new IsisServer(settings, database, authenticationService, authorizationService, memoryService, log, storeOptions, settingsFile);
+            IsisServer server = new IsisServer(settings, database, authenticationService, authorizationService, memoryService, log, storeOptions, settingsFile, lookupCache);
             server.Start();
             log("node '" + settings.NodeId + "' listening on " + settings.Rest.Hostname + ":" + settings.Rest.Port);
 

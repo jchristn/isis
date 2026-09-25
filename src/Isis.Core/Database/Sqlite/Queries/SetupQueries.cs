@@ -107,7 +107,10 @@ CREATE TABLE IF NOT EXISTS scopes (
     chunkoverlaptokens INTEGER NOT NULL DEFAULT 64,
     active INTEGER NOT NULL DEFAULT 1,
     createdutc TEXT NOT NULL,
-    lastupdateutc TEXT NOT NULL
+    lastupdateutc TEXT NOT NULL,
+    rerankendpointid TEXT,
+    rerankcandidates INTEGER NOT NULL DEFAULT 20,
+    rerankminscore REAL
 );
 
 CREATE TABLE IF NOT EXISTS categories (
@@ -144,7 +147,9 @@ CREATE TABLE IF NOT EXISTS memories (
     version INTEGER NOT NULL DEFAULT 1,
     createdutc TEXT NOT NULL,
     lastupdateutc TEXT NOT NULL,
-    lastaccessedutc TEXT
+    lastaccessedutc TEXT,
+    supersedes TEXT,
+    supersededby TEXT
 );
 
 CREATE TABLE IF NOT EXISTS model_endpoints (

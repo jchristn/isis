@@ -69,6 +69,16 @@ namespace Test.Benchmark.Runners
         public double? VectorScoreAuroc { get; set; } = null;
 
         /// <summary>
+        /// Fraction of answerable queries that returned no hits (a cutoff rejecting a real answer).
+        /// </summary>
+        public double AnswerableEmptyRate { get; set; } = 0.0;
+
+        /// <summary>
+        /// Fraction of negative queries that returned no hits (a cutoff correctly reporting nothing relevant).
+        /// </summary>
+        public double NegativeEmptyRate { get; set; } = 0.0;
+
+        /// <summary>
         /// Client latency.
         /// </summary>
         public LatencyStats Latency { get; set; } = new LatencyStats();

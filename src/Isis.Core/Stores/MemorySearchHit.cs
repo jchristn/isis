@@ -52,6 +52,28 @@ namespace Isis.Core.Stores
         /// </summary>
         public int? TextRank { get; set; } = null;
 
+        /// <summary>
+        /// The memory id, when the service resolved it from the memory index. Null otherwise.
+        /// </summary>
+        public string? MemoryId { get; set; } = null;
+
+        /// <summary>
+        /// Cross-encoder relevance score, when the search was reranked. Null otherwise. When set, <see cref="Score"/>
+        /// holds the same value.
+        /// </summary>
+        public double? RerankScore { get; set; } = null;
+
+        /// <summary>
+        /// Slug of the memory that replaces this one, when another memory supersedes it. Null when current.
+        /// </summary>
+        public string? SupersededBy { get; set; } = null;
+
+        /// <summary>
+        /// Slug of the result that linked to this memory, when it was added by link expansion or as the replacement
+        /// of a superseded result. Null for memories the search retrieved directly.
+        /// </summary>
+        public string? LinkedFrom { get; set; } = null;
+
         #endregion
 
         #region Constructors-and-Factories

@@ -51,6 +51,7 @@ namespace Isis.Server
         private readonly RetentionService _RetentionService;
         private readonly Webserver _Server;
         private readonly Action<string>? _Log;
+        private readonly LookupCache? _LookupCache;
         private readonly StoreOptions? _StoreOptions;
         private readonly string? _SettingsFile;
         private bool _Disposed = false;
@@ -70,6 +71,7 @@ namespace Isis.Server
         /// <param name="log">Optional log callback.</param>
         /// <param name="storeOptions">Optional external store options (RecallDB/Verbex).</param>
         /// <param name="settingsFile">Optional settings file path, enabling the server settings routes to persist changes.</param>
+        /// <param name="lookupCache">Optional lookup cache shared with the authentication and memory services. Null disables caching in the routes.</param>
         /// <exception cref="ArgumentNullException">Thrown when a required argument is null.</exception>
         public IsisServer(
             IsisSettings settings,
@@ -79,8 +81,10 @@ namespace Isis.Server
             MemoryService memoryService,
             Action<string>? log = null,
             StoreOptions? storeOptions = null,
-            string? settingsFile = null)
+            string? settingsFile = null,
+            LookupCache? lookupCache = null)
         {
+            _LookupCache = lookupCache;
             Settings = settings ?? throw new ArgumentNullException(nameof(settings));
             _Database = database ?? throw new ArgumentNullException(nameof(database));
             _AuthenticationService = authenticationService ?? throw new ArgumentNullException(nameof(authenticationService));
@@ -98,6 +102,7 @@ namespace Isis.Server
             _InferenceHandler = new SocketsHttpHandler();
             _InferenceService = new InferenceService(_InferenceHandler);
             _ChatService = new MemoryChatService(_MemoryService, _InferenceService);
+            _ChatService.LinkExpansion = settings.Retrieval.ChatLinkExpansion;
             _RetentionService = new RetentionService(_Database, Settings.Retention, _Log);
 
             WebserverSettings webserverSettings = new WebserverSettings();
@@ -181,9 +186,9 @@ namespace Isis.Server
             new CredentialRoutes(_Database, _AuthorizationService).Register(_Server);
             new ScopeRoutes(_Database, _AuthorizationService, _MemoryService).Register(_Server);
             new CategoryRoutes(_Database, _AuthorizationService, _MemoryService).Register(_Server);
-            new MemoryRoutes(_Database, _AuthorizationService, _MemoryService).Register(_Server);
+            new MemoryRoutes(_Database, _AuthorizationService, _MemoryService, _LookupCache).Register(_Server);
             new ModelEndpointRoutes(_Database, _AuthorizationService, _HealthCheck).Register(_Server);
-            new ChatRoutes(_Database, _AuthorizationService, _ChatService).Register(_Server);
+            new ChatRoutes(_Database, _AuthorizationService, _ChatService, _LookupCache).Register(_Server);
             new RequestHistoryRoutes(_Database, _AuthorizationService).Register(_Server);
             new OperationRoutes(_Database, _AuthorizationService).Register(_Server);
             new CollectionRoutes(_AuthorizationService, _StoreOptions).Register(_Server);
@@ -268,6 +273,13 @@ namespace Isis.Server
             if (_Log != null)
             {
                 _Log(context.Request.Method + " " + context.Request.Url.RawWithQuery + " " + context.Response.StatusCode);
+            }
+
+            // Drop cached lookups a successful write may have changed (credentials, users, scopes, endpoints). Done
+            // centrally so writes proxied through the MCP server are covered too.
+            if (_LookupCache != null && context.Response.StatusCode < 400)
+            {
+                _LookupCache.InvalidateForWrite(context.Request.Method.ToString(), context.Request.Url.RawWithoutQuery ?? string.Empty);
             }
 
             await CaptureRequestAsync(context).ConfigureAwait(false);

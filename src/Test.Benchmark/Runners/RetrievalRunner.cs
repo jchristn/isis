@@ -59,10 +59,7 @@ namespace Test.Benchmark.Runners
             int topK = Math.Max(10, args.GetInt("k", 10));
             int concurrency = Math.Max(1, args.GetInt("concurrency", 1));
             bool useCategory = !args.GetFlag("no-category");
-            string? recencyArg = args.GetOptional("recency-weight");
-            double? recencyWeight = recencyArg != null ? args.GetDouble("recency-weight", 0.1) : (double?)null;
-            string? minScoreArg = args.GetOptional("min-score");
-            double? minScore = minScoreArg != null ? args.GetDouble("min-score", 0.0) : (double?)null;
+            SearchOptions options = SearchOptions.FromArguments(args);
 
             RetrievalReport report = new RetrievalReport
             {
@@ -75,9 +72,10 @@ namespace Test.Benchmark.Runners
             report.Config["concurrency"] = concurrency.ToString();
             report.Config["categoryFilter"] = useCategory ? "on" : "off";
             report.Config["store"] = args.Get("store", "RecallDb");
-            report.Config["recencyWeight"] = recencyWeight.HasValue ? recencyWeight.Value.ToString("0.###") : "server default";
-            if (minScore.HasValue) report.Config["minScore"] = minScore.Value.ToString("0.###");
-            foreach (string name in new string[] { "chunking-mode", "chunk-strategy", "chunk-max-tokens", "chunk-overlap", "scope-suffix" })
+            report.Config["recencyWeight"] = options.RecencyWeight.HasValue ? options.RecencyWeight.Value.ToString("0.###") : "server default";
+            if (options.MinScore.HasValue) report.Config["minScore"] = options.MinScore.Value.ToString("0.###");
+            report.Config["rerank"] = args.GetFlag("rerank") ? "on" : "off";
+            foreach (string name in new string[] { "chunking-mode", "chunk-strategy", "chunk-max-tokens", "chunk-overlap", "scope-suffix", "superseded", "link-expansion", "diversity", "min-rerank-score", "rerank-candidates" })
             {
                 string? value = args.GetOptional(name);
                 if (value != null) report.Config[name] = value;
@@ -94,7 +92,7 @@ namespace Test.Benchmark.Runners
             foreach (string mode in modes)
             {
                 PrometheusSnapshot before = await PrometheusSnapshot.CaptureAsync(_Context.Http, _Context.MetricsUrl, token).ConfigureAwait(false);
-                List<QueryOutcome> outcomes = await RunModeAsync(scopes, mode, topK, concurrency, useCategory, recencyWeight, minScore, token).ConfigureAwait(false);
+                List<QueryOutcome> outcomes = await RunModeAsync(scopes, mode, topK, concurrency, useCategory, options, token).ConfigureAwait(false);
                 PrometheusSnapshot after = await PrometheusSnapshot.CaptureAsync(_Context.Http, _Context.MetricsUrl, token).ConfigureAwait(false);
 
                 ModeSummary summary = Summarize(mode, outcomes);
@@ -113,7 +111,7 @@ namespace Test.Benchmark.Runners
 
         #region Private-Methods
 
-        private async Task<List<QueryOutcome>> RunModeAsync(List<ProvisionedScope> scopes, string mode, int topK, int concurrency, bool useCategory, double? recencyWeight, double? minScore, CancellationToken token)
+        private async Task<List<QueryOutcome>> RunModeAsync(List<ProvisionedScope> scopes, string mode, int topK, int concurrency, bool useCategory, SearchOptions options, CancellationToken token)
         {
             ConcurrentBag<QueryOutcome> outcomes = new ConcurrentBag<QueryOutcome>();
             using SemaphoreSlim gate = new SemaphoreSlim(concurrency);
@@ -129,7 +127,7 @@ namespace Test.Benchmark.Runners
                         try
                         {
                             string? category = useCategory ? query.Category : null;
-                            SearchResponse response = await _Context.Client.SearchAsync(scope.ScopeId, query.Text, mode, topK, category, token, recencyWeight, minScore).ConfigureAwait(false);
+                            SearchResponse response = await _Context.Client.SearchAsync(scope.ScopeId, query.Text, mode, topK, category, token, options).ConfigureAwait(false);
                             outcomes.Add(Score(scope.Corpus.Id, query, mode, response));
                         }
                         finally
@@ -198,6 +196,8 @@ namespace Test.Benchmark.Runners
                 MeanTopScoreAnswerable = scored.Count > 0 ? Math.Round(scored.Average(o => o.TopScore), 4) : 0.0,
                 MeanTopScoreNegative = negatives.Count > 0 ? Math.Round(negatives.Average(o => o.TopScore), 4) : 0.0,
                 ScoreAuroc = Auroc(scored.Select(o => o.TopScore).ToList(), negatives.Select(o => o.TopScore).ToList()),
+                AnswerableEmptyRate = scored.Count > 0 ? Math.Round(scored.Count(o => o.Ranked.Count == 0) / (double)scored.Count, 4) : 0.0,
+                NegativeEmptyRate = negatives.Count > 0 ? Math.Round(negatives.Count(o => o.Ranked.Count == 0) / (double)negatives.Count, 4) : 0.0,
                 VectorScoreAuroc = Auroc(scored.Select(o => o.TopVectorScore).ToList(), negatives.Select(o => o.TopVectorScore).ToList()),
                 Latency = LatencyStats.From(outcomes.Select(o => o.LatencyMs))
             };
