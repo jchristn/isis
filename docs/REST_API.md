@@ -245,11 +245,22 @@ An endpoint's `kind` is `Embedding`, `Inference`, or `Rerank` (ids are prefixed 
 **Rerank** endpoint is a cross-encoder that scores how well each candidate answers the query. Its `apiFormat` is
 `Tei` (Hugging Face Text Embeddings Inference: `POST {baseUrl}/rerank` with `query` and `texts`, health path
 `/health`) or `Cohere` (`POST {baseUrl}/v1/rerank` with `model`, `query`, and `documents`, answering
-`results[].relevance_score`; also served by vLLM, Jina, and other Cohere-compatible rerankers).
+`results[].relevance_score`; also served by vLLM, Jina, and other Cohere-compatible rerankers). A chat model can also
+serve as a reranker with `apiFormat` `Ollama` or `OpenAI`: Isis sends the query and the numbered candidates in one chat
+call, asks for a 0 to 10 rating of each, and divides by 10. On the benchmarks a small chat model (gemma3:4b) ranked
+worse than no reranker at all, so prefer a cross-encoder; the chat-model path is for larger models.
+
+Model calls (embedding, rerank, and inference) are retried with backoff when the endpoint answers 429, 502, or 503.
+An endpoint still unavailable after the retries is reported to the caller as **503** `ServiceUnavailable`, which is
+safe to retry. Embedding models trained with task prefixes (nomic-embed-text, e5, bge, mxbai, snowflake-arctic-embed)
+get them automatically: `search_document: ` for stored content and `search_query: ` for queries, for nomic.
 
 Chunking of oversized memories is transparent to the API and configured on the **scope**: `chunkingMode`
 (`OnOverflow` default — split only when a body exceeds the budget — `Always`, or `Off`), `chunkStrategy`
-(`FixedTokenCount` default), `chunkMaxTokens` (0 = use the model budget), and `chunkOverlapTokens` (64).
+(`FixedTokenCount` default), `chunkMaxTokens` (0 = the default size: 75% of the embedding model's budget, at most
+256 tokens, which is 188 tokens for all-minilm), and `chunkOverlapTokens` (64). Chunks well under the model limit keep
+details from being diluted; on the benchmarks they scored higher than chunks that fill the model's window. The server
+setting `retrieval.embeddingParallelism` (default 4) bounds how many chunks of one memory are embedded at once.
 A memory that overflows is embedded as several chunks under the hood; upsert, read, search, and delete all
 continue to operate on the whole memory, and search returns one hit per memory regardless of chunking.
 

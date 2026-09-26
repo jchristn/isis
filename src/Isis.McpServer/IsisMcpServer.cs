@@ -279,7 +279,7 @@ namespace Isis.McpServer
                 endpointId = new { type = "string", description = "Endpoint id (update only)." },
                 name = new { type = "string" },
                 kind = new { type = "string", description = "Embedding, Inference, or Rerank." },
-                apiFormat = new { type = "string", description = "Ollama, OpenAI, VLlm, or Gemini for embedding and inference; Tei or Cohere (or VLlm) for rerank." },
+                apiFormat = new { type = "string", description = "Ollama, OpenAI, VLlm, or Gemini for embedding and inference; Tei or Cohere (or VLlm) for a cross-encoder rerank endpoint, or Ollama/OpenAI for a chat model used as a reranker." },
                 baseUrl = new { type = "string", description = "Full base URL; the API path is appended (e.g. http://host:11434 or https://api.openai.com)." },
                 authType = new { type = "string", description = "None, BearerToken, ApiKeyHeader, QueryParam, BasicAuth, or AccessKeySecret." },
                 authHeaderName = new { type = "string", description = "Header name for ApiKeyHeader, or access-key header for AccessKeySecret." },

@@ -63,7 +63,22 @@ All notable changes to Isis are documented here. This project adheres to
 - **Chat grounds on the whole best-matching chunk** instead of a 240-character snippet. Answer accuracy on the
   isis-live benchmark rose from 0.68 to 0.96.
 - **Hybrid search runs its vector and text legs in parallel**, and a multi-chunk memory's chunks are embedded
-  concurrently (4 at a time).
+  concurrently (`retrieval.embeddingParallelism`, default 4).
+- **TextChunker 0.3.1.** Span-based chunking with token counts that match the embedding runtime. Isis's workarounds
+  for the 0.2.x bugs (surrogate-safe stand-in text, dropping redundant tail chunks) are removed, and its token
+  margin drops from 4% to 1% (`MemoryChunker.TokenizerMarginFraction`). Chunk boundaries change, so re-ingest.
+- **Default chunk size.** When a scope does not set `chunkMaxTokens`, chunks are 75% of the model's budget, at most
+  256 tokens (`MemoryChunker.DefaultChunkFraction`, `DefaultChunkMaxTokens`). On the benchmarks this took Atlas from
+  0.802 to 0.831 and LongMemEval from 0.895 to 0.912 Hybrid nDCG@10.
+- **Model endpoint retries.** Embedding, rerank, and inference calls retry 429, 502, and 503 with backoff
+  (`TransientRetryHandler`); an endpoint still unavailable afterwards is reported as 503 instead of 400.
+- **Embedding task prefixes.** Models trained with them (nomic-embed-text, e5, bge, mxbai, snowflake-arctic-embed)
+  get their document and query prefixes (`EmbeddingPrefixRegistry`).
+- **Chat-model reranking.** A Rerank endpoint can use the `Ollama` or `OpenAI` format; Isis prompts the model once per
+  search to rate every candidate. A cross-encoder remains the recommended reranker.
+- **Rerank candidates default to 10** (was 20): equal quality on the benchmarks at about 40% less latency.
+- **Reranker in the reference stack.** `docker/compose.yaml` and the benchmark stack gain optional `rerank` (CPU) and
+  `rerank-gpu` (NVIDIA) profiles serving ms-marco-MiniLM-L-6-v2.
 - **RecallDB clients are shared per endpoint** instead of one undisposed `HttpClient` per request.
 
 ### Fixed

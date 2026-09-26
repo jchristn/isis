@@ -28,26 +28,33 @@ Latency and throughput depend on the machine. Compare them within this page, not
 | 1 | Nine Isis defects fixed (see [Defects found](#defects-found-by-the-benchmarks)); chat grounds on whole chunks instead of 240-character snippets; Voltaic 1.1.0 so Claude Code can see Isis tools; RecallDB patched upstream so keyword search matches any term instead of requiring every term |
 | 2 | The retrieval improvements in [RETRIEVAL_IMPROVEMENTS.md](../RETRIEVAL_IMPROVEMENTS.md): fused and normalized hybrid scores, a recency signal, chunk headers, deeper chat retrieval, a stricter chat prompt, and update-not-duplicate guidance, plus four ingest robustness fixes found while measuring |
 | 3 | Explicit supersession, optional cross-encoder reranking with a relevance cutoff, link expansion (on in chat), result diversity, similar-memory flags on upsert, and a lookup cache. Reranking, diversity, and the cutoff are off unless configured, so the plain "Round 3" column is the default configuration and "+ rerank" is a scope with a reranker attached |
+| 4 | TextChunker 0.3.1 (span-based chunking, token counts that match the embedding runtime); Isis's chunking workarounds removed and its token margin cut from 4% to 1%; every dataset re-ingested |
+| 5 | Chunks default to 75% of the model budget (capped at 256 tokens); retries on 429/502/503 with 503 reported for an endpoint still at capacity; 10 rerank candidates by default; embedding task prefixes; prompted chat-model reranking. Every model call (all-minilm, nomic-embed-text, gemma3:4b) ran on one GPU host instead of the laptop |
 
 ## Retrieval
 
 nDCG@10 scores whether the right memories come back near the top, from 0 to 1. Hybrid is the default mode and the
 one agents and chat use.
 
-| Dataset | Mode | Round 0 | Round 1 | Round 2 | Round 3 | Round 3 + rerank |
-|---|---|---|---|---|---|---|
-| isis-live: 24 real memories, 110 questions | Keyword | 0.073 | 0.817 | 0.814 | 0.814 | |
-| | Semantic | 0.844 | 0.844 | 0.843 | 0.843 | |
-| | **Hybrid** | 0.848 | 0.859 | 0.877 | 0.877 | **0.925** |
-| Atlas: 170 synthetic memories, 260 questions | Keyword | 0.137 | 0.767 | 0.773 | 0.783 | |
-| | Semantic | 0.715 | 0.714 | 0.738 | 0.756 | |
-| | **Hybrid** | 0.739 | 0.803 | 0.804 | 0.809 | **0.894** |
-| SciFact: 5,183 abstracts, 300 queries | Keyword | 0.057 | 0.598 | 0.585 | 0.589 | |
-| | Semantic | 0.653 | 0.653 | 0.645 | 0.647 | |
-| | **Hybrid** | 0.665 | 0.688 | 0.678 | 0.678 | **0.700** |
-| LongMemEval-S: 60 haystacks of about 50 sessions | Keyword | 0.102 | 0.833 | 0.838 | not run | |
-| | Semantic | 0.853 | 0.853 | 0.887 | 0.887 | |
-| | **Hybrid** | 0.853 | 0.906 | 0.907 | 0.907 | **0.912** |
+| Dataset | Mode | Round 0 | Round 1 | Round 2 | Round 3 | Round 4 | Round 5 | Round 5 + rerank |
+|---|---|---|---|---|---|---|---|---|
+| isis-live: 24 real memories, 110 questions | Keyword | 0.073 | 0.817 | 0.814 | 0.814 | 0.807 | 0.812 | |
+| | Semantic | 0.844 | 0.844 | 0.843 | 0.843 | 0.848 | 0.826 | |
+| | **Hybrid** | 0.848 | 0.859 | 0.877 | 0.877 | 0.883 | 0.879 | **0.925** |
+| Atlas: 170 synthetic memories, 260 questions | Keyword | 0.137 | 0.767 | 0.773 | 0.783 | 0.772 | 0.767 | |
+| | Semantic | 0.715 | 0.714 | 0.738 | 0.756 | 0.737 | 0.753 | |
+| | **Hybrid** | 0.739 | 0.803 | 0.804 | 0.809 | 0.802 | **0.831** | **0.880** |
+| SciFact: 5,183 abstracts, 300 queries | Keyword | 0.057 | 0.598 | 0.585 | 0.589 | 0.594 | 0.594 | |
+| | Semantic | 0.653 | 0.653 | 0.645 | 0.647 | 0.657 | 0.658 | |
+| | **Hybrid** | 0.665 | 0.688 | 0.678 | 0.678 | 0.683 | 0.682 | **0.715** |
+| LongMemEval-S: 60 haystacks of about 50 sessions | Keyword | 0.102 | 0.833 | 0.838 | not run | not run | not run | |
+| | Semantic | 0.853 | 0.853 | 0.887 | 0.887 | 0.889 | 0.874 | |
+| | **Hybrid** | 0.853 | 0.906 | 0.907 | 0.907 | 0.895 | **0.912** | **0.931** |
+
+"+ rerank" is the ms-marco-MiniLM-L-6-v2 cross-encoder with 10 candidates (the round-5 default). The round-3 and
+round-4 rerank columns (20 candidates) are in the round sections below. Round 5's reranked numbers were measured on
+the laptop with the round-5 code; every other round-5 number ran on the GPU host, whose all-minilm results match the
+laptop's to within 0.004.
 
 Round 0's retrieval numbers were measured once the ingest-blocking bugs of that round were fixed, so every document
 was actually stored, but before the RecallDB keyword fix and the chat changes. The very first SciFact run lost 19% of
@@ -116,6 +123,51 @@ The similarity check on upsert flagged none of Atlas's 9 declared replacement pa
 Measured directly, a memory and its replacement score 0.55 to 0.88 with all-minilm, while distinct but related memories
 reach 0.89, so no threshold separates them. The default is now 0.85 (3 of 9 pairs flagged, 2 other pairs across 170
 memories); the flags are prompts for the writer, not decisions.
+
+### Round 4: TextChunker 0.3.1, and an accidental benefit removed
+
+Round 4 moved to TextChunker 0.3.1 and re-ingested everything. isis-live and SciFact rose slightly; Atlas fell from
+0.809 to 0.802 (detail 0.933 → 0.880, category 0.982 → 0.945, multi 0.810 → 0.783) and LongMemEval from 0.907 to
+0.895. The cause was not a defect in the new chunker. TextChunker 0.2.2 undercounted tokens, so in round 3 Ollama
+rejected a chunk from 53 of Atlas's 80 long memories, and Isis's fallback re-chunked those memories at 75% of the
+budget. Round 3 had been storing smaller chunks by accident. 0.3.1 counts correctly, every chunk fit the first time,
+and chunks grew from about 190 to about 240 tokens, which diluted details. Re-ingesting Atlas with 190-token chunks
+on purpose scored 0.827; 128-token chunks overshot (0.799). That became round 5's default.
+
+### Round 5: retrieval-sized chunks, and what did not help
+
+With chunks at 75% of the model budget (188 tokens for all-minilm, capped at 256 for larger models), Atlas reached
+0.831 and LongMemEval 0.912, the best defaults so far, and superseded facts on Atlas reached 0.876 without a reranker:
+
+| Atlas, Hybrid nDCG@10 by type | Round 1 | Round 2 | Round 3 | Round 4 | Round 5 | Round 3 + rerank |
+|---|---|---|---|---|---|---|
+| superseded | 0.718 | 0.777 | 0.802 | 0.800 | **0.876** | 0.875 |
+| paraphrase | 0.673 | 0.707 | 0.707 | 0.726 | 0.726 | **0.833** |
+| lexical | 0.833 | 0.740 | 0.746 | 0.754 | 0.779 | **0.935** |
+| multi | 0.785 | 0.799 | 0.810 | 0.783 | 0.810 | **0.845** |
+| confusable | 0.852 | 0.859 | 0.863 | 0.868 | **0.901** | 0.879 |
+| detail | 0.947 | 0.933 | 0.933 | 0.880 | 0.932 | **0.985** |
+| category | 0.975 | 0.982 | 0.982 | 0.945 | 0.982 | 0.982 |
+
+Three candidates were measured and not adopted:
+
+| Hybrid nDCG@10 | Default (all-minilm) | nomic-embed-text | + ms-marco rerank | + bge-reranker-base | + gemma3:4b as reranker |
+|---|---|---|---|---|---|
+| isis-live | 0.879 | 0.868 | **0.925** | 0.877 | 0.760 |
+| Atlas | 0.831 | 0.813 | **0.880** | 0.859 | 0.631 |
+| SciFact | 0.682 | 0.683 | **0.715** | 0.685 | 0.568 |
+| LongMemEval | 0.912 | 0.866 | **0.931** | 0.920 | 0.764 |
+
+- **nomic-embed-text** (with its task prefixes) is the better model for vector search alone (SciFact Semantic 0.658 →
+  0.693) but not in Hybrid, which is what agents and chat use: the keyword leg already recovers most of what it adds,
+  and it doubles vector size. all-minilm stays the default.
+- **bge-reranker-base** ranks worse than ms-marco-MiniLM everywhere at 4 to 6 times the CPU latency, and its score is no
+  better at separating unanswerable questions (AUROC 0.61 to 0.67).
+- **gemma3:4b prompted as a reranker** lowers every dataset: its 0 to 10 ratings are coarse and miss paraphrases a
+  cross-encoder handles, at about 1.4 s per search.
+
+Ten rerank candidates matched twenty (isis-live 0.925 vs 0.924, SciFact 0.715 both, LongMemEval 0.931 vs 0.922, Atlas
+0.880 vs 0.887) at about 40% less latency (p50 330 to 430 ms instead of 520 to 670 ms on CPU), so 10 is the default.
 
 ### Choosing the recency weight
 
@@ -194,6 +246,19 @@ during this round. Its latency is therefore not comparable with earlier rounds. 
 requests at capacity, so 1 of 110 questions errored and 3 answers went ungraded; the rates above exclude them. The
 answer-accuracy dip from 0.989 to 0.977 is two questions, within the judge's noise.
 
+Rounds 4 and 5 (same questions, gemma3:4b on the GPU host, one question at a time):
+
+| | Round 4 | Round 4 + rerank | Round 5 | Round 5 + gemma rerank |
+|---|---|---|---|---|
+| Answer accuracy | **1.000** | 0.922 | 0.944 | 0.900 |
+| Correctly declined | 0.90 | 0.85 | 0.95 | **1.00** |
+| Evidence reached the prompt | **1.000** | 0.994 | 0.991 | 0.941 |
+| Citation precision / recall | 0.55 / **1.00** | 0.62 / 0.89 | 0.65 / 0.87 | 0.60 / 0.83 |
+
+Round 5 had 0 errors and 0 ungraded answers. Chat grounding is saturated: the evidence reaches the prompt for 99 to
+100% of answerable questions, so answer accuracy moves within the 4B judge's noise (0.94 to 1.00 across rounds 2 to
+5). Reranking has not improved chat in any round; the round-5 gemma reranker dropped evidence from 6% of prompts.
+
 The reranked scope did not improve chat. With link expansion the evidence already reaches the prompt for 99% of
 answerable questions, so better ordering has little left to add, and 0.955 against 0.977 is two questions apart,
 again within the judge's noise. Its lower latency is the shorter reranked context (the reranker keeps the best 8 of
@@ -265,15 +330,24 @@ connections after each response, not to leaked Isis clients. It cost one SciFact
 rounds. One LongMemEval upsert in the round-2 re-run exceeded the harness's 10-minute timeout during the same kind of
 load, and it did not recur on the final pass (0 of 2,891 failed).
 
+## Environment notes for rounds 4 and 5
+
+Rounds 4 and 5 met two environment problems. Other workloads shared the laptop's Ollama for most of round 4 and
+early round 5, slowing ingest by up to 30 times, and the machine ran short of ephemeral ports once (1 of 2,891
+LongMemEval sessions). Round 5 then moved every model call to a GPU host. Its shared model router refused requests
+at capacity (429) well below the host's real throughput, so round 5 finally ran against the host's Ollama directly,
+bounded at 16 embedding requests in flight (the highest level measured clean). The harness now retries upserts that
+Isis answers with 503, and the benchmark runs from a renamed copy of the harness so that other sessions stopping
+their own benchmark processes by name do not stop it.
+
 ## What's next
 
 [RETRIEVAL_IMPROVEMENTS.md](../RETRIEVAL_IMPROVEMENTS.md) lists every fix considered, scored for value and simplicity,
-with what landed in each round. After round 3 the results point at:
+with what landed in each round and the current ranked list. After round 5 the results point at:
 
-- **A stronger embedding model** (#2). Without a reranker, paraphrase is still 45% ranked first on Atlas; the reranker
-  lifts it to 70%, but at 0.6 to 0.9 s per search on CPU.
-- **A faster, better-calibrated reranker.** A GPU-served or larger cross-encoder would cut rerank latency and might
-  give a score that can gate "nothing relevant", which the small model cannot.
-- **Multi-memory questions** (#16 sub-queries). They remain the weakest type with a reranker (Atlas 0.845).
-- **Single-call hybrid search in RecallDB** (#15), once the SDK exposes it, and stored vectors in search results so
-  diversity can compare embeddings instead of words.
+- **Making the cross-encoder the default.** It is the largest lever measured (+0.02 to +0.08 nDCG, and paraphrase
+  0.73 → 0.83 on Atlas); the remaining work is shipping it with the stack and attaching it to new scopes.
+- **Re-tuning hybrid fusion per embedding model**, since fusion is what kept nomic's vector gains from reaching Hybrid.
+- **Multi-memory questions**, still the weakest type (Atlas 0.81 without a reranker), via sub-queries.
+- **A better "nothing relevant" signal.** No single score separates answerable from unanswerable questions (AUROC 0.57
+  to 0.79); a combined, calibrated signal is the next thing to try.

@@ -328,7 +328,7 @@ Proxies `GET /v1.0/api/tenants/{tenantId}/endpoints` (optional `kind` filter).
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `tenantId` | string | Yes | n/a | Tenant identifier from `whoami` |
-| `kind` | string | No | all | Filter by endpoint kind: `Embedding`, `Inference`, or `Rerank` |
+| `kind` | string | No | all | Filter by endpoint kind: `Embedding`, `Inference`, or `Rerank` (a Rerank endpoint's `apiFormat` is `Tei` or `Cohere` for a cross-encoder, or `Ollama`/`OpenAI` for a chat model prompted to rate candidates) |
 
 #### Guidance
 

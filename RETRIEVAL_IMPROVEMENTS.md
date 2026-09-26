@@ -298,3 +298,45 @@ same way (value and simplicity 1 to 10, score is their sum, ties broken by value
 
 Item 1 should be measured on isis-live, SciFact, and LongMemEval before it becomes the default. LongMemEval's single
 preference-question drop in round 4 (8 questions) is covered by the same sweep.
+
+## Round 5 findings and the current table
+
+Round 5 took items 1 to 5 of the round-4 table. Every model call ran on one GPU host (all-minilm, nomic-embed-text,
+and gemma3:4b served by Ollama), so the numbers below are not affected by the laptop GPU contention of earlier rounds.
+
+| Round-4 item | Result |
+|---|---|
+| 1. Default chunk budget below the model limit | **Done.** Chunks default to 75% of the model budget, capped at 256 tokens. Atlas 0.802 → 0.831 and LongMemEval 0.895 → 0.912; superseded facts 0.800 → 0.876 without a reranker |
+| 2. Stronger embedding model | **Measured, not adopted.** nomic-embed-text wins Semantic search (SciFact 0.658 → 0.693) but ties or loses Hybrid (isis-live 0.879 → 0.868, Atlas 0.831 → 0.813, LongMemEval 0.912 → 0.866) at twice the vector size. all-minilm stays the default; task prefixes are now applied for models that need them |
+| 3. Retry on 429/502/503 | **Done.** Model calls retry with backoff; an endpoint still at capacity is reported as 503, not 400 |
+| 4. Larger or calibrated reranker | **Measured, not adopted.** bge-reranker-base ranks worse than ms-marco-MiniLM on every dataset at 4 to 6 times the latency, with no better abstention AUROC. gemma3:4b prompted as a reranker lowers every dataset (isis-live 0.879 → 0.760, Atlas 0.831 → 0.631) |
+| 5. Cheaper reranking | **Done.** Default candidates 20 → 10: equal quality on average (LongMemEval 0.922 → 0.931, Atlas 0.887 → 0.880) at about 40% less latency. GPU and CPU reranker profiles added to both compose files |
+
+What five rounds taught:
+
+- **A cross-encoder reranker is the largest lever measured** (+0.02 to +0.08 nDCG), and small chat models are not a
+  substitute for one.
+- **Hybrid fusion caps what a better embedding model can add.** The keyword leg already recovers most of what
+  nomic gains on its own, so embedding upgrades need the fusion weights re-tuned with them.
+- **Chunk size matters more than expected**, and round 3's apparent gains partly came from an accidental re-chunk.
+  Retrieval-sized chunks (about 190 tokens here) beat chunks that fill the model window.
+- **No score separates answerable from unanswerable questions well** (AUROC 0.57 to 0.79 across fused, vector, and
+  rerank scores). Chat abstention now comes mostly from the prompt and grounding, where it reached 0.90 to 1.00.
+- **Chat grounding is saturated**: evidence reaches the prompt for 99 to 100% of answerable questions, and reranking
+  did not improve chat.
+
+The current table replaces the round-4 table. Scores are value plus simplicity, each 1 to 10.
+
+| Rank | Fix | Weak area | Value | Simplicity | Score |
+|---|---|---|---|---|---|
+| 1 | Ship the cross-encoder by default: seed a Rerank endpoint when the reference stack's reranker is running, and attach it to new RecallDB scopes | Paraphrase, lexical, superseded (all improve 0.05 to 0.2 with it) | 8 | 6 | 14 |
+| 2 | Re-tune hybrid fusion (text weight, RRF constant) per embedding model, and re-test nomic with tuned weights | Embedding upgrades that do not carry into Hybrid | 6 | 8 | 14 |
+| 3 | Choose the chunk fraction and cap per embedding model by sweep (all-minilm is tuned; nomic used the same 256-token cap) | Detail, multi | 5 | 8 | 13 |
+| 4 | Test a larger chat model as a prompted reranker (gpt-oss-20b), now that prompted reranking exists | Rerank quality without a cross-encoder | 4 | 9 | 13 |
+| 5 | GPU-served reranking in production deployments (the CPU cross-encoder adds 0.3 to 0.5 s per search at 10 candidates) | Rerank latency | 5 | 6 | 11 |
+| 6 | RecallDB single-call hybrid search (needs an SDK release exposing the hybrid options) | Keyword latency | 6 | 5 | 11 |
+| 7 | Split multi-part questions into sub-queries | Multi-memory (the weakest type: Atlas 0.81, LongMemEval preference questions 0.55 to 0.74) | 6 | 4 | 10 |
+| 8 | Abstention from a combined, calibrated signal (vector score, rerank score, and score gap) instead of any one score | "Nothing relevant" | 6 | 4 | 10 |
+| 9 | Query expansion with a drafted hypothetical answer | Paraphrase without a reranker | 4 | 5 | 9 |
+| 10 | Replacement detection that goes beyond similarity (a larger model judging flagged pairs; the 4B model's relevance judgments were unreliable) | Superseded facts | 5 | 4 | 9 |
+| 11 | Stored vectors in RecallDB search results through the SDK | Diversity and similarity on whole memories | 4 | 4 | 8 |
