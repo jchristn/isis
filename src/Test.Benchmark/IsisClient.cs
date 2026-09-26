@@ -319,6 +319,7 @@ namespace Test.Benchmark
         /// <param name="topK">Memories to retrieve; 0 or less uses the server default.</param>
         /// <param name="inferenceEndpointId">Inference endpoint id.</param>
         /// <param name="token">Cancellation token.</param>
+        /// <param name="history">Earlier messages sent with a follow-up question, oldest first, or null.</param>
         /// <returns>The parsed, timed response.</returns>
         public async Task<ChatResponse> ChatAsync(string scopeId, string question, int topK, string inferenceEndpointId, CancellationToken token, List<BenchmarkTurn>? history = null)
         {

@@ -25,7 +25,7 @@
     <PackageReference Include="Npgsql" Version="10.0.3" />
     <PackageReference Include="PolyPrompt" Version="2.6.0" />
     <PackageReference Include="PrettyId" Version="2.0.1" />
-    <PackageReference Include="RecallDb.Sdk" Version="0.2.1" />
+    <PackageReference Include="RecallDb.Sdk" Version="0.2.2" />
     <PackageReference Include="TextChunker" Version="0.3.1" />
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
   </ItemGroup>

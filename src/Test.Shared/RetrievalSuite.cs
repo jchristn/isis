@@ -83,7 +83,7 @@ namespace Test.Shared
 
         private static string Parent(DocumentRecord document)
         {
-            return document.Tags != null && document.Tags.TryGetValue("parentKey", out string? parent) ? parent : document.DocumentKey;
+            return document.Tags != null && document.Tags.TryGetValue("parentKey", out string? parent) ? parent : document.DocumentKey ?? string.Empty;
         }
 
         private static List<DocumentRecord> Leg(params DocumentRecord[] documents)
@@ -118,8 +118,8 @@ namespace Test.Shared
             DateTime now = DateTime.UtcNow;
             List<DocumentRecord> vector = Leg(Doc("a", 0.9, now), Doc("b", 0.8, now), Doc("c", 0.7, now));
             List<DocumentRecord> text = Leg(Doc("c", 0.5, now), Doc("b", 0.4, now), Doc("a", 0.3, now));
-            List<string> vectorOnly = HybridFusion.Fuse(vector, text, 0.0, 0.0, Parent).Select(f => f.Document.DocumentKey).ToList();
-            List<string> textOnly = HybridFusion.Fuse(vector, text, 1.0, 0.0, Parent).Select(f => f.Document.DocumentKey).ToList();
+            List<string> vectorOnly = HybridFusion.Fuse(vector, text, 0.0, 0.0, Parent).Select(f => f.Document.DocumentKey ?? string.Empty).ToList();
+            List<string> textOnly = HybridFusion.Fuse(vector, text, 1.0, 0.0, Parent).Select(f => f.Document.DocumentKey ?? string.Empty).ToList();
             TestCase.Require(string.Join(",", vectorOnly) == "a,b,c", "Text weight 0 should follow the vector order, got " + string.Join(",", vectorOnly) + ".");
             TestCase.Require(string.Join(",", textOnly) == "c,b,a", "Text weight 1 should follow the text order, got " + string.Join(",", textOnly) + ".");
         }

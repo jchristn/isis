@@ -72,6 +72,11 @@ All notable changes to Isis are documented here. This project adheres to
   and unauthenticated `tools/call`.
 - **Dependencies.** Microsoft.Data.SqlClient 7.1.0, Microsoft.Data.Sqlite.Core 10.0.12, MySqlConnector 2.6.2,
   Watson 7.2.0, and OpenTelemetry 1.19.x.
+- **RecallDb.Sdk 0.2.2.** Exposes RecallDB's single-call hybrid search, per-leg ranks, stored vectors on request, and
+  a capabilities list, which Isis does not use yet. Behavior changes that reach Isis: existence checks throw on any
+  status other than 200 or 404, so a failing or unauthorized RecallDB is reported as an error instead of "missing",
+  and every request times out after 100 seconds. Retrieval results are unchanged (isis-live and Atlas Hybrid
+  nDCG@10 0.877 and 0.835, matching round 6).
 - **Chat grounds on the whole best-matching chunk** instead of a 240-character snippet. Answer accuracy on the
   isis-live benchmark rose from 0.68 to 0.96.
 - **Hybrid search runs its vector and text legs in parallel**, and a multi-chunk memory's chunks are embedded

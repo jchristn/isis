@@ -496,9 +496,10 @@ namespace Isis.Core.Stores.RecallDb
 
         private static async Task<SearchResult> ExecuteSearchAsync(RecallDbClient client, Scope scope, SearchQuery search, CancellationToken token)
         {
+            string collectionId = scope.RecallCollectionId ?? throw new InvalidOperationException("The scope has no RecallDB collection; call EnsureScopeAsync first.");
             try
             {
-                return await client.SearchAsync(scope.TenantId, scope.RecallCollectionId, search, token).ConfigureAwait(false);
+                return await client.SearchAsync(scope.TenantId, collectionId, search, token).ConfigureAwait(false);
             }
             catch (RecallDbException e)
             {
@@ -552,16 +553,17 @@ namespace Isis.Core.Stores.RecallDb
         /// </summary>
         private static async Task DeleteByParentAsync(RecallDbClient client, Scope scope, string memoryId, CancellationToken token)
         {
-            if (await client.DocumentExistsAsync(scope.TenantId, scope.RecallCollectionId, memoryId, token).ConfigureAwait(false))
+            string collectionId = scope.RecallCollectionId ?? throw new InvalidOperationException("The scope has no RecallDB collection; call EnsureScopeAsync first.");
+            if (await client.DocumentExistsAsync(scope.TenantId, collectionId, memoryId, token).ConfigureAwait(false))
             {
-                await client.DeleteDocumentAsync(scope.TenantId, scope.RecallCollectionId, memoryId, token).ConfigureAwait(false);
+                await client.DeleteDocumentAsync(scope.TenantId, collectionId, memoryId, token).ConfigureAwait(false);
             }
 
             for (int ordinal = 0; ; ordinal++)
             {
                 string key = ChunkDocumentKey(memoryId, ordinal);
-                if (!await client.DocumentExistsAsync(scope.TenantId, scope.RecallCollectionId, key, token).ConfigureAwait(false)) break;
-                await client.DeleteDocumentAsync(scope.TenantId, scope.RecallCollectionId, key, token).ConfigureAwait(false);
+                if (!await client.DocumentExistsAsync(scope.TenantId, collectionId, key, token).ConfigureAwait(false)) break;
+                await client.DeleteDocumentAsync(scope.TenantId, collectionId, key, token).ConfigureAwait(false);
             }
         }
 
