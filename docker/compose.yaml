@@ -196,6 +196,9 @@ services:
       # Hostname the seeded default Ollama endpoints point at (the bundled 'ollama' service). Inside the
       # container 'localhost' would be the container itself, so this must be a resolvable service name.
       ISIS_DEFAULT_ENDPOINT_HOST: 'ollama'
+      # The optional reranker (profile 'rerank' or 'rerank-gpu'). Isis waits for it to answer and then seeds a Rerank
+      # endpoint that new semantic scopes use automatically; without the profile nothing is seeded.
+      ISIS_DEFAULT_RERANK_BASEURL: 'http://rerank'
       # Observability: the in-process OpenTelemetry MeterProvider serves a Prometheus scrape endpoint on
       # port 9464 (Prometheus scrapes it in-network; not published to the host). Traces export to Tempo over
       # OTLP/gRPC (best-effort — no depends_on so a missing Tempo never blocks the server).

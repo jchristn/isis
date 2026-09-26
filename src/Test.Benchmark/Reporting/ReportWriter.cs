@@ -51,6 +51,17 @@ namespace Test.Benchmark.Reporting
         /// <returns>Markdown.</returns>
         public static string RenderRetrieval(RetrievalReport report)
         {
+            return RenderRetrieval(report, null);
+        }
+
+        /// <summary>
+        /// Render a retrieval report, with the dataset's published baselines when the catalog has them.
+        /// </summary>
+        /// <param name="report">The report.</param>
+        /// <param name="catalog">Published baselines, or null.</param>
+        /// <returns>Markdown.</returns>
+        public static string RenderRetrieval(RetrievalReport report, BaselineCatalog? catalog)
+        {
             StringBuilder md = new StringBuilder();
             md.Append("# Retrieval benchmark: ").Append(report.Dataset).Append("\n\n");
             md.Append(report.Description).Append("\n\n");
@@ -117,6 +128,8 @@ namespace Test.Benchmark.Reporting
                   .Append(" | ").Append(mode.NegativeQueries)
                   .Append(" | ").Append(mode.AnswerableEmptyRate.ToString("P1")).Append(" | ").Append(mode.NegativeEmptyRate.ToString("P1")).Append(" |\n");
             }
+
+            AppendPublishedBaselines(md, report, catalog);
 
             md.Append("\n## Accuracy by query type\n\n");
             HashSet<string> types = new HashSet<string>(report.Modes.SelectMany(m => m.ByType.Keys));
@@ -330,6 +343,33 @@ namespace Test.Benchmark.Reporting
             string[] order = PrometheusSnapshot.StageFamilies.Select(f => f.Replace("isis_", string.Empty).Replace("_duration_seconds", string.Empty)).ToArray();
             int index = Array.IndexOf(order, stage);
             return index < 0 ? int.MaxValue : index;
+        }
+
+        private static void AppendPublishedBaselines(StringBuilder md, RetrievalReport report, BaselineCatalog? catalog)
+        {
+            DatasetBaselines? entry = catalog?.For(report.Dataset);
+            if (entry == null) return;
+
+            md.Append("\n## Published baselines\n\n");
+            if (entry.Baselines.Count == 0)
+            {
+                md.Append(string.IsNullOrEmpty(entry.Note) ? "None published." : entry.Note).Append("\n");
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(entry.Note)) md.Append(entry.Note).Append("\n\n");
+            md.Append("| Published baseline | Metric | Value | Isis mode | Isis | Net vs baseline | Source |\n|---|---|---|---|---|---|---|\n");
+            foreach (PublishedBaseline baseline in entry.Baselines)
+            {
+                foreach (ModeSummary mode in report.Modes.Where(m => baseline.CompareModes.Contains(m.Mode, StringComparer.OrdinalIgnoreCase)))
+                {
+                    if (!mode.Metrics.TryGetValue(baseline.Metric, out double isis)) continue;
+                    double net = isis - baseline.Value;
+                    md.Append("| ").Append(baseline.System).Append(" | ").Append(baseline.Metric).Append(" | ").Append(baseline.Value.ToString("0.000")).Append(" | ").Append(mode.Mode);
+                    md.Append(" | ").Append(isis.ToString("0.000")).Append(" | ").Append((net >= 0 ? "+" : "") + net.ToString("0.000")).Append(" | ");
+                    md.Append(string.IsNullOrEmpty(baseline.Url) ? baseline.Source : "[" + baseline.Source + "](" + baseline.Url + ")").Append(" |\n");
+                }
+            }
         }
 
         private static void AppendMisses(StringBuilder md, RetrievalReport report)

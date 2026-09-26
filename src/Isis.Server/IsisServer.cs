@@ -103,6 +103,7 @@ namespace Isis.Server
             _InferenceService = new InferenceService(new TransientRetryHandler(_InferenceHandler));
             _ChatService = new MemoryChatService(_MemoryService, _InferenceService);
             _ChatService.LinkExpansion = settings.Retrieval.ChatLinkExpansion;
+            _ChatService.QueryDecomposition = settings.Retrieval.ChatQueryDecomposition;
             _RetentionService = new RetentionService(_Database, Settings.Retention, _Log);
 
             WebserverSettings webserverSettings = new WebserverSettings();
@@ -186,7 +187,7 @@ namespace Isis.Server
             new CredentialRoutes(_Database, _AuthorizationService).Register(_Server);
             new ScopeRoutes(_Database, _AuthorizationService, _MemoryService).Register(_Server);
             new CategoryRoutes(_Database, _AuthorizationService, _MemoryService).Register(_Server);
-            new MemoryRoutes(_Database, _AuthorizationService, _MemoryService, _LookupCache).Register(_Server);
+            new MemoryRoutes(_Database, _AuthorizationService, _MemoryService, _LookupCache, new QueryDecomposer(_InferenceService)).Register(_Server);
             new ModelEndpointRoutes(_Database, _AuthorizationService, _HealthCheck).Register(_Server);
             new ChatRoutes(_Database, _AuthorizationService, _ChatService, _LookupCache).Register(_Server);
             new RequestHistoryRoutes(_Database, _AuthorizationService).Register(_Server);

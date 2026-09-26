@@ -1,7 +1,10 @@
 namespace Test.Benchmark
 {
     using System;
+    using System.Collections.Generic;
+    using System.Globalization;
     using System.IO;
+    using System.Text;
     using System.Threading;
     using System.Threading.Tasks;
     using Test.Benchmark.Agent;
@@ -50,6 +53,8 @@ namespace Test.Benchmark
                         return await StubAsync(arguments, cts.Token).ConfigureAwait(false);
                     case "compare":
                         return ResultComparer.Compare(arguments);
+                    case "history":
+                        return History(arguments);
                     default:
                         PrintUsage();
                         return string.IsNullOrEmpty(arguments.Command) || arguments.Command == "help" ? 0 : 2;
@@ -108,7 +113,32 @@ namespace Test.Benchmark
             string suffix = arguments.GetOptional("label") ?? arguments.GetOptional("scope-suffix") ?? string.Empty;
             string basePath = context.ResultPath("retrieval", dataset.Name + (suffix.Length > 0 ? "-" + suffix : string.Empty));
             Console.WriteLine("Wrote " + ReportWriter.WriteJson(report, basePath));
-            Console.WriteLine("Wrote " + ReportWriter.WriteMarkdown(ReportWriter.RenderRetrieval(report), basePath));
+            Console.WriteLine("Wrote " + ReportWriter.WriteMarkdown(ReportWriter.RenderRetrieval(report, LoadBaselines(arguments)), basePath));
+            return 0;
+        }
+
+        private static BaselineCatalog LoadBaselines(BenchmarkArguments arguments)
+        {
+            return BaselineCatalog.Load(arguments.Get("baselines", Path.Combine(BenchmarkContext.RepositoryRoot(), "benchmarks", "baselines.json")));
+        }
+
+        private static int History(BenchmarkArguments arguments)
+        {
+            // Build a round-over-round overview from saved reports, for example:
+            //   history --rounds R1=20260924-17,R2=final,R3=r3,R4=r4,R5=r5 --chat-rounds R3=r3,R4=r4,R5=r5
+            List<RoundSelector> rounds = HistoryWriter.ParseRounds(arguments.Get("rounds", string.Empty));
+            if (rounds.Count == 0) throw new ArgumentException("history needs --rounds NAME=LABEL,... (a run label or a UTC timestamp prefix per round).");
+            List<RoundSelector> chatRounds = HistoryWriter.ParseRounds(arguments.Get("chat-rounds", string.Empty));
+
+            string directory = Path.GetFullPath(arguments.Get("out", Path.Combine(BenchmarkContext.RepositoryRoot(), "benchmarks", "results")));
+            List<string> datasets = arguments.GetList("datasets", "isis-live,atlas,scifact,longmemeval-s");
+            string markdown = HistoryWriter.Render(directory, rounds, datasets, arguments.Get("mode", "Hybrid"), arguments.Get("metric", "ndcg@10"), LoadBaselines(arguments), chatRounds, arguments.Get("chat-dataset", "isis-live"));
+
+            string label = arguments.GetOptional("label") ?? "history";
+            string path = Path.Combine(directory, DateTime.UtcNow.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + "-" + BenchmarkContext.Sanitize(label) + ".md");
+            File.WriteAllText(path, markdown, new UTF8Encoding(false));
+            Console.WriteLine(markdown);
+            Console.WriteLine("Wrote " + path);
             return 0;
         }
 
@@ -193,6 +223,8 @@ namespace Test.Benchmark
             Console.WriteLine("  agent     --tasks <tasks.json> [--model haiku] [--arms isis,none] [--mcp-url http://127.0.0.1:18720/mcp] [--limit N]");
             Console.WriteLine("  stub      [--stub-port 18900] [--stub-latency-ms 5] [--dim 384]   (standalone stub embedding server)");
             Console.WriteLine("  compare   --baseline <a.json> --candidate <b.json> [--tolerance 0.01] [--latency-tolerance 0.2]");
+            Console.WriteLine("  history   --rounds R1=<label|timestamp-prefix>,R2=... [--chat-rounds R1=...] [--datasets isis-live,atlas,scifact,longmemeval-s]");
+            Console.WriteLine("            [--mode Hybrid] [--metric ndcg@10] [--label history]   (per-type table per round, net change, published baselines)");
             Console.WriteLine();
             Console.WriteLine("Common: --url http://127.0.0.1:18700 --access-key isisdefaultkey --metrics-url http://127.0.0.1:19464/metrics|none");
             Console.WriteLine("        --embedding-url http://127.0.0.1:11434 --embedding-format Ollama --embedding-model all-minilm --dim 384");

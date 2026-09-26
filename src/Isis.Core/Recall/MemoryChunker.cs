@@ -198,12 +198,16 @@ namespace Isis.Core.Recall
             int budget = Math.Max(1, rawBudget - extraReserve - TokenizerMismatchMargin(rawBudget, budgetOverride.HasValue));
             // The model's task prefix for stored content (for example nomic's "search_document: ") is embedded with
             // every chunk, so it comes out of the budget first.
-            string documentPrefix = EmbeddingPrefixRegistry.For(endpoint.Model, EmbeddingPurposeEnum.Document);
+            EmbeddingModelProfile? modelProfile = EmbeddingModelProfiles.Find(endpoint.Model);
+            string documentPrefix = modelProfile != null ? modelProfile.DocumentPrefix : string.Empty;
             if (documentPrefix.Length > 0) budget = Math.Max(1, budget - tokenizer.CountTokens(documentPrefix));
 
+            // A scope's ChunkMaxTokens wins; otherwise the model's profile, then the generic defaults, size the chunk.
+            double chunkFraction = modelProfile?.ChunkFraction ?? _DefaultChunkFraction;
+            int chunkCap = modelProfile?.ChunkMaxTokens ?? _DefaultChunkMaxTokens;
             int perChunk = scope.ChunkMaxTokens > 0
                 ? Math.Min(scope.ChunkMaxTokens, budget)
-                : Math.Max(1, Math.Min(_DefaultChunkMaxTokens, (int)Math.Floor(budget * _DefaultChunkFraction)));
+                : Math.Max(1, Math.Min(chunkCap, (int)Math.Floor(budget * chunkFraction)));
             if (budgetScale < 1.0) perChunk = Math.Max(1, (int)Math.Floor(perChunk * budgetScale));
 
             // Reserve room for the header (plus its separator) in every chunk, truncating an oversized header.

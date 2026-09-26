@@ -240,7 +240,11 @@ namespace Test.Benchmark.Runners
 
         #region Private-Methods
 
-        private static string RepositoryRoot()
+        /// <summary>
+        /// The repository root (the nearest parent with .git and benchmarks), or the current directory.
+        /// </summary>
+        /// <returns>The directory.</returns>
+        public static string RepositoryRoot()
         {
             DirectoryInfo? directory = new DirectoryInfo(Directory.GetCurrentDirectory());
             while (directory != null)

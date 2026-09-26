@@ -88,6 +88,16 @@ Then:
 - **Observability** — Grafana <http://127.0.0.1:3000>, Prometheus <http://127.0.0.1:9090>, RecallDB
   console <http://127.0.0.1:8601>.
 
+**Reranking (recommended).** A cross-encoder reranker is the largest retrieval improvement measured (see
+`benchmarks/RESULTS.md`). Start the stack with `--profile rerank` (CPU) or `--profile rerank-gpu` (NVIDIA GPU; pick the
+Text Embeddings Inference image tag for your GPU generation). Isis waits for the reranker to answer, seeds a Rerank
+endpoint, and attaches it to new semantic scopes. On CPU a reranked search takes roughly 0.3 to 0.5 s; on a GPU, tens
+of milliseconds. If the reranker is unreachable, searches fall back to retrieval order.
+
+```bash
+docker compose --profile rerank up -d        # or: --profile rerank-gpu
+```
+
 Helper scripts (Windows): `docker/update.bat` pulls the latest images and recreates the stack;
 `docker/factory/reset.bat` wipes the volumes and brings up a seeded demo environment.
 

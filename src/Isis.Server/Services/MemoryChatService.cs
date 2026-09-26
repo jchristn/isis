@@ -58,12 +58,20 @@ namespace Isis.Server.Services
             }
         }
 
+        /// <summary>
+        /// Whether the chat model is asked to split a multi-part question into sub-queries before retrieval, so each
+        /// part's memories are found. Costs one short inference call per question. Default false: with each part fused
+        /// at the same weight as the question, it lowered retrieval and answer accuracy in benchmarks.
+        /// </summary>
+        public bool QueryDecomposition { get; set; } = false;
+
         #endregion
 
         #region Private-Members
 
         private int _DefaultTopK = 8;
         private int _LinkExpansion = 2;
+        private readonly QueryDecomposer _Decomposer;
 
         private readonly MemoryService _MemoryService;
         private readonly InferenceService _InferenceService;
@@ -82,6 +90,7 @@ namespace Isis.Server.Services
         {
             _MemoryService = memoryService ?? throw new ArgumentNullException(nameof(memoryService));
             _InferenceService = inferenceService ?? throw new ArgumentNullException(nameof(inferenceService));
+            _Decomposer = new QueryDecomposer(_InferenceService);
         }
 
         #endregion
@@ -112,7 +121,7 @@ namespace Isis.Server.Services
 
             try
             {
-                ContextResult ctx = await BuildContextAsync(scope, question, topK, token).ConfigureAwait(false);
+                ContextResult ctx = await BuildContextAsync(scope, inferenceEndpoint, question, topK, token).ConfigureAwait(false);
                 IsisTelemetry.ChatContextMemories.Record(ctx.Count, new TagList { { IsisTelemetry.TagStreaming, false } });
 
                 ChatAnswer answer = new ChatAnswer();
@@ -166,7 +175,7 @@ namespace Isis.Server.Services
 
             try
             {
-            ContextResult ctx = await BuildContextAsync(scope, question, topK, token).ConfigureAwait(false);
+            ContextResult ctx = await BuildContextAsync(scope, inferenceEndpoint, question, topK, token).ConfigureAwait(false);
             IsisTelemetry.ChatContextMemories.Record(ctx.Count, new TagList { { IsisTelemetry.TagStreaming, true } });
 
             List<ChatCitation> citations = ctx.Citations;
@@ -317,7 +326,7 @@ namespace Isis.Server.Services
         /// matches nothing, fall back to the same top-down overview.</item>
         /// </list>
         /// </summary>
-        private async Task<ContextResult> BuildContextAsync(Scope scope, string question, int topK, CancellationToken token)
+        private async Task<ContextResult> BuildContextAsync(Scope scope, ModelEndpoint inferenceEndpoint, string question, int topK, CancellationToken token)
         {
             StoreCapabilities capabilities = _MemoryService.GetCapabilities(scope);
             if (!capabilities.SupportsSemantic)
@@ -333,6 +342,11 @@ namespace Isis.Server.Services
             // typical memory and the relevant region of a long one. A 240-character snippet hid any answer that was
             // not in a memory's opening sentence.
             MemorySearchQuery query = new MemorySearchQuery { QueryText = question, Mode = SearchModeEnum.Hybrid, TopK = k, TokenBudget = _ContextCharsPerMemory, LinkExpansion = _LinkExpansion };
+            if (QueryDecomposition)
+            {
+                List<string> parts = await _Decomposer.DecomposeAsync(inferenceEndpoint, question, token).ConfigureAwait(false);
+                if (parts.Count > 0) query.AdditionalQueries = parts;
+            }
             MemorySearchResult retrieval = await _MemoryService.SearchAsync(scope, query, token).ConfigureAwait(false);
 
             if (retrieval.Hits.Count == 0)

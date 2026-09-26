@@ -391,7 +391,7 @@ namespace Isis.Core.Stores.RecallDb
 
                 // Fuse at the chunk-document level (with the optional recency signal), then roll chunks up to one
                 // hit per memory. The fused score is normalized to [0, 1] so it can be thresholded with MinScore.
-                List<FusedDocument> fused = HybridFusion.Fuse(vectorResult.Documents, textResult.Documents, query.TextWeight, query.RecencyWeight, ParentKey);
+                List<FusedDocument> fused = HybridFusion.Fuse(vectorResult.Documents, textResult.Documents, query.TextWeight ?? HybridFusion.DefaultTextWeight, query.RecencyWeight, ParentKey, query.RrfK ?? HybridFusion.DefaultRrfK);
                 documents = GroupByParent(fused, topK);
                 effectiveMode = SearchModeEnum.Hybrid;
             }

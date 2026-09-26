@@ -506,7 +506,7 @@ namespace Isis.McpServer
 
             _Server.RegisterTool(
                 "memory_search",
-                "Search a scope's memory. Required: tenantId, scopeId, queryText. Optional: mode (Keyword|Semantic|Hybrid), topK, categoryName, minScore, recencyWeight, superseded, linkExpansion, diversity, rerank, minRerankScore. "
+                "Search a scope's memory. Required: tenantId, scopeId, queryText. Optional: mode (Keyword|Semantic|Hybrid), topK, categoryName, minScore, recencyWeight, superseded, linkExpansion, diversity, rerank, minRerankScore, additionalQueries, decompose. For a question about several distinct things, pass each part in additionalQueries (or set decompose) so every part's memories are found. "
                 + "Hits replaced by a newer memory carry supersededBy (prefer the replacement); hits added by following links carry linkedFrom.",
                 new
                 {
@@ -525,7 +525,9 @@ namespace Isis.McpServer
                         linkExpansion = new { type = "integer", description = "Add up to this many linked memories (0..10, default 0) after the results that link to them." },
                         diversity = new { type = "number", description = "0..1 (default 0): higher values drop results that repeat higher-ranked ones in favor of other relevant memories." },
                         rerank = new { type = "boolean", description = "Rerank with the scope's rerank endpoint. Default: rerank when the scope has one." },
-                        minRerankScore = new { type = "number", description = "Drop reranked hits scoring below this (0..1). Defaults to the scope's rerankMinScore." }
+                        minRerankScore = new { type = "number", description = "Drop reranked hits scoring below this (0..1). Defaults to the scope's rerankMinScore." },
+                        additionalQueries = new { type = "array", items = new { type = "string" }, description = "Up to 4 extra queries searched alongside queryText and fused, for example the parts of a multi-part question." },
+                        decompose = new { type = "boolean", description = "Have the tenant's inference model split a multi-part question into sub-queries before searching (default false)." }
                     },
                     required = new[] { "tenantId", "scopeId", "queryText" }
                 },
@@ -550,6 +552,10 @@ namespace Isis.McpServer
                     if (rerank.HasValue) body["rerank"] = rerank.Value;
                     double? minRerankScore = p?.GetDouble("minRerankScore");
                     if (minRerankScore.HasValue) body["minRerankScore"] = minRerankScore.Value;
+                    List<string>? additionalQueries = StringList(p, "additionalQueries");
+                    if (additionalQueries != null && additionalQueries.Count > 0) body["additionalQueries"] = additionalQueries;
+                    bool? decompose = p?.GetBoolean("decompose");
+                    if (decompose.HasValue) body["decompose"] = decompose.Value;
                     string path = "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/scopes/" + Encode(Require(p, "scopeId")) + "/memories/search";
                     return await ProxyAsync(HttpMethod.Post, path, JsonSerializer.Serialize(body), "memory_search", CurrentCredentials(), ct).ConfigureAwait(false);
                 });

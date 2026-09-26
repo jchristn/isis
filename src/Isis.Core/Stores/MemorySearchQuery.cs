@@ -1,5 +1,6 @@
 namespace Isis.Core.Stores
 {
+    using System.Collections.Generic;
     using Isis.Core.Enums;
 
     /// <summary>
@@ -48,10 +49,10 @@ namespace Isis.Core.Stores
         public int? TokenBudget { get; set; } = null;
 
         /// <summary>
-        /// For hybrid search, the weight of the lexical component in the range 0.0 to 1.0. Default 0.5.
-        /// The vector component weight is its complement.
+        /// For hybrid search, the weight of the lexical component in the range 0.0 to 1.0. The vector component weight
+        /// is its complement. Null (the default) uses the embedding model's profile, or 0.5.
         /// </summary>
-        public double TextWeight
+        public double? TextWeight
         {
             get
             {
@@ -59,11 +60,48 @@ namespace Isis.Core.Stores
             }
             set
             {
-                if (value < 0.0) value = 0.0;
-                if (value > 1.0) value = 1.0;
+                if (value.HasValue && value.Value < 0.0) value = 0.0;
+                if (value.HasValue && value.Value > 1.0) value = 1.0;
                 _TextWeight = value;
             }
         }
+
+        /// <summary>
+        /// For hybrid search, the reciprocal-rank-fusion constant: smaller values weight the top ranks of each leg more.
+        /// Minimum 1, maximum 1000. Null (the default) uses the embedding model's profile, or 60.
+        /// </summary>
+        public int? RrfK
+        {
+            get
+            {
+                return _RrfK;
+            }
+            set
+            {
+                if (value.HasValue && value.Value < 1) value = 1;
+                if (value.HasValue && value.Value > 1000) value = 1000;
+                _RrfK = value;
+            }
+        }
+
+        /// <summary>
+        /// Extra queries searched alongside <see cref="QueryText"/>, for example the parts of a multi-part question.
+        /// Each is searched on its own and the rankings are fused, so a memory that answers one part is not crowded
+        /// out by memories that answer another. At most 4; null or empty searches the main query alone.
+        /// </summary>
+        public List<string>? AdditionalQueries { get; set; } = null;
+
+        /// <summary>
+        /// Ask an inference endpoint to split a multi-part query into sub-queries (added to
+        /// <see cref="AdditionalQueries"/>) before searching. Default false. Uses
+        /// <see cref="InferenceEndpointId"/>, or the tenant's first active inference endpoint.
+        /// </summary>
+        public bool Decompose { get; set; } = false;
+
+        /// <summary>
+        /// Inference endpoint used when <see cref="Decompose"/> is true. Null uses the tenant's first active one.
+        /// </summary>
+        public string? InferenceEndpointId { get; set; } = null;
 
         /// <summary>
         /// Optional minimum score. Hits scoring below it are dropped. Null (the default) returns every hit.
@@ -154,7 +192,8 @@ namespace Isis.Core.Stores
         #region Private-Members
 
         private int _TopK = 10;
-        private double _TextWeight = 0.5;
+        private double? _TextWeight = null;
+        private int? _RrfK = null;
         private double _RecencyWeight = 0.1;
         private int _LinkExpansion = 0;
         private double _Diversity = 0.0;
@@ -180,7 +219,9 @@ namespace Isis.Core.Stores
         /// <returns>A new query with the same settings.</returns>
         public MemorySearchQuery Clone()
         {
-            return (MemorySearchQuery)MemberwiseClone();
+            MemorySearchQuery copy = (MemorySearchQuery)MemberwiseClone();
+            if (AdditionalQueries != null) copy.AdditionalQueries = new List<string>(AdditionalQueries);
+            return copy;
         }
 
         #endregion

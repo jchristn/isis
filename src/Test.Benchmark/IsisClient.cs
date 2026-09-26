@@ -275,6 +275,10 @@ namespace Test.Benchmark
                 if (options.Diversity.HasValue) body["diversity"] = options.Diversity.Value;
                 if (options.Rerank.HasValue) body["rerank"] = options.Rerank.Value;
                 if (options.MinRerankScore.HasValue) body["minRerankScore"] = options.MinRerankScore.Value;
+                if (options.TextWeight.HasValue) body["textWeight"] = options.TextWeight.Value;
+                if (options.RrfK.HasValue) body["rrfK"] = options.RrfK.Value;
+                if (options.Decompose) body["decompose"] = true;
+                if (!string.IsNullOrEmpty(options.InferenceEndpointId)) body["inferenceEndpointId"] = options.InferenceEndpointId;
             }
 
             TimedCall call = await TimedSendAsync(HttpMethod.Post, TenantPath("/scopes/" + scopeId + "/memories/search"), body, token).ConfigureAwait(false);

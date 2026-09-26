@@ -31,6 +31,12 @@ namespace Isis.Core.Stores
         /// </summary>
         public bool Reranked { get; set; } = false;
 
+        /// <summary>
+        /// The queries searched when more than one was (the original first, then any additional or split-out
+        /// queries). Null when only the original query was searched.
+        /// </summary>
+        public List<string>? Queries { get; set; } = null;
+
         #endregion
 
         #region Constructors-and-Factories

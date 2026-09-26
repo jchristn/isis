@@ -130,6 +130,11 @@ $B load --corpus-size 1000 --concurrency 1,4,16 --scenario search
 
 # Regression gate
 $B compare --baseline benchmarks/results/<old>.json --candidate benchmarks/results/<new>.json --tolerance 0.01 --latency-tolerance 0.25
+
+# Round-over-round history: one table per dataset (every question type, one column per round, net change from the
+# first round to the last), the dataset's published baselines with the net difference, and chat per round. A round is
+# a run label (--label) or a UTC timestamp prefix for unlabeled runs.
+$B history --rounds R1=20260924-17,R2=final,R3=r3,R4=r4,R5=r5 --chat-rounds R1=after-fullchunk,R2=round2,R3=r3,R4=r4,R5=r5
 ```
 
 Each run writes `benchmarks/results/<utc-stamp>-<kind>-<name>.json` for machines and a `.md` for people. The
@@ -144,6 +149,11 @@ the report also shows how many of those known pairs the server's similarity chec
 ## 4. How to read the results
 
 A few of the report sections are easy to misread.
+
+**Published baselines.** `benchmarks/baselines.json` lists published results per dataset with their sources (for
+SciFact: BM25, BM25 with a cross-encoder, and dense all-MiniLM-L6-v2 from BEIR and MTEB). Every retrieval report shows
+Isis's score next to each one, with the net difference, for the modes it applies to; datasets without a comparable
+published result carry a note saying why. Add an entry there when a dataset gains a published baseline.
 
 **Stage breakdown.** The harness scrapes the Prometheus histograms Isis already exports before and after each
 phase, which gives the server-side mean time per stage (`memory_search`, `embedding`, `store_search`, `db_query`, and

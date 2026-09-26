@@ -30,28 +30,34 @@ Latency and throughput depend on the machine. Compare them within this page, not
 | 3 | Explicit supersession, optional cross-encoder reranking with a relevance cutoff, link expansion (on in chat), result diversity, similar-memory flags on upsert, and a lookup cache. Reranking, diversity, and the cutoff are off unless configured, so the plain "Round 3" column is the default configuration and "+ rerank" is a scope with a reranker attached |
 | 4 | TextChunker 0.3.1 (span-based chunking, token counts that match the embedding runtime); Isis's chunking workarounds removed and its token margin cut from 4% to 1%; every dataset re-ingested |
 | 5 | Chunks default to 75% of the model budget (capped at 256 tokens); retries on 429/502/503 with 503 reported for an endpoint still at capacity; 10 rerank candidates by default; embedding task prefixes; prompted chat-model reranking. Every model call (all-minilm, nomic-embed-text, gemma3:4b) ran on one GPU host instead of the laptop |
+| 6 | Hybrid fusion's RRF constant 60 → 20 after a sweep; embedding model profiles (nomic-embed-text chunks capped at 128 tokens); the cross-encoder seeded and attached to new scopes by the reference stack, with a circuit breaker; multi-query search and query decomposition (measured, off in chat by default); gpt-oss-20b measured as a prompted reranker |
 
 ## Retrieval
 
 nDCG@10 scores whether the right memories come back near the top, from 0 to 1. Hybrid is the default mode and the
 one agents and chat use.
 
-| Dataset | Mode | Round 0 | Round 1 | Round 2 | Round 3 | Round 4 | Round 5 | Round 5 + rerank |
-|---|---|---|---|---|---|---|---|---|
-| isis-live: 24 real memories, 110 questions | Keyword | 0.073 | 0.817 | 0.814 | 0.814 | 0.807 | 0.812 | |
-| | Semantic | 0.844 | 0.844 | 0.843 | 0.843 | 0.848 | 0.826 | |
-| | **Hybrid** | 0.848 | 0.859 | 0.877 | 0.877 | 0.883 | 0.879 | **0.925** |
-| Atlas: 170 synthetic memories, 260 questions | Keyword | 0.137 | 0.767 | 0.773 | 0.783 | 0.772 | 0.767 | |
-| | Semantic | 0.715 | 0.714 | 0.738 | 0.756 | 0.737 | 0.753 | |
-| | **Hybrid** | 0.739 | 0.803 | 0.804 | 0.809 | 0.802 | **0.831** | **0.880** |
-| SciFact: 5,183 abstracts, 300 queries | Keyword | 0.057 | 0.598 | 0.585 | 0.589 | 0.594 | 0.594 | |
-| | Semantic | 0.653 | 0.653 | 0.645 | 0.647 | 0.657 | 0.658 | |
-| | **Hybrid** | 0.665 | 0.688 | 0.678 | 0.678 | 0.683 | 0.682 | **0.715** |
-| LongMemEval-S: 60 haystacks of about 50 sessions | Keyword | 0.102 | 0.833 | 0.838 | not run | not run | not run | |
-| | Semantic | 0.853 | 0.853 | 0.887 | 0.887 | 0.889 | 0.874 | |
-| | **Hybrid** | 0.853 | 0.906 | 0.907 | 0.907 | 0.895 | **0.912** | **0.931** |
+| Dataset | Mode | Round 0 | Round 1 | Round 2 | Round 3 | Round 4 | Round 5 | Round 6 | + rerank | + gpt-oss-20b rerank |
+|---|---|---|---|---|---|---|---|---|---|---|
+| isis-live: 24 real memories, 110 questions | Keyword | 0.073 | 0.817 | 0.814 | 0.814 | 0.807 | 0.812 | | | |
+| | Semantic | 0.844 | 0.844 | 0.843 | 0.843 | 0.848 | 0.826 | | | |
+| | **Hybrid** | 0.848 | 0.859 | 0.877 | 0.877 | 0.883 | 0.879 | 0.878 | 0.925 | **0.974** |
+| Atlas: 170 synthetic memories, 260 questions | Keyword | 0.137 | 0.767 | 0.773 | 0.783 | 0.772 | 0.767 | | | |
+| | Semantic | 0.715 | 0.714 | 0.738 | 0.756 | 0.737 | 0.753 | | | |
+| | **Hybrid** | 0.739 | 0.803 | 0.804 | 0.809 | 0.802 | 0.831 | **0.835** | 0.880 | **0.915** |
+| SciFact: 5,183 abstracts, 300 queries | Keyword | 0.057 | 0.598 | 0.585 | 0.589 | 0.594 | 0.594 | | | |
+| | Semantic | 0.653 | 0.653 | 0.645 | 0.647 | 0.657 | 0.658 | | | |
+| | **Hybrid** | 0.665 | 0.688 | 0.678 | 0.678 | 0.683 | 0.682 | 0.683 | 0.715 | **0.751** |
+| LongMemEval-S: 60 haystacks of about 50 sessions | Keyword | 0.102 | 0.833 | 0.838 | not run | not run | not run | | | |
+| | Semantic | 0.853 | 0.853 | 0.887 | 0.887 | 0.889 | 0.874 | | | |
+| | **Hybrid** | 0.853 | 0.906 | 0.907 | 0.907 | 0.895 | 0.912 | 0.911 | 0.931 | **0.959** |
 
-"+ rerank" is the ms-marco-MiniLM-L-6-v2 cross-encoder with 10 candidates (the round-5 default). The round-3 and
+Round 6 changed only how the two legs are fused, so Keyword and Semantic were not re-run. SciFact's published
+baselines (BEIR BM25 0.665, BM25 with a cross-encoder 0.688, all-MiniLM-L6-v2 dense 0.645) are in every SciFact report
+and in the history command's output; Hybrid is +0.018 over BM25 and +0.038 over the dense model it embeds with.
+
+"+ rerank" is the ms-marco-MiniLM-L-6-v2 cross-encoder with 10 candidates (the round-5 default), measured in round 5.
+"+ gpt-oss-20b rerank" is the same pipeline with gpt-oss-20b prompted as the reranker, measured in round 6. The round-3 and
 round-4 rerank columns (20 candidates) are in the round sections below. Round 5's reranked numbers were measured on
 the laptop with the round-5 code; every other round-5 number ran on the GPU host, whose all-minilm results match the
 laptop's to within 0.004.
@@ -168,6 +174,56 @@ Three candidates were measured and not adopted:
 
 Ten rerank candidates matched twenty (isis-live 0.925 vs 0.924, SciFact 0.715 both, LongMemEval 0.931 vs 0.922, Atlas
 0.880 vs 0.887) at about 40% less latency (p50 330 to 430 ms instead of 520 to 670 ms on CPU), so 10 is the default.
+
+### Round 6: fusion, model profiles, and what adding queries costs
+
+Round 6 finished tuning the generic settings and measured two larger ideas. The history command's view of the
+default configuration (all-minilm, Hybrid, no reranker) is flat to slightly up against round 5, which is expected: the
+round's main shipped change for these numbers is the fusion constant.
+
+| Hybrid nDCG@10, mean over four datasets | RRF 20 | RRF 60 |
+|---|---|---|
+| all-minilm, text weight 0.3 | 0.818 | |
+| all-minilm, text weight 0.5 | **0.827** | 0.826 |
+| all-minilm, text weight 0.7 | | 0.807 |
+| nomic-embed-text, text weight 0.5 | 0.815 | 0.808 |
+
+Both models did best at a text weight of 0.5 with an RRF constant of 20, so 20 became the generic default and no
+model needed its own fusion weights. nomic-embed-text then got its own chunk size from a sweep:
+
+| nomic-embed-text chunk cap | isis-live | Atlas | SciFact | LongMemEval | Mean |
+|---|---|---|---|---|---|
+| **128** | **0.881** | 0.803 | **0.704** | **0.917** | **0.826** |
+| 256 (the generic cap) | 0.868 | **0.813** | 0.683 | 0.866 | 0.808 |
+| 384 | 0.858 | 0.810 | 0.671 | 0.886 | 0.806 |
+| 512 | 0.864 | 0.788 | 0.659 | 0.879 | 0.797 |
+
+At 128 tokens nomic ties all-minilm on average (0.826 vs 0.827) at twice the vector size, so all-minilm stays the
+default and nomic's profile carries the 128-token cap.
+
+**gpt-oss-20b as a prompted reranker** is the best ranking measured (table above), and its score is the first signal
+that separates answerable from unanswerable questions well: AUROC 0.991 on isis-live and 0.960 on Atlas, against 0.57
+to 0.79 for every earlier score. It costs 6.6 to 10.2 s per search (p50), so it suits an opt-in high-precision mode or
+a check before answering, not the default.
+
+**Query decomposition** (gemma3:4b splitting a question into up to three parts, each searched and fused at equal
+weight with the original) lowered every dataset and chat accuracy:
+
+| | Without | With decomposition |
+|---|---|---|
+| isis-live Hybrid nDCG@10 | 0.879 | 0.844 (multi 0.834 → 0.744) |
+| Atlas | 0.831 | 0.764 |
+| SciFact | 0.682 | 0.666 |
+| LongMemEval | 0.912 | 0.901 |
+| Chat answer accuracy (isis-live) | 0.944 | 0.900 |
+| Chat latency p50 | 2.2 s | 3.0 s |
+
+The parts displaced memories the original question already ranked well. Chat decomposition is off by default; the
+search options (`additionalQueries`, `decompose`) remain for callers that supply good sub-queries, and any later
+multi-query work will weight the original query above the rest.
+
+Chat on isis-live with round 6's defaults answered 94.4% of answerable questions correctly, declined all 20
+unanswerable ones, and had the evidence in the prompt for 99.1%, the same as round 5 within the judge's noise.
 
 ### Choosing the recency weight
 
@@ -330,7 +386,7 @@ connections after each response, not to leaked Isis clients. It cost one SciFact
 rounds. One LongMemEval upsert in the round-2 re-run exceeded the harness's 10-minute timeout during the same kind of
 load, and it did not recur on the final pass (0 of 2,891 failed).
 
-## Environment notes for rounds 4 and 5
+## Environment notes for rounds 4 to 6
 
 Rounds 4 and 5 met two environment problems. Other workloads shared the laptop's Ollama for most of round 4 and
 early round 5, slowing ingest by up to 30 times, and the machine ran short of ephemeral ports once (1 of 2,891
@@ -338,16 +394,18 @@ LongMemEval sessions). Round 5 then moved every model call to a GPU host. Its sh
 at capacity (429) well below the host's real throughput, so round 5 finally ran against the host's Ollama directly,
 bounded at 16 embedding requests in flight (the highest level measured clean). The harness now retries upserts that
 Isis answers with 503, and the benchmark runs from a renamed copy of the harness so that other sessions stopping
-their own benchmark processes by name do not stop it.
+their own benchmark processes by name do not stop it. Round 6 ran the same way, with reranking, chat, and
+decomposition calls one at a time.
 
 ## What's next
 
 [RETRIEVAL_IMPROVEMENTS.md](../RETRIEVAL_IMPROVEMENTS.md) lists every fix considered, scored for value and simplicity,
-with what landed in each round and the current ranked list. After round 5 the results point at:
+with what landed in each round and the current ranked list. After round 6 the results point at:
 
-- **Making the cross-encoder the default.** It is the largest lever measured (+0.02 to +0.08 nDCG, and paraphrase
-  0.73 → 0.83 on Atlas); the remaining work is shipping it with the stack and attaching it to new scopes.
-- **Re-tuning hybrid fusion per embedding model**, since fusion is what kept nomic's vector gains from reaching Hybrid.
-- **Multi-memory questions**, still the weakest type (Atlas 0.81 without a reranker), via sub-queries.
-- **A better "nothing relevant" signal.** No single score separates answerable from unanswerable questions (AUROC 0.57
-  to 0.79); a combined, calibrated signal is the next thing to try.
+- **An opt-in high-precision mode** built on a larger chat model as the reranker, with a relevance cutoff chosen from
+  its score distributions; it is the strongest ranking and "nothing relevant" signal measured.
+- **Query rewrite that keeps the original query dominant**: a standalone rewrite of chat follow-ups from earlier
+  turns, and a low-weight hypothetical answer and keyword expansion for scopes without a reranker.
+- **RecallDB single-call hybrid search**, planned in the RecallDB repository.
+- **Wider evaluation**: more BEIR datasets with published baselines (NFCorpus, FiQA, ArguAna, SciDocs), the full
+  LongMemEval_S, and a multi-turn conversational set to measure follow-up rewriting.

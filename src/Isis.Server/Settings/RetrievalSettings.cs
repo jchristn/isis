@@ -52,6 +52,12 @@ namespace Isis.Server.Settings
         }
 
         /// <summary>
+        /// Whether chat asks its inference endpoint to split a multi-part question into sub-queries before retrieval.
+        /// Default false.
+        /// </summary>
+        public bool ChatQueryDecomposition { get; set; } = false;
+
+        /// <summary>
         /// How many chunks of one memory are embedded at the same time. Minimum 1, maximum 32, default 4. Lower it for an
         /// embedding endpoint that accepts only a few concurrent requests.
         /// </summary>

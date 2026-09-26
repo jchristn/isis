@@ -340,3 +340,63 @@ The current table replaces the round-4 table. Scores are value plus simplicity, 
 | 9 | Query expansion with a drafted hypothetical answer | Paraphrase without a reranker | 4 | 5 | 9 |
 | 10 | Replacement detection that goes beyond similarity (a larger model judging flagged pairs; the 4B model's relevance judgments were unreliable) | Superseded facts | 5 | 4 | 9 |
 | 11 | Stored vectors in RecallDB search results through the SDK | Diversity and similarity on whole memories | 4 | 4 | 8 |
+
+## Round 6 findings and the current table
+
+Round 6 took items 1 to 7 of the round-5 table, except item 6 (single-call hybrid search), which needs a RecallDB
+release and now has its own plan (`HYBRID_SEARCH_IMPROVEMENTS.md` in the RecallDB repository). Item 10 was dropped: a
+deployment that chooses a small model accepts that model's judgment quality, and Isis should not add machinery to work
+around it. Model-specific settings stay generic: `EmbeddingModelProfiles` holds sensible defaults for every model plus
+overrides only where a benchmark showed a known model needs one. Every model call ran on the GPU host's Ollama.
+
+| Round-5 item | Result |
+|---|---|
+| 1. Ship the cross-encoder by default | **Done.** The reference stack's `rerank` (CPU) or `rerank-gpu` compose profile serves the cross-encoder; when `ISIS_DEFAULT_RERANK_BASEURL` is set, the server seeds a Rerank endpoint once it answers, and new RecallDB scopes attach the tenant's first active Rerank endpoint. A rerank endpoint that fails is skipped for 30 seconds (`RerankCooldown`) so an unreachable reranker does not slow every search |
+| 2. Re-tune hybrid fusion per model | **Done, with no per-model override needed.** A sweep of text weight (0.3, 0.5, 0.7) and RRF constant (20, 60) put both models at 0.5 and 20 (mean Hybrid nDCG@10 over four datasets: all-minilm 0.827 vs 0.826 at 60, nomic 0.815 vs 0.808). The generic RRF constant is now 20 (`HybridFusion.DefaultRrfK`); profiles and each search (`textWeight`, `rrfK`) can still override it |
+| 3. Chunk size per model | **Done.** A nomic-embed-text sweep chose a 128-token cap (mean 0.826 at 128, 0.808 at 256, 0.806 at 384, 0.797 at 512), now in its profile. all-minilm keeps the generic 75% of budget, capped at 256. With its own chunk size, nomic ties all-minilm in Hybrid (0.826 vs 0.827) at twice the vector size, so all-minilm stays the default |
+| 4. gpt-oss-20b as a prompted reranker | **Measured, adopt as opt-in.** The best reranker measured: isis-live 0.974, Atlas 0.915, SciFact 0.751, LongMemEval 0.959, against 0.925, 0.880, 0.715, and 0.931 for the cross-encoder, but at 6.6 to 10.2 s per search (p50). Its scores also separate answerable from unanswerable questions far better than any earlier signal (AUROC 0.991 on isis-live and 0.960 on Atlas, against 0.57 to 0.79) |
+| 5. GPU-served reranking | **Done.** The `rerank-gpu` compose profile serves the same model on a GPU under the same network alias, so the seeded endpoint works with either |
+| 7. Sub-queries for multi-part questions | **Built, measured, off by default.** `additionalQueries` and `decompose` on search, and chat decomposition (`retrieval.chatQueryDecomposition`). gemma3:4b decomposition fused at equal weight lowered every dataset (isis-live 0.879 → 0.844, Atlas 0.831 → 0.764, SciFact 0.682 → 0.666, LongMemEval 0.912 → 0.901, about 1 s per search) and chat accuracy (0.944 → 0.900). Chat decomposition now defaults to off; the search options remain for callers that supply their own sub-queries |
+
+What round 6 taught:
+
+- **The fusion constant was the one generic setting left untuned**, and a smaller constant helps both embedding models
+  slightly. No model needed its own fusion weights, which keeps the profile list short.
+- **Chunk size, not the model, was holding nomic back in Hybrid.** At 128 tokens it matches all-minilm; neither model
+  beats the other enough to justify a change of default.
+- **A large chat model is a strong reranker and a strong relevance judge**, at a latency only suitable for an opt-in
+  high-precision mode or a final check before answering.
+- **Adding queries at full weight hurts.** Decomposed parts displaced the memories the original question already
+  ranked well. Any future multi-query work (decomposition or rewrite) must keep the original query dominant.
+
+The current table replaces the round-5 table. Scores are value plus simplicity, each 1 to 10.
+
+| Rank | Fix | Weak area | Value | Simplicity | Score |
+|---|---|---|---|---|---|
+| 1 | Opt-in model-judged relevance: document a prompted Rerank endpoint on a larger chat model as a high-precision mode, and choose a `minRerankScore` cutoff for it from the answerable and unanswerable score distributions | "Nothing relevant", and ranking when latency is not a concern | 6 | 7 | 13 |
+| 2 | Conversation-aware query rewrite in chat: turn a follow-up ("and who owns that now?") into a standalone query from the session's earlier turns before retrieval, and search it alongside the original turn | Multi-turn chat follow-ups (not yet measured; needs a multi-turn dataset) | 6 | 6 | 12 |
+| 3 | Weighted query rewrite: keep the original query dominant and fuse, at a lower weight (0.3 to 0.5), a model-drafted hypothetical answer on the vector leg and keyword expansion on the text leg; deterministic (temperature 0) and model-agnostic | Paraphrase and vocabulary mismatch without a reranker | 5 | 7 | 12 |
+| 4 | RecallDB single-call hybrid search, per the RecallDB plan, then move Isis to it | Keyword latency, and a text leg that cannot see recency | 6 | 5 | 11 |
+| 5 | Per-query weights in multi-query fusion, then re-test decomposition with the original query weighted above its parts | Multi-memory (Atlas multi 0.815, LongMemEval preference 0.785) | 5 | 5 | 10 |
+| 6 | Abstention from a combined, calibrated signal (vector score, rerank score, and score gap) for deployments without a large reranking model | "Nothing relevant" | 6 | 4 | 10 |
+| 7 | Stored vectors in RecallDB search results through the SDK | Diversity and similarity on whole memories | 4 | 4 | 8 |
+
+Items 3 and 5 share their first step (a weight per query in `FuseQueryResults`), so they are cheapest done together.
+
+### Query rewrite
+
+**Weighted query rewrite.** Decomposition fused each part at the same weight as the original question, and it pulled
+rankings the original query already had right down to the fragments' level. A rewrite must not do that. The original
+query keeps full weight; the rewritten forms are fused at 0.3 to 0.5. Two forms target the two legs: a short
+hypothetical answer (embedded for the vector leg, since answers look more like stored memories than questions do) and
+keyword expansion (the terms a relevant memory would likely contain, for the text leg). The prompt is the same for
+every model, runs at temperature 0, and a reply that cannot be used falls back to the original query. It reuses the
+additional-query fusion path, with a per-query weight added. Measure it on paraphrase and lexical questions, with and
+without the cross-encoder; the reranker already repairs most vocabulary mismatch at lower cost, so expect the gain
+mainly on scopes without one. AssistantHub measured the replace-the-query form at +0.010 nDCG for 2.5 s per query,
+which is the bar the weighted form has to beat.
+
+**Conversation-aware rewrite.** A follow-up in a chat session ("and for staging?") retrieves poorly on its own. Before
+retrieval, have the chat model rewrite the latest turn into a standalone query using the session's earlier turns, and
+search both forms with the original at full weight. This is a different problem from vocabulary mismatch, and the
+reranker does not solve it. It needs a small multi-turn dataset to measure.

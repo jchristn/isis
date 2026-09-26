@@ -47,7 +47,7 @@ namespace Isis.Core.Recall
         /// <param name="text">The text to embed.</param>
         /// <param name="token">Cancellation token.</param>
         /// <param name="purpose">Whether the text is stored content or a search query. Models trained with task prefixes
-        /// (see <see cref="EmbeddingPrefixRegistry"/>) get the matching prefix. Default Document.</param>
+        /// (see <see cref="EmbeddingModelProfiles"/>) get the matching prefix. Default Document.</param>
         /// <returns>The embedding vector.</returns>
         /// <exception cref="ArgumentNullException">Thrown when endpoint or text is null.</exception>
         /// <exception cref="ModelEndpointUnavailableException">Thrown when the endpoint is still at capacity or unavailable after retries.</exception>
@@ -56,7 +56,7 @@ namespace Isis.Core.Recall
         {
             if (endpoint == null) throw new ArgumentNullException(nameof(endpoint));
             if (text == null) throw new ArgumentNullException(nameof(text));
-            text = EmbeddingPrefixRegistry.For(endpoint.Model, purpose) + text;
+            text = EmbeddingModelProfiles.Prefix(endpoint.Model, purpose) + text;
 
             string model = string.IsNullOrEmpty(endpoint.Model) ? "default" : endpoint.Model!;
             bool ollama = endpoint.ApiFormat == ApiFormatEnum.Ollama;

@@ -20,9 +20,34 @@ namespace Isis.Core.Stores.RecallDb
         #region Public-Members
 
         /// <summary>
-        /// The conventional RRF constant.
+        /// RRF constant used when a query and the embedding model's profile do not set one, at least 1. Default 20.
+        /// A sweep across four datasets and two embedding models favored 20 over the conventional 60: a smaller
+        /// constant lets each leg's top ranks count for more, which suits the short candidate lists hybrid search fuses.
         /// </summary>
-        public const int DefaultRrfK = 60;
+        /// <exception cref="ArgumentOutOfRangeException">Thrown when set below 1.</exception>
+        public static int DefaultRrfK
+        {
+            get
+            {
+                return _DefaultRrfK;
+            }
+            set
+            {
+                if (value < 1) throw new ArgumentOutOfRangeException(nameof(DefaultRrfK), "The RRF constant must be at least 1.");
+                _DefaultRrfK = value;
+            }
+        }
+
+        /// <summary>
+        /// Text-leg weight used when a query and the embedding model's profile do not set one. Default 0.5.
+        /// </summary>
+        public static double DefaultTextWeight { get; set; } = 0.5;
+
+        #endregion
+
+        #region Private-Members
+
+        private static int _DefaultRrfK = 20;
 
         #endregion
 
@@ -36,7 +61,7 @@ namespace Isis.Core.Stores.RecallDb
         /// <param name="textWeight">Text-leg weight in [0, 1]; the vector leg gets 1 − textWeight.</param>
         /// <param name="recencyWeight">Recency weight in [0, 1]; 0 disables the recency signal.</param>
         /// <param name="parentKey">Maps a chunk document to its parent memory key (used for recency).</param>
-        /// <param name="rrfK">RRF constant, at least 1. Default 60.</param>
+        /// <param name="rrfK">RRF constant, at least 1. Null uses <see cref="DefaultRrfK"/>.</param>
         /// <returns>Fused documents, best first. Ties are broken by document key for determinism.</returns>
         /// <exception cref="ArgumentNullException">Thrown when parentKey is null.</exception>
         /// <exception cref="ArgumentOutOfRangeException">Thrown when a weight is outside [0, 1] or rrfK is below 1.</exception>
@@ -46,12 +71,13 @@ namespace Isis.Core.Stores.RecallDb
             double textWeight,
             double recencyWeight,
             Func<DocumentRecord, string> parentKey,
-            int rrfK = DefaultRrfK)
+            int? rrfK = null)
         {
             ArgumentNullException.ThrowIfNull(parentKey);
+            int k = rrfK ?? DefaultRrfK;
             if (textWeight < 0.0 || textWeight > 1.0) throw new ArgumentOutOfRangeException(nameof(textWeight), "Text weight must be in [0, 1].");
             if (recencyWeight < 0.0 || recencyWeight > 1.0) throw new ArgumentOutOfRangeException(nameof(recencyWeight), "Recency weight must be in [0, 1].");
-            if (rrfK < 1) throw new ArgumentOutOfRangeException(nameof(rrfK), "The RRF constant must be at least 1.");
+            if (k < 1) throw new ArgumentOutOfRangeException(nameof(rrfK), "The RRF constant must be at least 1.");
 
             Dictionary<string, FusedDocument> byKey = new Dictionary<string, FusedDocument>(StringComparer.Ordinal);
             AddLeg(byKey, vectorResults, true);
@@ -60,13 +86,13 @@ namespace Isis.Core.Stores.RecallDb
             if (recencyWeight > 0.0) AssignRecencyRanks(byKey.Values, parentKey);
 
             double vectorWeight = 1.0 - textWeight;
-            double best = (vectorWeight + textWeight + (recencyWeight > 0.0 ? recencyWeight : 0.0)) / (rrfK + 1);
+            double best = (vectorWeight + textWeight + (recencyWeight > 0.0 ? recencyWeight : 0.0)) / (k + 1);
             foreach (FusedDocument fused in byKey.Values)
             {
                 double raw = 0.0;
-                if (fused.VectorRank.HasValue) raw += vectorWeight / (rrfK + fused.VectorRank.Value);
-                if (fused.TextRank.HasValue) raw += textWeight / (rrfK + fused.TextRank.Value);
-                if (fused.RecencyRank.HasValue) raw += recencyWeight / (rrfK + fused.RecencyRank.Value);
+                if (fused.VectorRank.HasValue) raw += vectorWeight / (k + fused.VectorRank.Value);
+                if (fused.TextRank.HasValue) raw += textWeight / (k + fused.TextRank.Value);
+                if (fused.RecencyRank.HasValue) raw += recencyWeight / (k + fused.RecencyRank.Value);
                 fused.Score = best > 0.0 ? raw / best : 0.0;
             }
 

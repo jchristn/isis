@@ -67,6 +67,7 @@ namespace Test.Shared
                     TestCase.Async("rest", "scope-create-dup", "POST /scopes with a duplicate name conflicts", ScopeCreateDuplicateAsync),
                     TestCase.Async("rest", "scope-create-noname", "POST /scopes without a name is a bad request", ScopeCreateNoNameAsync),
                     TestCase.Async("rest", "scope-create-recalldb-auto", "POST /scopes RecallDb auto-wires the embedding endpoint", ScopeCreateRecallDbAutoWiresEndpointAsync),
+                    TestCase.Async("rest", "scope-create-recalldb-auto-rerank", "POST /scopes RecallDb attaches the tenant's rerank endpoint", ScopeCreateRecallDbAutoRerankAsync),
                     TestCase.Async("rest", "scope-list", "GET /scopes lists scopes", ScopeListAsync),
                     TestCase.Async("rest", "scope-read", "GET /scopes/{id} reads a scope", ScopeReadAsync),
                     TestCase.Async("rest", "scope-read-unknown", "GET /scopes/{unknown} is not found", ScopeReadUnknownAsync),
@@ -590,6 +591,31 @@ namespace Test.Shared
             TestCase.Require(sd.RootElement.GetProperty("storeProvider").GetString() == "RecallDb", "default store should be RecallDb.");
             TestCase.Require(sd.RootElement.GetProperty("embeddingEndpointId").GetString() == endpointId, "scope should adopt the tenant's embedding endpoint.");
             TestCase.Require(sd.RootElement.GetProperty("dimensionality").GetInt32() == 384, "scope should adopt the endpoint's dimensionality (384).");
+        }
+
+        private static async Task ScopeCreateRecallDbAutoRerankAsync()
+        {
+            using ServerHarness h = await ServerHarness.StartAsync().ConfigureAwait(false);
+            using HttpClient admin = h.AdminClient();
+            HttpResponseMessage emb = await PostAsync(admin, EndpointsPath(h.TenantId), new { name = "emb", kind = "Embedding", apiFormat = "Ollama", baseUrl = "http://127.0.0.1:11434", model = "all-minilm", dimensionality = 384 }).ConfigureAwait(false);
+            ExpectStatus(emb, HttpStatusCode.Created, "create embedding endpoint");
+
+            HttpResponseMessage noRerank = await PostAsync(admin, ScopesPath(h.TenantId), new { name = "recall-no-rerank" }).ConfigureAwait(false);
+            ExpectStatus(noRerank, HttpStatusCode.Created, "scope without a tenant reranker");
+            using (JsonDocument nd = await ReadJsonAsync(noRerank).ConfigureAwait(false))
+            {
+                TestCase.Require(!nd.RootElement.TryGetProperty("rerankEndpointId", out JsonElement none) || none.ValueKind == JsonValueKind.Null, "Without a rerank endpoint the scope should not rerank.");
+            }
+
+            HttpResponseMessage rr = await PostAsync(admin, EndpointsPath(h.TenantId), new { name = "rr", kind = "Rerank", apiFormat = "Tei", baseUrl = "http://127.0.0.1:18800", model = "ms-marco" }).ConfigureAwait(false);
+            ExpectStatus(rr, HttpStatusCode.Created, "create rerank endpoint");
+            string rerankId;
+            using (JsonDocument rd = await ReadJsonAsync(rr).ConfigureAwait(false)) rerankId = rd.RootElement.GetProperty("id").GetString()!;
+
+            HttpResponseMessage scope = await PostAsync(admin, ScopesPath(h.TenantId), new { name = "recall-rerank" }).ConfigureAwait(false);
+            ExpectStatus(scope, HttpStatusCode.Created, "scope with a tenant reranker");
+            using JsonDocument sd = await ReadJsonAsync(scope).ConfigureAwait(false);
+            TestCase.Require(sd.RootElement.GetProperty("rerankEndpointId").GetString() == rerankId, "A new RecallDb scope should attach the tenant's rerank endpoint.");
         }
 
         private static async Task ScopeListAsync()

@@ -264,8 +264,9 @@ setting `retrieval.embeddingParallelism` (default 4) bounds how many chunks of o
 A memory that overflows is embedded as several chunks under the hood; upsert, read, search, and delete all
 continue to operate on the whole memory, and search returns one hit per memory regardless of chunking.
 
-Reranking is also configured on the **scope**: `rerankEndpointId` (a `Rerank` endpoint in the tenant; null, the
-default, turns reranking off), `rerankCandidates` (how many retrieved candidates the reranker scores before the top
+Reranking is also configured on the **scope**: `rerankEndpointId` (a `Rerank` endpoint in the tenant; a new RecallDb
+scope created without one attaches the tenant's first active Rerank endpoint, and an update that clears it turns
+reranking off), `rerankCandidates` (how many retrieved candidates the reranker scores before the top
 `topK` are kept; 1 to 100, default 10), and `rerankMinScore` (drop reranked hits scoring below it, so a question with
 no relevant memory returns nothing; null keeps every hit). Creating or updating a scope with a `rerankEndpointId` that
 is missing or not a `Rerank` endpoint returns 400. `PUT` replaces the whole scope, so send every field you want to
@@ -281,7 +282,7 @@ writer can reuse that slug or supersede it instead of keeping a duplicate. The f
 The threshold is the server setting `retrieval.duplicateSimilarityThreshold` (default 0.85). The threshold depends on the embedding model: with all-minilm, a memory and its replacement typically score 0.55 to 0.88, while distinct but closely related memories can reach 0.89, so treat the list as candidates to review.
 
 A search body is
-`{ "queryText": "…", "mode": "Hybrid", "topK": 10, "categoryFilter": "…", "tokenBudget": 240, "minScore": null, "recencyWeight": 0.1, "superseded": "Demote", "linkExpansion": 0, "diversity": 0, "rerank": null, "minRerankScore": null }`.
+`{ "queryText": "…", "mode": "Hybrid", "topK": 10, "categoryFilter": "…", "tokenBudget": 240, "minScore": null, "recencyWeight": 0.1, "superseded": "Demote", "linkExpansion": 0, "diversity": 0, "rerank": null, "minRerankScore": null, "textWeight": null, "rrfK": null, "additionalQueries": null, "decompose": false }`.
 `queryText` is required (an empty or missing query returns 400). `categoryFilter` accepts a category name or
 its `cat_` id; an unknown category returns 400. `minScore` (optional) drops hits scoring below it.
 `recencyWeight` (hybrid only, 0 to 1, default 0.1, 0 disables) adds a signal that favors more recently written
@@ -301,7 +302,22 @@ When the scope has a rerank endpoint, the search retrieves `rerankCandidates` ca
 the title and up to 1,200 characters of each, and keeps the best `topK`. `rerank: false` skips it for one query, and
 `rerank: true` fails with 400 when the scope has no rerank endpoint. `minRerankScore` drops reranked hits below it,
 overriding the scope's `rerankMinScore`. `minScore` still applies to the retrieval score before reranking. The
-response's `reranked` is true when the hits were reranked.
+response's `reranked` is true when the hits were reranked. If the reranker fails, the search returns retrieval order
+with a notice, and later searches skip that endpoint for 30 seconds (the server's `RerankCooldown`) so an
+unreachable reranker does not slow every search.
+
+`textWeight` (hybrid text-leg weight, 0 to 1) and `rrfK` (reciprocal-rank-fusion constant, 1 to 1000) default to null,
+which applies the scope embedding model's profile, or 0.5 and 20 for models without one. Profiles live in
+`EmbeddingModelProfiles`; they hold only settings a benchmark has shown a model needs (task prefixes, fusion weights,
+chunk size), so a model that is not listed always works with the generic defaults.
+
+A question that asks about several distinct things can be searched as several queries: `additionalQueries` (up to 4)
+are searched alongside `queryText` and the rankings fused, so a memory that answers one part is not crowded out by
+memories that answer another. `decompose: true` has an inference endpoint (`inferenceEndpointId`, or the tenant's
+first active one) split the question into sub-queries first; the reply is parsed generically, and a question the model
+keeps whole, or a reply it cannot read, searches the question as given. When more than one query ran, the response's
+`queries` lists them. Chat can split multi-part questions this way before retrieval (`retrieval.chatQueryDecomposition`, default false; in
+benchmarks it lowered retrieval and answer accuracy).
 
 Each hit has `storeKey`, `slug`, `title`, `snippet`, and `score`, plus the evidence behind the score: `vectorScore`
 and `textScore` (the raw leg scores, null when that leg did not return the hit), and in hybrid mode `vectorRank`

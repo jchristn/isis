@@ -81,10 +81,19 @@ namespace Test.Shared
                     TestCase.Async("refinement", "retry-gives-up", "TransientRetryHandler: returns the last transient response after MaxRetries", RetryGivesUpAsync),
                     TestCase.Async("refinement", "retry-ignores-other-errors", "TransientRetryHandler: does not retry a 400 or 500", RetryIgnoresOtherErrorsAsync),
                     TestCase.Sync("refinement", "retry-validates", "TransientRetryHandler rejects out-of-range settings", RetryValidates),
-                    TestCase.Sync("refinement", "prefix-registry", "EmbeddingPrefixRegistry: nomic gets search prefixes, all-minilm none", PrefixRegistry),
+                    TestCase.Sync("refinement", "prefix-registry", "EmbeddingModelProfiles: nomic gets search prefixes, all-minilm none", PrefixRegistry),
                     TestCase.Async("refinement", "embedding-sends-prefix", "EmbeddingService prepends the model's query or document prefix", EmbeddingSendsPrefixAsync),
                     TestCase.Async("refinement", "chunk-default-fraction", "Chunker: default chunks use DefaultChunkFraction of the budget; ChunkMaxTokens overrides", ChunkDefaultFractionAsync),
                     TestCase.Async("refinement", "embedding-unavailable-exception", "EmbeddingService reports a 429 as ModelEndpointUnavailableException (mapped to 503)", EmbeddingUnavailableExceptionAsync),
+                    TestCase.Sync("refinement", "decompose-parse", "QueryDecomposer.Parse keeps two or more distinct parts and ignores a kept-whole question", DecomposeParse),
+                    TestCase.Async("refinement", "decompose-short-question", "QueryDecomposer does not call the model for a short question", DecomposeShortQuestionAsync),
+                    TestCase.Sync("refinement", "fuse-query-results", "Multi-query fusion ranks a memory found by every part first and normalizes to 1.0", FuseQueryResultsCase),
+                    TestCase.Async("refinement", "search-additional-queries", "Search: additionalQueries finds a memory only a sub-query matches", SearchAdditionalQueriesAsync),
+                    TestCase.Sync("refinement", "model-profiles", "EmbeddingModelProfiles: known models match by name fragment; unknown models get no profile", ModelProfiles),
+                    TestCase.Async("refinement", "chunk-profile-override", "Chunker: a model profile's ChunkMaxTokens overrides the generic default", ChunkProfileOverrideAsync),
+                    TestCase.Sync("refinement", "query-fusion-defaults", "MemorySearchQuery: TextWeight and RrfK default to null (model profile) and clamp", QueryFusionDefaults),
+                    TestCase.Async("refinement", "rerank-circuit-breaker", "Search: after a rerank failure the endpoint is skipped for the cooldown", RerankCircuitBreakerAsync),
+                    TestCase.Async("refinement", "seed-rerank-endpoint", "DefaultSeeder seeds a Rerank endpoint only when configured and reachable", SeedRerankEndpointAsync),
                     TestCase.Sync("refinement", "chunk-defaults-validate", "Chunker: DefaultChunkFraction and DefaultChunkMaxTokens validate", ChunkDefaultsValidate)
                 });
         }
@@ -772,10 +781,10 @@ namespace Test.Shared
 
         private static void PrefixRegistry()
         {
-            TestCase.Require(EmbeddingPrefixRegistry.For("nomic-embed-text:latest", EmbeddingPurposeEnum.Query) == "search_query: ", "nomic queries should get search_query.");
-            TestCase.Require(EmbeddingPrefixRegistry.For("NOMIC-EMBED-TEXT", EmbeddingPurposeEnum.Document) == "search_document: ", "The match should ignore case.");
-            TestCase.Require(EmbeddingPrefixRegistry.For("all-minilm", EmbeddingPurposeEnum.Query) == string.Empty, "all-minilm takes no prefix.");
-            TestCase.Require(EmbeddingPrefixRegistry.For(null, EmbeddingPurposeEnum.Query) == string.Empty, "A missing model takes no prefix.");
+            TestCase.Require(EmbeddingModelProfiles.Prefix("nomic-embed-text:latest", EmbeddingPurposeEnum.Query) == "search_query: ", "nomic queries should get search_query.");
+            TestCase.Require(EmbeddingModelProfiles.Prefix("NOMIC-EMBED-TEXT", EmbeddingPurposeEnum.Document) == "search_document: ", "The match should ignore case.");
+            TestCase.Require(EmbeddingModelProfiles.Prefix("all-minilm", EmbeddingPurposeEnum.Query) == string.Empty, "all-minilm takes no prefix.");
+            TestCase.Require(EmbeddingModelProfiles.Prefix(null, EmbeddingPurposeEnum.Query) == string.Empty, "A missing model takes no prefix.");
         }
 
         private static async Task EmbeddingSendsPrefixAsync()
@@ -830,6 +839,141 @@ namespace Test.Shared
             }
             catch (InvalidOperationException e) when (e.Message.Contains("returned 500", StringComparison.Ordinal))
             {
+            }
+        }
+
+        private static void DecomposeParse()
+        {
+            List<string> two = QueryDecomposer.Parse("{\"queries\": [\"Who owns billing?\", \"What is the staging DB host?\"]}", "Who owns billing and what is the staging DB host?", 3);
+            TestCase.Require(two.Count == 2 && two[0] == "Who owns billing?", "Two distinct parts should be returned.");
+            List<string> one = QueryDecomposer.Parse("{\"queries\": [\"What is the cache TTL?\"]}", "What is the cache TTL?", 3);
+            TestCase.Require(one.Count == 0, "A question kept whole should yield no sub-queries.");
+            List<string> thinking = QueryDecomposer.Parse("<think>two things</think> Sure: [\"a b c\", \"d e f\", \"g h i\", \"j k l\"]", "q", 3);
+            TestCase.Require(thinking.Count == 3, "A thinking block and text around the JSON should be tolerated, capped at max.");
+            TestCase.Require(QueryDecomposer.Parse("not json", "q", 3).Count == 0 && QueryDecomposer.Parse(null, "q", 3).Count == 0, "Unusable replies should yield nothing.");
+        }
+
+        private static async Task DecomposeShortQuestionAsync()
+        {
+            using StubResponseHandler handler = new StubResponseHandler("{}");
+            QueryDecomposer decomposer = new QueryDecomposer(new InferenceService(handler));
+            ModelEndpoint endpoint = new ModelEndpoint { Name = "i", Kind = EndpointKindEnum.Inference, ApiFormat = ApiFormatEnum.Ollama, BaseUrl = "http://127.0.0.1:9", Model = "m" };
+            List<string> parts = await decomposer.DecomposeAsync(endpoint, "cache ttl?").ConfigureAwait(false);
+            TestCase.Require(parts.Count == 0 && handler.RequestCount == 0, "A short question should not be sent to the model.");
+            TestCase.Throws<ArgumentOutOfRangeException>(() => decomposer.MaxSubQueries = 5, "MaxSubQueries above 4 should be rejected.");
+        }
+
+        private static void FuseQueryResultsCase()
+        {
+            List<MemorySearchHit> first = new List<MemorySearchHit> { Hit("a", 1, "a"), Hit("b", 1, "b") };
+            List<MemorySearchHit> second = new List<MemorySearchHit> { Hit("a", 1, "a"), Hit("c", 1, "c") };
+            List<MemorySearchHit> fused = MemoryService.FuseQueryResults(new List<List<MemorySearchHit>> { first, second });
+            TestCase.Require(fused.Count == 3 && fused[0].Slug == "a" && Math.Abs(fused[0].Score - 1.0) < 1e-9, "A memory ranked first by every query should lead with score 1.0.");
+            TestCase.Require(fused.Skip(1).All(h => h.Score < 1.0), "Other memories should score below 1.0.");
+        }
+
+        private static async Task SearchAdditionalQueriesAsync()
+        {
+            using TempSqlite t = await TempSqlite.CreateAsync().ConfigureAwait(false);
+            FilesystemFixture f = await FixtureAsync(t).ConfigureAwait(false);
+            try
+            {
+                await PutAsync(f, "billing-owner", "Billing is owned by Seun on the payments team.").ConfigureAwait(false);
+                await PutAsync(f, "staging-db", "The staging database host is pg-staging-01.").ConfigureAwait(false);
+                MemorySearchResult single = await f.Service.SearchAsync(f.Scope, new MemorySearchQuery { QueryText = "billing owner", Mode = SearchModeEnum.Keyword }).ConfigureAwait(false);
+                TestCase.Require(single.Hits.All(h => h.Slug != "staging-db"), "Precondition: the main query alone should not find the staging memory.");
+
+                MemorySearchResult multi = await f.Service.SearchAsync(f.Scope, new MemorySearchQuery { QueryText = "billing owner", Mode = SearchModeEnum.Keyword, AdditionalQueries = new List<string> { "staging database host" } }).ConfigureAwait(false);
+                TestCase.Require(multi.Hits.Any(h => h.Slug == "billing-owner") && multi.Hits.Any(h => h.Slug == "staging-db"), "Both parts' memories should be returned, got " + Slugs(multi) + ".");
+            }
+            finally
+            {
+                DeleteWork(f.Work);
+            }
+        }
+
+        private static void ModelProfiles()
+        {
+            TestCase.Require(EmbeddingModelProfiles.Find("nomic-embed-text:latest")?.QueryPrefix == "search_query: ", "nomic should match its profile.");
+            TestCase.Require(EmbeddingModelProfiles.Find("nomic-embed-text")?.ChunkMaxTokens == 128, "nomic should cap chunks at 128 tokens.");
+            TestCase.Require(EmbeddingModelProfiles.Find("all-minilm") == null && EmbeddingModelProfiles.Find(null) == null, "Unknown models should have no profile and use the generic defaults.");
+        }
+
+        private static async Task ChunkProfileOverrideAsync()
+        {
+            ModelEndpoint endpoint = new ModelEndpoint { Name = "m", Kind = EndpointKindEnum.Embedding, ApiFormat = ApiFormatEnum.Ollama, BaseUrl = "http://127.0.0.1:9", Model = "all-minilm", MaxInputTokens = 254 };
+            string body = string.Join(" ", Enumerable.Range(0, 600).Select(i => "word" + (i % 37)));
+            BertWordPieceTokenizerAdapter wordPiece = new BertWordPieceTokenizerAdapter();
+            IReadOnlyList<MemoryChunk> generic = await MemoryChunker.ChunkAsync(new Scope { ChunkingMode = ChunkingModeEnum.OnOverflow }, endpoint, body).ConfigureAwait(false);
+
+            EmbeddingModelProfile profile = new EmbeddingModelProfile { Match = "all-minilm", ChunkMaxTokens = 64 };
+            EmbeddingModelProfiles.Known.Insert(0, profile);
+            try
+            {
+                IReadOnlyList<MemoryChunk> profiled = await MemoryChunker.ChunkAsync(new Scope { ChunkingMode = ChunkingModeEnum.OnOverflow }, endpoint, body).ConfigureAwait(false);
+                int profiledLargest = profiled.Max(c => wordPiece.CountTokens(c.Text));
+                TestCase.Require(profiledLargest <= 64 && profiled.Count > generic.Count, "The profile's 64-token cap should apply, largest was " + profiledLargest + ".");
+            }
+            finally
+            {
+                EmbeddingModelProfiles.Known.Remove(profile);
+            }
+        }
+
+        private static void QueryFusionDefaults()
+        {
+            MemorySearchQuery query = new MemorySearchQuery();
+            TestCase.Require(query.TextWeight == null && query.RrfK == null, "TextWeight and RrfK should default to null.");
+            query.RrfK = 0;
+            TestCase.Require(query.RrfK == 1, "RrfK should clamp to at least 1.");
+            query.TextWeight = 3.0;
+            TestCase.Require(query.TextWeight == 1.0, "TextWeight should clamp to 1.");
+            TestCase.Require(Isis.Core.Stores.RecallDb.HybridFusion.DefaultRrfK == 20, "The generic RRF constant should be 20.");
+            TestCase.Throws<ArgumentOutOfRangeException>(() => Isis.Core.Stores.RecallDb.HybridFusion.DefaultRrfK = 0, "A default RRF constant below 1 should be rejected.");
+            TestCase.Require(!new Isis.Server.Settings.RetrievalSettings().ChatQueryDecomposition, "Chat query decomposition should default to off.");
+        }
+
+        private static async Task RerankCircuitBreakerAsync()
+        {
+            using TempSqlite t = await TempSqlite.CreateAsync().ConfigureAwait(false);
+            using StubResponseHandler handler = new StubResponseHandler("{}", HttpStatusCode.InternalServerError);
+            FilesystemFixture f = await RerankFixtureAsync(t, handler).ConfigureAwait(false);
+            try
+            {
+                f.Service.RerankCooldown = TimeSpan.FromMinutes(5);
+                MemorySearchResult first = await KeywordAsync(f, "alpha").ConfigureAwait(false);
+                TestCase.Require(!first.Reranked && handler.RequestCount == 1, "The first search should try the reranker and fail.");
+                MemorySearchResult second = await KeywordAsync(f, "alpha").ConfigureAwait(false);
+                TestCase.Require(!second.Reranked && handler.RequestCount == 1, "The second search should skip the failed reranker.");
+                TestCase.Require(second.Notice != null && second.Notice.Contains("skipped", StringComparison.Ordinal), "The skip should be explained in the notice.");
+                TestCase.Throws<ArgumentOutOfRangeException>(() => f.Service.RerankCooldown = TimeSpan.FromSeconds(-1), "A negative cooldown should be rejected.");
+            }
+            finally
+            {
+                DeleteWork(f.Work);
+            }
+        }
+
+        private static async Task SeedRerankEndpointAsync()
+        {
+            using TempSqlite t = await TempSqlite.CreateAsync().ConfigureAwait(false);
+            await DefaultSeeder.SeedAsync(t.Db, new Isis.Server.Settings.AuthSettings(), _ => { }).ConfigureAwait(false);
+            using StubResponseHandler healthy = new StubResponseHandler("{}");
+            string? previous = Environment.GetEnvironmentVariable("ISIS_DEFAULT_RERANK_BASEURL");
+            try
+            {
+                Environment.SetEnvironmentVariable("ISIS_DEFAULT_RERANK_BASEURL", null);
+                TestCase.Require(!await DefaultSeeder.SeedRerankEndpointAsync(t.Db, new HttpClient(healthy), TimeSpan.Zero).ConfigureAwait(false), "Nothing should be seeded without the setting.");
+
+                Environment.SetEnvironmentVariable("ISIS_DEFAULT_RERANK_BASEURL", "http://127.0.0.1:9/");
+                TestCase.Require(await DefaultSeeder.SeedRerankEndpointAsync(t.Db, new HttpClient(healthy), TimeSpan.Zero).ConfigureAwait(false), "A reachable reranker should be seeded.");
+                EnumerationResult<ModelEndpoint> seeded = await t.Db.ModelEndpoints.EnumerateAsync(DefaultSeeder.DefaultTenantId, EndpointKindEnum.Rerank, new EnumerationQuery { MaxResults = 10 }).ConfigureAwait(false);
+                TestCase.Require(seeded.Objects.Count == 1 && seeded.Objects[0].ApiFormat == ApiFormatEnum.Tei && seeded.Objects[0].BaseUrl == "http://127.0.0.1:9" && seeded.Objects[0].TimeoutMs == 3000, "The seeded endpoint should be a TEI reranker with a short timeout.");
+                TestCase.Require(!await DefaultSeeder.SeedRerankEndpointAsync(t.Db, new HttpClient(healthy), TimeSpan.Zero).ConfigureAwait(false), "Seeding should be idempotent.");
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable("ISIS_DEFAULT_RERANK_BASEURL", previous);
             }
         }
 

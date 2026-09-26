@@ -3,6 +3,7 @@ namespace Isis.Server
     using System;
     using System.Net.Http;
     using System.Threading;
+    using System.Threading.Tasks;
     using Isis.Core.Database;
     using Isis.Core.Enums;
     using Isis.Core.Recall;
@@ -47,6 +48,20 @@ namespace Isis.Server
                 }
 
                 DefaultSeeder.SeedAsync(database, settings.Auth, message => log(message)).GetAwaiter().GetResult();
+
+                // The optional reranker can come up after Isis; seed its endpoint in the background once it answers.
+                HttpClient rerankProbe = new HttpClient();
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await DefaultSeeder.SeedRerankEndpointAsync(database, rerankProbe, TimeSpan.FromMinutes(15), message => log(message)).ConfigureAwait(false);
+                    }
+                    catch (Exception e)
+                    {
+                        log("rerank endpoint seeding failed: " + e.Message);
+                    }
+                });
             }
             catch (Exception e)
             {

@@ -1,6 +1,7 @@
 namespace Isis.Server.Services
 {
     using System;
+    using System.Net.Http;
     using System.Threading;
     using System.Threading.Tasks;
     using Isis.Core.Database;
@@ -200,6 +201,76 @@ namespace Isis.Server.Services
                 await database.ModelEndpoints.CreateAsync(completion, token).ConfigureAwait(false);
                 log?.Invoke("seeded default inference endpoint (Ollama gemma3:4b @ " + baseUrl + ")");
             }
+        }
+
+        /// <summary>
+        /// Seed a Rerank endpoint for the default tenant when ISIS_DEFAULT_RERANK_BASEURL is set (the reference stack's
+        /// optional reranker, a Text Embeddings Inference server). The reranker may start after Isis or not at all, so
+        /// this waits for its /health to answer, polling for up to <paramref name="maxWait"/>, and seeds only then. New
+        /// RecallDB scopes attach the seeded endpoint automatically. Idempotent: does nothing when the tenant already
+        /// has a Rerank endpoint.
+        /// </summary>
+        /// <param name="database">The database driver.</param>
+        /// <param name="http">HTTP client for the health probe.</param>
+        /// <param name="maxWait">How long to wait for the reranker.</param>
+        /// <param name="log">Optional log callback.</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>True when an endpoint was seeded.</returns>
+        /// <exception cref="ArgumentNullException">Thrown when database or http is null.</exception>
+        public static async Task<bool> SeedRerankEndpointAsync(DatabaseDriverBase database, HttpClient http, TimeSpan maxWait, Action<string>? log = null, CancellationToken token = default)
+        {
+            if (database == null) throw new ArgumentNullException(nameof(database));
+            if (http == null) throw new ArgumentNullException(nameof(http));
+
+            string baseUrl = (Environment.GetEnvironmentVariable("ISIS_DEFAULT_RERANK_BASEURL") ?? string.Empty).Trim().TrimEnd('/');
+            if (baseUrl.Length == 0) return false;
+            string model = Environment.GetEnvironmentVariable("ISIS_DEFAULT_RERANK_MODEL") ?? "cross-encoder/ms-marco-MiniLM-L-6-v2";
+
+            EnumerationQuery query = new EnumerationQuery { MaxResults = 1 };
+            EnumerationResult<ModelEndpoint> existing = await database.ModelEndpoints.EnumerateAsync(DefaultTenantId, EndpointKindEnum.Rerank, query, token).ConfigureAwait(false);
+            if (existing.TotalRecords > 0) return false;
+
+            DateTime deadline = DateTime.UtcNow.Add(maxWait);
+            while (true)
+            {
+                try
+                {
+                    using CancellationTokenSource probe = CancellationTokenSource.CreateLinkedTokenSource(token);
+                    probe.CancelAfter(TimeSpan.FromSeconds(5));
+                    using HttpResponseMessage response = await http.GetAsync(baseUrl + "/health", probe.Token).ConfigureAwait(false);
+                    if (response.IsSuccessStatusCode) break;
+                }
+                catch (Exception e) when (e is HttpRequestException || (e is OperationCanceledException && !token.IsCancellationRequested))
+                {
+                    // Not up yet.
+                }
+
+                if (DateTime.UtcNow >= deadline)
+                {
+                    log?.Invoke("reranker at " + baseUrl + " did not answer; no rerank endpoint seeded");
+                    return false;
+                }
+
+                await Task.Delay(TimeSpan.FromSeconds(10), token).ConfigureAwait(false);
+            }
+
+            ModelEndpoint rerank = new ModelEndpoint
+            {
+                Id = IdGenerator.RerankEndpoint(),
+                TenantId = DefaultTenantId,
+                Name = "Default Rerank (TEI " + model + ")",
+                Kind = EndpointKindEnum.Rerank,
+                ApiFormat = ApiFormatEnum.Tei,
+                BaseUrl = baseUrl,
+                AuthType = EndpointAuthTypeEnum.None,
+                Model = model,
+                // A reranker slower than this falls back to retrieval order rather than holding up the search.
+                TimeoutMs = 3000,
+                HealthCheckUrl = "/health"
+            };
+            await database.ModelEndpoints.CreateAsync(rerank, token).ConfigureAwait(false);
+            log?.Invoke("seeded default rerank endpoint (" + model + " @ " + baseUrl + ")");
+            return true;
         }
 
         #endregion

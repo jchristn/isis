@@ -42,6 +42,26 @@ namespace Test.Benchmark
         /// </summary>
         public double? MinRerankScore { get; set; } = null;
 
+        /// <summary>
+        /// Hybrid text weight (null uses the server's model profile).
+        /// </summary>
+        public double? TextWeight { get; set; } = null;
+
+        /// <summary>
+        /// Hybrid reciprocal-rank-fusion constant (null uses the server's model profile).
+        /// </summary>
+        public int? RrfK { get; set; } = null;
+
+        /// <summary>
+        /// Ask the server to split multi-part questions into sub-queries.
+        /// </summary>
+        public bool Decompose { get; set; } = false;
+
+        /// <summary>
+        /// Inference endpoint the server uses for decomposition.
+        /// </summary>
+        public string? InferenceEndpointId { get; set; } = null;
+
         #endregion
 
         #region Public-Methods
@@ -61,6 +81,9 @@ namespace Test.Benchmark
             if (args.GetOptional("link-expansion") != null) options.LinkExpansion = args.GetInt("link-expansion", 0);
             if (args.GetOptional("diversity") != null) options.Diversity = args.GetDouble("diversity", 0.0);
             if (args.GetOptional("min-rerank-score") != null) options.MinRerankScore = args.GetDouble("min-rerank-score", 0.0);
+            if (args.GetOptional("text-weight") != null) options.TextWeight = args.GetDouble("text-weight", 0.5);
+            if (args.GetOptional("rrf-k") != null) options.RrfK = args.GetInt("rrf-k", 60);
+            options.Decompose = args.GetFlag("decompose");
             return options;
         }
 

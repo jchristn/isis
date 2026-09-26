@@ -1,0 +1,45 @@
+{
+  "datasets": {
+    "scifact": {
+      "note": "Published zero-shot nDCG@10 on the BEIR SciFact test split, the same queries and corpus the harness runs.",
+      "baselines": [
+        {
+          "system": "BM25",
+          "metric": "ndcg@10",
+          "value": 0.665,
+          "compareModes": [ "Hybrid", "Keyword" ],
+          "source": "BEIR (Thakur et al., 2021), Table 2",
+          "url": "https://arxiv.org/abs/2104.08663"
+        },
+        {
+          "system": "BM25 + cross-encoder rerank",
+          "metric": "ndcg@10",
+          "value": 0.688,
+          "compareModes": [ "Hybrid" ],
+          "source": "BEIR (Thakur et al., 2021), Table 2",
+          "url": "https://arxiv.org/abs/2104.08663"
+        },
+        {
+          "system": "all-MiniLM-L6-v2 (dense only)",
+          "metric": "ndcg@10",
+          "value": 0.645,
+          "compareModes": [ "Semantic", "Hybrid" ],
+          "source": "MTEB SciFact retrieval, sentence-transformers/all-MiniLM-L6-v2",
+          "url": "https://sbert.net/docs/sentence_transformer/usage/mteb_evaluation.html"
+        }
+      ]
+    },
+    "longmemeval-s": {
+      "note": "No comparable published baseline: LongMemEval reports retrieval only for LongMemEval_M, with NDCG@5 and a 1.5B Stella V5 retriever (Wu et al., 2024), and its headline results are question-answering accuracy.",
+      "baselines": []
+    },
+    "isis-live": {
+      "note": "Written for Isis; no published baseline. Use the history command to compare rounds.",
+      "baselines": []
+    },
+    "atlas": {
+      "note": "Written for Isis; no published baseline. Use the history command to compare rounds.",
+      "baselines": []
+    }
+  }
+}

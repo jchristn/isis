@@ -10,7 +10,13 @@ All notable changes to Isis are documented here. This project adheres to
 - **Benchmark harness (`src/Test.Benchmark`, `benchmarks/`).** A black-box REST/MCP harness with `retrieval`, `chat`,
   `agent`, `load`, `stub`, `prepare`, and `compare` commands, an isolated pgvector + RecallDB stack, hand-labelled
   datasets (`isis-live`, `atlas`), converters for BEIR and LongMemEval, and a CI regression gate. The first baseline
-  is in `benchmarks/RESULTS.md`.
+  is in `benchmarks/RESULTS.md`. Every retrieval report shows the dataset's published baselines
+  (`benchmarks/baselines.json`) with the net difference, and a `history` command tabulates any set of rounds per
+  question type with the net change and baselines.
+- **Multi-query search.** `additionalQueries` (up to 4) are searched alongside `queryText` and the rankings fused;
+  `decompose: true` has an inference endpoint split the question first, and the response lists the `queries` run
+  (REST and MCP `memory_search`). Chat can decompose questions too (`retrieval.chatQueryDecomposition`), off by
+  default because equal-weight decomposition lowered retrieval and answer accuracy on the benchmarks.
 - **Memory supersession.** An upsert can name the memories it replaces (`supersedes`, a list of slugs or ids). The
   server keeps `supersededBy` on each replaced memory (migration `2026-09-24-memory-supersession`). Search demotes a
   replaced memory to directly after its replacement by default (`superseded`: `Demote`, `Hide`, or `Include`),
@@ -73,13 +79,23 @@ All notable changes to Isis are documented here. This project adheres to
 - **Model endpoint retries.** Embedding, rerank, and inference calls retry 429, 502, and 503 with backoff
   (`TransientRetryHandler`); an endpoint still unavailable afterwards is reported as 503 instead of 400.
 - **Embedding task prefixes.** Models trained with them (nomic-embed-text, e5, bge, mxbai, snowflake-arctic-embed)
-  get their document and query prefixes (`EmbeddingPrefixRegistry`).
+  get their document and query prefixes. Prefixes now live in embedding model profiles (below).
 - **Chat-model reranking.** A Rerank endpoint can use the `Ollama` or `OpenAI` format; Isis prompts the model once per
   search to rate every candidate. A cross-encoder remains the recommended reranker.
 - **Rerank candidates default to 10** (was 20): equal quality on the benchmarks at about 40% less latency.
 - **Reranker in the reference stack.** `docker/compose.yaml` and the benchmark stack gain optional `rerank` (CPU) and
   `rerank-gpu` (NVIDIA) profiles serving ms-marco-MiniLM-L-6-v2.
 - **RecallDB clients are shared per endpoint** instead of one undisposed `HttpClient` per request.
+- **Embedding model profiles** (`EmbeddingModelProfiles`, replacing `EmbeddingPrefixRegistry`). Every model uses
+  generic defaults; a profile overrides only what a benchmark showed a known model needs: task prefixes, hybrid text
+  weight, RRF constant, chunk fraction, and chunk cap. nomic-embed-text chunks are capped at 128 tokens.
+- **Hybrid fusion's RRF constant defaults to 20** (was 60; `HybridFusion.DefaultRrfK`). A sweep on four datasets
+  favored it for both all-minilm and nomic-embed-text. Search accepts `textWeight` and `rrfK` to override the
+  profile or default per query.
+- **Reranker on by default in the reference stack.** With `ISIS_DEFAULT_RERANK_BASEURL` set (as `docker/compose.yaml`
+  does), the server seeds a Rerank endpoint once the reranker answers, and new RecallDB scopes attach the tenant's
+  first active Rerank endpoint. A rerank endpoint that fails is skipped for 30 seconds (`RerankCooldown`), returning
+  retrieval order with a notice.
 
 ### Fixed
 

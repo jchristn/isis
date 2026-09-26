@@ -719,6 +719,8 @@ Proxies `POST /v1.0/api/tenants/{tenantId}/scopes/{scopeId}/memories/search`.
 | `diversity` | number | No | 0 | 0..1: higher values move results that repeat a higher-ranked one below other relevant memories |
 | `rerank` | boolean | No | scope default | Rerank with the scope's rerank endpoint (default: when the scope has one) |
 | `minRerankScore` | number | No | scope `rerankMinScore` | Drop reranked hits scoring below this (0..1) |
+| `additionalQueries` | string[] | No | [] | Up to 4 extra queries searched alongside `queryText` and fused; pass the parts of a multi-part question |
+| `decompose` | boolean | No | false | Have the tenant's inference model split a multi-part question into sub-queries first |
 
 #### Example Request
 

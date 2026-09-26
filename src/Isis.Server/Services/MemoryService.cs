@@ -84,6 +84,44 @@ namespace Isis.Server.Services
         }
 
         /// <summary>
+        /// RRF constant used to fuse the rankings of several queries (additional queries or decomposed parts), at least 1.
+        /// Default 60. This fuses whole ranked hit lists, not the two legs of one hybrid search, whose constant is
+        /// <see cref="HybridFusion.DefaultRrfK"/>.
+        /// </summary>
+        /// <exception cref="ArgumentOutOfRangeException">Thrown when set below 1.</exception>
+        public static int QueryFusionRrfK
+        {
+            get
+            {
+                return _QueryFusionRrfK;
+            }
+            set
+            {
+                if (value < 1) throw new ArgumentOutOfRangeException(nameof(QueryFusionRrfK), "QueryFusionRrfK must be at least 1.");
+                _QueryFusionRrfK = value;
+            }
+        }
+
+        /// <summary>
+        /// After a rerank endpoint fails, how long searches skip it (returning retrieval order with a notice) before
+        /// trying it again, so an unreachable reranker costs one failed call per period rather than one per search.
+        /// Minimum zero (never skip), default 30 seconds.
+        /// </summary>
+        /// <exception cref="ArgumentOutOfRangeException">Thrown when set below zero.</exception>
+        public TimeSpan RerankCooldown
+        {
+            get
+            {
+                return _RerankCooldown;
+            }
+            set
+            {
+                if (value < TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(RerankCooldown), "RerankCooldown may not be negative.");
+                _RerankCooldown = value;
+            }
+        }
+
+        /// <summary>
         /// Characters of each candidate's text sent to the reranker (the reranker sees the title and this much of the
         /// best-matching chunk). Minimum 100, default 1200.
         /// </summary>
@@ -114,9 +152,13 @@ namespace Isis.Server.Services
         private readonly RerankService? _RerankService;
         private readonly SearchRefiner _Refiner;
         private const int _DefaultSnippetChars = 240;
+        private const int _MaxAdditionalQueries = 4;
+        private static int _QueryFusionRrfK = 60;
         private double _DuplicateSimilarityThreshold = 0.85;
         private int _DuplicateMaxResults = 3;
         private int _RerankPassageChars = 1200;
+        private TimeSpan _RerankCooldown = TimeSpan.FromSeconds(30);
+        private static readonly ConcurrentDictionary<string, DateTime> _RerankSkipUntil = new ConcurrentDictionary<string, DateTime>(StringComparer.Ordinal);
 
         #endregion
 
@@ -468,6 +510,12 @@ namespace Isis.Server.Services
                 // Reranking and diversity choose from a wider candidate pool than topK, and the reranker reads more
                 // of each candidate than the caller's snippet budget; both are cut back after.
                 ModelEndpoint? rerankEndpoint = await ResolveRerankEndpointAsync(scope, query, token).ConfigureAwait(false);
+                string? rerankNotice = null;
+                if (rerankEndpoint != null && query.Rerank != true && _RerankSkipUntil.TryGetValue(rerankEndpoint.Id, out DateTime skipUntil) && skipUntil > DateTime.UtcNow)
+                {
+                    rerankEndpoint = null;
+                    rerankNotice = "The rerank endpoint failed recently and is being skipped; results are in retrieval order.";
+                }
                 int topK = query.TopK;
                 int snippetChars = query.TokenBudget.HasValue && query.TokenBudget.Value > 0 ? query.TokenBudget.Value : _DefaultSnippetChars;
                 MemorySearchQuery storeQuery = query.Clone();
@@ -479,13 +527,35 @@ namespace Isis.Server.Services
 
                 if (query.Diversity > 0.0) storeQuery.TopK = Math.Max(storeQuery.TopK, Math.Min(100, topK * 3));
 
-                float[]? queryEmbedding = null;
-                if (store.Capabilities.RequiresEmbedding && query.Mode != SearchModeEnum.Keyword)
+                // Hybrid fusion settings the caller left unset come from the embedding model's profile (then the
+                // store's generic defaults).
+                bool embed = store.Capabilities.RequiresEmbedding && query.Mode != SearchModeEnum.Keyword;
+                if (store.Capabilities.RequiresEmbedding)
                 {
-                    queryEmbedding = await EmbedAsync(scope, query.QueryText, token, EmbeddingPurposeEnum.Query).ConfigureAwait(false);
+                    ModelEndpoint embeddingEndpoint = await ResolveEmbeddingEndpointAsync(scope, token).ConfigureAwait(false);
+                    EmbeddingModelProfile? modelProfile = EmbeddingModelProfiles.Find(embeddingEndpoint.Model);
+                    if (!storeQuery.TextWeight.HasValue) storeQuery.TextWeight = modelProfile?.TextWeight;
+                    if (!storeQuery.RrfK.HasValue) storeQuery.RrfK = modelProfile?.RrfK;
                 }
 
-                MemorySearchResult result = await store.SearchAsync(scope, storeQuery, queryEmbedding, token).ConfigureAwait(false);
+                List<string> queries = QueryTexts(query);
+                MemorySearchResult result;
+                if (queries.Count == 1)
+                {
+                    float[]? queryEmbedding = embed ? await EmbedAsync(scope, query.QueryText, token, EmbeddingPurposeEnum.Query).ConfigureAwait(false) : null;
+                    result = await store.SearchAsync(scope, storeQuery, queryEmbedding, token).ConfigureAwait(false);
+                }
+                else
+                {
+                    // Search each part on its own, then fuse the rankings, so a memory that answers one part of a
+                    // multi-part question is not crowded out by memories that answer another.
+                    List<Task<MemorySearchResult>> searches = new List<Task<MemorySearchResult>>(queries.Count);
+                    foreach (string text in queries) searches.Add(SearchOneAsync(store, scope, storeQuery, text, embed, token));
+                    MemorySearchResult[] results = await Task.WhenAll(searches).ConfigureAwait(false);
+                    result = results[0];
+                    result.Hits = FuseQueryResults(results.Select(r => r.Hits ?? new List<MemorySearchHit>()).ToList());
+                }
+
                 List<MemorySearchHit> hits = result.Hits ?? new List<MemorySearchHit>();
                 if (query.MinScore.HasValue)
                 {
@@ -504,6 +574,7 @@ namespace Isis.Server.Services
                     catch (Exception e) when (!(e is OperationCanceledException && token.IsCancellationRequested))
                     {
                         result.Notice = "Reranking failed (" + e.Message + "); results are in retrieval order.";
+                        if (_RerankCooldown > TimeSpan.Zero) _RerankSkipUntil[rerankEndpoint.Id] = DateTime.UtcNow.Add(_RerankCooldown);
                     }
 
                     double? minRerank = query.MinRerankScore ?? scope.RerankMinScore;
@@ -514,6 +585,7 @@ namespace Isis.Server.Services
                     }
                 }
 
+                if (rerankNotice != null) result.Notice = string.IsNullOrEmpty(result.Notice) ? rerankNotice : result.Notice + " " + rerankNotice;
                 hits = SearchDiversifier.Diversify(hits, query.Diversity, topK);
                 foreach (MemorySearchHit hit in hits)
                 {
@@ -659,6 +731,69 @@ namespace Isis.Server.Services
             }
 
             throw new InvalidOperationException("Category '" + filter + "' was not found in this scope (pass a category name or cat_ id).");
+        }
+
+        private async Task<MemorySearchResult> SearchOneAsync(IMemoryStore store, Scope scope, MemorySearchQuery storeQuery, string text, bool embed, CancellationToken token)
+        {
+            MemorySearchQuery part = storeQuery.Clone();
+            part.QueryText = text;
+            part.AdditionalQueries = null;
+            float[]? embedding = embed ? await EmbedAsync(scope, text, token, EmbeddingPurposeEnum.Query).ConfigureAwait(false) : null;
+            return await store.SearchAsync(scope, part, embedding, token).ConfigureAwait(false);
+        }
+
+        private static List<string> QueryTexts(MemorySearchQuery query)
+        {
+            List<string> texts = new List<string> { query.QueryText };
+            foreach (string extra in query.AdditionalQueries ?? new List<string>())
+            {
+                string trimmed = (extra ?? string.Empty).Trim();
+                if (trimmed.Length == 0 || texts.Contains(trimmed, StringComparer.OrdinalIgnoreCase)) continue;
+                texts.Add(trimmed);
+                if (texts.Count > _MaxAdditionalQueries) break;
+            }
+
+            return texts;
+        }
+
+        /// <summary>
+        /// Fuse the ranked hits of several queries by reciprocal rank (k = <see cref="QueryFusionRrfK"/>), normalized so a memory ranked first by
+        /// every query scores 1.0. Each memory keeps the hit (snippet and evidence) from the query that ranked it best.
+        /// </summary>
+        /// <param name="rankings">One ranked hit list per query.</param>
+        /// <returns>The fused hits, best first.</returns>
+        public static List<MemorySearchHit> FuseQueryResults(List<List<MemorySearchHit>> rankings)
+        {
+            int k = QueryFusionRrfK;
+            Dictionary<string, double> scores = new Dictionary<string, double>(StringComparer.Ordinal);
+            Dictionary<string, MemorySearchHit> best = new Dictionary<string, MemorySearchHit>(StringComparer.Ordinal);
+            Dictionary<string, int> bestRank = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (List<MemorySearchHit> ranking in rankings)
+            {
+                for (int i = 0; i < ranking.Count; i++)
+                {
+                    MemorySearchHit hit = ranking[i];
+                    string key = hit.StoreKey + "|" + hit.Slug;
+                    scores[key] = (scores.TryGetValue(key, out double score) ? score : 0.0) + 1.0 / (k + i + 1);
+                    if (!bestRank.TryGetValue(key, out int rank) || i < rank)
+                    {
+                        bestRank[key] = i;
+                        best[key] = hit;
+                    }
+                }
+            }
+
+            double top = rankings.Count / (double)(k + 1);
+            return scores
+                .OrderByDescending(e => e.Value)
+                .ThenBy(e => e.Key, StringComparer.Ordinal)
+                .Select(e =>
+                {
+                    MemorySearchHit hit = best[e.Key];
+                    hit.Score = top > 0.0 ? e.Value / top : 0.0;
+                    return hit;
+                })
+                .ToList();
         }
 
         private static List<string> NormalizeSupersedes(Memory incoming, Memory? existing)

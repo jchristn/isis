@@ -2,8 +2,10 @@ namespace Isis.Server.Routes
 {
     using System;
     using System.Collections.Generic;
+    using System.Linq;
     using System.Threading.Tasks;
     using Isis.Core.Database;
+    using Isis.Core.Enums;
     using Isis.Core.Models;
     using Isis.Core.Recall;
     using Isis.Core.Security;
@@ -26,6 +28,7 @@ namespace Isis.Server.Routes
         private readonly AuthorizationService _Authorization;
         private readonly MemoryService _MemoryService;
         private readonly LookupCache? _Cache;
+        private readonly QueryDecomposer? _Decomposer;
 
         #endregion
 
@@ -38,10 +41,12 @@ namespace Isis.Server.Routes
         /// <param name="authorization">The authorization service.</param>
         /// <param name="memoryService">The memory service.</param>
         /// <param name="cache">Optional lookup cache for scope reads.</param>
+        /// <param name="decomposer">Optional query decomposer used when a search sets decompose. Null ignores decompose.</param>
         /// <exception cref="ArgumentNullException">Thrown when a required argument is null.</exception>
-        public MemoryRoutes(DatabaseDriverBase database, AuthorizationService authorization, MemoryService memoryService, LookupCache? cache = null)
+        public MemoryRoutes(DatabaseDriverBase database, AuthorizationService authorization, MemoryService memoryService, LookupCache? cache = null, QueryDecomposer? decomposer = null)
         {
             _Cache = cache;
+            _Decomposer = decomposer;
             _Database = database ?? throw new ArgumentNullException(nameof(database));
             _Authorization = authorization ?? throw new ArgumentNullException(nameof(authorization));
             _MemoryService = memoryService ?? throw new ArgumentNullException(nameof(memoryService));
@@ -160,6 +165,18 @@ namespace Isis.Server.Routes
             }
         }
 
+        private async Task<ModelEndpoint?> ResolveInferenceEndpointAsync(string tenantId, string? endpointId, System.Threading.CancellationToken token)
+        {
+            if (!string.IsNullOrEmpty(endpointId))
+            {
+                ModelEndpoint? explicitEndpoint = await _Database.ModelEndpoints.ReadAsync(tenantId, endpointId, token).ConfigureAwait(false);
+                return explicitEndpoint != null && explicitEndpoint.Kind == EndpointKindEnum.Inference && explicitEndpoint.Active ? explicitEndpoint : null;
+            }
+
+            EnumerationResult<ModelEndpoint> endpoints = await _Database.ModelEndpoints.EnumerateAsync(tenantId, EndpointKindEnum.Inference, new EnumerationQuery { MaxResults = 1000 }, token).ConfigureAwait(false);
+            return endpoints.Objects.FirstOrDefault(e => e.Active);
+        }
+
         private async Task SearchAsync(HttpContextBase context)
         {
             if (!Authorize(context, out string tenantId, out string scopeId))
@@ -184,7 +201,31 @@ namespace Isis.Server.Routes
 
             try
             {
+                // Optional query splitting: an inference endpoint rewrites a multi-part question into sub-queries,
+                // which are searched alongside it. Without an endpoint the question is searched as given.
+                string? decomposeNotice = null;
+                if (query.Decompose && _Decomposer != null)
+                {
+                    ModelEndpoint? inference = await ResolveInferenceEndpointAsync(tenantId, query.InferenceEndpointId, context.Token).ConfigureAwait(false);
+                    if (inference == null)
+                    {
+                        decomposeNotice = "No active inference endpoint is available to split the query; it was searched as given.";
+                    }
+                    else
+                    {
+                        List<string> parts = await _Decomposer.DecomposeAsync(inference, query.QueryText, context.Token).ConfigureAwait(false);
+                        if (parts.Count > 0)
+                        {
+                            List<string> merged = new List<string>(query.AdditionalQueries ?? new List<string>());
+                            merged.AddRange(parts);
+                            query.AdditionalQueries = merged;
+                        }
+                    }
+                }
+
                 MemorySearchResult result = await _MemoryService.SearchAsync(scope, query, context.Token).ConfigureAwait(false);
+                if (decomposeNotice != null) result.Notice = string.IsNullOrEmpty(result.Notice) ? decomposeNotice : result.Notice + " " + decomposeNotice;
+                if (query.AdditionalQueries != null && query.AdditionalQueries.Count > 0) result.Queries = new List<string> { query.QueryText }.Concat(query.AdditionalQueries).ToList();
                 await RouteHelpers.JsonAsync(context, 200, result).ConfigureAwait(false);
             }
             catch (NotSupportedException ex)

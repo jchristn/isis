@@ -149,6 +149,20 @@ namespace Isis.Server.Routes
 
                 scope.EmbeddingEndpointId = endpoint.Id;
                 if (scope.Dimensionality <= 0) scope.Dimensionality = endpoint.Dimensionality;
+
+                // Reranking is the largest retrieval gain measured, so a new semantic scope uses the tenant's rerank
+                // endpoint when one exists (a search falls back to retrieval order if it is unreachable). Clear
+                // rerankEndpointId with an update to opt out.
+                if (string.IsNullOrEmpty(scope.RerankEndpointId))
+                {
+                    EnumerationResult<ModelEndpoint> rerankers = await _Database.ModelEndpoints.EnumerateAsync(tenantId, EndpointKindEnum.Rerank, new EnumerationQuery { MaxResults = 100 }, context.Token).ConfigureAwait(false);
+                    foreach (ModelEndpoint reranker in rerankers.Objects)
+                    {
+                        if (!reranker.Active) continue;
+                        scope.RerankEndpointId = reranker.Id;
+                        break;
+                    }
+                }
                 if (scope.Dimensionality <= 0)
                 {
                     await RouteHelpers.ErrorAsync(context, 400, "BadRequest", "The embedding endpoint '" + endpoint.Id + "' has no dimensionality configured; pass 'dimensionality' explicitly (e.g. 384 for all-minilm).").ConfigureAwait(false);
