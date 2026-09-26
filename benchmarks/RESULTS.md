@@ -45,19 +45,20 @@ one agents and chat use.
 | | **Hybrid** | 0.848 | 0.859 | 0.877 | 0.877 | 0.883 | 0.879 | 0.878 | 0.925 | **0.974** |
 | Atlas: 170 synthetic memories, 260 questions | Keyword | 0.137 | 0.767 | 0.773 | 0.783 | 0.772 | 0.767 | | | |
 | | Semantic | 0.715 | 0.714 | 0.738 | 0.756 | 0.737 | 0.753 | | | |
-| | **Hybrid** | 0.739 | 0.803 | 0.804 | 0.809 | 0.802 | 0.831 | **0.835** | 0.880 | **0.915** |
+| | **Hybrid** | 0.739 | 0.803 | 0.804 | 0.809 | 0.802 | 0.831 | **0.835** | 0.883 | **0.915** |
 | SciFact: 5,183 abstracts, 300 queries | Keyword | 0.057 | 0.598 | 0.585 | 0.589 | 0.594 | 0.594 | | | |
 | | Semantic | 0.653 | 0.653 | 0.645 | 0.647 | 0.657 | 0.658 | | | |
-| | **Hybrid** | 0.665 | 0.688 | 0.678 | 0.678 | 0.683 | 0.682 | 0.683 | 0.715 | **0.751** |
+| | **Hybrid** | 0.665 | 0.688 | 0.678 | 0.678 | 0.683 | 0.682 | 0.683 | 0.712 | **0.751** |
 | LongMemEval-S: 60 haystacks of about 50 sessions | Keyword | 0.102 | 0.833 | 0.838 | not run | not run | not run | | | |
 | | Semantic | 0.853 | 0.853 | 0.887 | 0.887 | 0.889 | 0.874 | | | |
-| | **Hybrid** | 0.853 | 0.906 | 0.907 | 0.907 | 0.895 | 0.912 | 0.911 | 0.931 | **0.959** |
+| | **Hybrid** | 0.853 | 0.906 | 0.907 | 0.907 | 0.895 | 0.912 | 0.911 | 0.939 | **0.959** |
 
 Round 6 changed only how the two legs are fused, so Keyword and Semantic were not re-run. SciFact's published
 baselines (BEIR BM25 0.665, BM25 with a cross-encoder 0.688, all-MiniLM-L6-v2 dense 0.645) are in every SciFact report
 and in the history command's output; Hybrid is +0.018 over BM25 and +0.038 over the dense model it embeds with.
 
-"+ rerank" is the ms-marco-MiniLM-L-6-v2 cross-encoder with 10 candidates (the round-5 default), measured in round 5.
+"+ rerank" is the ms-marco-MiniLM-L-6-v2 cross-encoder with 10 candidates, measured in round 7 on the round-6 fusion
+defaults (round 5 measured 0.925, 0.880, 0.715, and 0.931).
 "+ gpt-oss-20b rerank" is the same pipeline with gpt-oss-20b prompted as the reranker, measured in round 6. The round-3 and
 round-4 rerank columns (20 candidates) are in the round sections below. Round 5's reranked numbers were measured on
 the laptop with the round-5 code; every other round-5 number ran on the GPU host, whose all-minilm results match the
@@ -249,6 +250,14 @@ the 3-memory runs are the more telling ones; a larger corpus would show a larger
 (one short model call) and runs only for questions sent with history. gemma3:4b often rewrote into keyword lists
 rather than questions ("which four?" became "four provider-neutral DAL drivers"), which still searches well because
 the original question is searched too.
+
+A full round-7 run on RecallDb.Sdk 0.2.2 (isis-live and Atlas re-ingested through the new SDK, SciFact and
+LongMemEval on their stored scopes) reproduced round 6 on every dataset and question type: Hybrid nDCG@10 0.878,
+0.835, 0.683, and 0.911, with no ingest failures or search errors. Round 7 changed nothing that single-question
+retrieval uses, so that is the expected result. Chat on isis-live matched round 6 as well (accuracy 0.944, every
+unanswerable question declined, evidence in the prompt for 99.1%). On the follow-up set, the rewrite-on
+configuration scored 0.906 on this run against 0.938 on the earlier one, with evidence in the prompt for every question
+both times; the difference is one question, within the 4B judge's noise.
 
 ### Choosing the recency weight
 
