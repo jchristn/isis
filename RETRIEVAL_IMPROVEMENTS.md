@@ -383,6 +383,13 @@ The current table replaces the round-5 table. Scores are value plus simplicity, 
 
 Items 3 and 5 share their first step (a weight per query in `FuseQueryResults`), so they are cheapest done together.
 
+**Round 7 update: item 2 is done.** Chat accepts `history`; a follow-up is rewritten into a standalone query and
+retrieval searches both the question and the rewrite (`retrieval.chatConversationRewrite`, default true). On the new
+`isis-live-followups` dataset (32 follow-ups), with 3 memories retrieved, evidence reached the prompt for 1.000 of
+questions instead of 0.953 and answer accuracy rose from 0.969 to 1.000, for about 0.7 s per follow-up; with 8
+memories retrieved, evidence 0.969 to 1.000 and citation recall 0.891 to 0.953. See the round 7 section of
+`benchmarks/RESULTS.md`.
+
 ### Query rewrite
 
 **Weighted query rewrite.** Decomposition fused each part at the same weight as the original question, and it pulled

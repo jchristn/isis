@@ -31,6 +31,7 @@ Latency and throughput depend on the machine. Compare them within this page, not
 | 4 | TextChunker 0.3.1 (span-based chunking, token counts that match the embedding runtime); Isis's chunking workarounds removed and its token margin cut from 4% to 1%; every dataset re-ingested |
 | 5 | Chunks default to 75% of the model budget (capped at 256 tokens); retries on 429/502/503 with 503 reported for an endpoint still at capacity; 10 rerank candidates by default; embedding task prefixes; prompted chat-model reranking. Every model call (all-minilm, nomic-embed-text, gemma3:4b) ran on one GPU host instead of the laptop |
 | 6 | Hybrid fusion's RRF constant 60 → 20 after a sweep; embedding model profiles (nomic-embed-text chunks capped at 128 tokens); the cross-encoder seeded and attached to new scopes by the reference stack, with a circuit breaker; multi-query search and query decomposition (measured, off in chat by default); gpt-oss-20b measured as a prompted reranker |
+| 7 | Chat accepts the conversation's earlier messages and rewrites a follow-up into a standalone query before retrieval, searching both; a follow-up question dataset |
 
 ## Retrieval
 
@@ -225,6 +226,30 @@ multi-query work will weight the original query above the rest.
 Chat on isis-live with round 6's defaults answered 94.4% of answerable questions correctly, declined all 20
 unanswerable ones, and had the evidence in the prompt for 99.1%, the same as round 5 within the judge's noise.
 
+### Round 7: follow-up questions in chat
+
+Chat used to see only the latest message, so a follow-up such as "can I use it today?" was searched as written. Round
+7 lets the caller send the earlier messages; the chat model rewrites the follow-up into a standalone query, retrieval
+searches both forms, and the answer prompt shows the conversation. The new `isis-live-followups` dataset asks 32
+follow-ups over the isis-live memories, each after one earlier exchange: 26 that refer back ("does it compute the
+embeddings itself?") and 6 that shift topic ("what about the dashboard?"). Both arms send the history to the answer
+model; only the rewrite differs. gemma3:4b, one question at a time.
+
+| isis-live-followups | Rewrite off, 8 memories | Rewrite on, 8 memories | Rewrite off, 3 memories | Rewrite on, 3 memories |
+|---|---|---|---|---|
+| Evidence reached the prompt | 0.969 | **1.000** | 0.953 | **1.000** |
+| Answer accuracy | 0.938 | 0.938 | 0.969 | **1.000** |
+| Citation recall | 0.891 | **0.953** | 0.953 | **0.984** |
+| Citation precision | 0.745 | **0.794** | 0.665 | **0.712** |
+| Latency p50 | 1.6 s | 2.3 s | 1.9 s | 2.4 s |
+
+Every retrieval miss without the rewrite was a follow-up that referred back; topic shifts named their new subject and
+were found either way. With only 24 memories and 8 retrieved, a third of the corpus reaches the prompt regardless, so
+the 3-memory runs are the more telling ones; a larger corpus would show a larger gap. The rewrite costs about 0.7 s
+(one short model call) and runs only for questions sent with history. gemma3:4b often rewrote into keyword lists
+rather than questions ("which four?" became "four provider-neutral DAL drivers"), which still searches well because
+the original question is searched too.
+
 ### Choosing the recency weight
 
 The recency weight was chosen by sweeping it on all four datasets, reusing the same ingested scopes.
@@ -404,8 +429,8 @@ with what landed in each round and the current ranked list. After round 6 the re
 
 - **An opt-in high-precision mode** built on a larger chat model as the reranker, with a relevance cutoff chosen from
   its score distributions; it is the strongest ranking and "nothing relevant" signal measured.
-- **Query rewrite that keeps the original query dominant**: a standalone rewrite of chat follow-ups from earlier
-  turns, and a low-weight hypothetical answer and keyword expansion for scopes without a reranker.
+- **Query rewrite that keeps the original query dominant**: a low-weight hypothetical answer and keyword expansion
+  for scopes without a reranker (rewriting chat follow-ups landed in round 7).
 - **RecallDB single-call hybrid search**, planned in the RecallDB repository.
 - **Wider evaluation**: more BEIR datasets with published baselines (NFCorpus, FiQA, ArguAna, SciDocs), the full
-  LongMemEval_S, and a multi-turn conversational set to measure follow-up rewriting.
+  LongMemEval_S, and a larger multi-turn set (Atlas-sized) to measure follow-up rewriting where retrieval is harder.

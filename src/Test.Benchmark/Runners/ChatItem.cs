@@ -55,6 +55,11 @@ namespace Test.Benchmark.Runners
         public string? Error { get; set; } = null;
 
         /// <summary>
+        /// The standalone form the server searched for a follow-up question, when it rewrote one.
+        /// </summary>
+        public string? StandaloneQuestion { get; set; } = null;
+
+        /// <summary>
         /// Client latency in milliseconds.
         /// </summary>
         public double LatencyMs { get; set; } = 0.0;

@@ -51,6 +51,12 @@ namespace Test.Benchmark.Datasets
         public string? Date { get; set; } = null;
 
         /// <summary>
+        /// Optional earlier messages, oldest first, for a follow-up question that only makes sense in context. The chat
+        /// command sends them as the request's history; retrieval commands search the question alone.
+        /// </summary>
+        public List<BenchmarkTurn>? History { get; set; } = null;
+
+        /// <summary>
         /// True when the corpus contains the answer.
         /// </summary>
         [JsonIgnore]

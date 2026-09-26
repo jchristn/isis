@@ -31,6 +31,12 @@ namespace Isis.Core.Models
         public string? Notice { get; set; } = null;
 
         /// <summary>
+        /// When the question was sent with earlier messages and rewritten for retrieval, the standalone form that was
+        /// searched alongside it; otherwise null.
+        /// </summary>
+        public string? StandaloneQuestion { get; set; } = null;
+
+        /// <summary>
         /// The inference model that produced the answer.
         /// </summary>
         public string? Model { get; set; } = null;

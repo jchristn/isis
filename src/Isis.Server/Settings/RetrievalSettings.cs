@@ -58,6 +58,30 @@ namespace Isis.Server.Settings
         public bool ChatQueryDecomposition { get; set; } = false;
 
         /// <summary>
+        /// Whether chat rewrites a question sent with earlier messages into a standalone query before retrieval.
+        /// Default true.
+        /// </summary>
+        public bool ChatConversationRewrite { get; set; } = true;
+
+        /// <summary>
+        /// How many of the most recent earlier messages chat uses to understand a follow-up. Minimum 1, maximum 20,
+        /// default 6 (three exchanges).
+        /// </summary>
+        /// <exception cref="ArgumentOutOfRangeException">Thrown when set outside [1, 20].</exception>
+        public int ChatHistoryTurns
+        {
+            get
+            {
+                return _ChatHistoryTurns;
+            }
+            set
+            {
+                if (value < 1 || value > 20) throw new ArgumentOutOfRangeException(nameof(ChatHistoryTurns), "ChatHistoryTurns must be between 1 and 20.");
+                _ChatHistoryTurns = value;
+            }
+        }
+
+        /// <summary>
         /// How many chunks of one memory are embedded at the same time. Minimum 1, maximum 32, default 4. Lower it for an
         /// embedding endpoint that accepts only a few concurrent requests.
         /// </summary>
@@ -100,6 +124,7 @@ namespace Isis.Server.Settings
         private double _DuplicateSimilarityThreshold = 0.85;
         private int _RerankPassageChars = 1200;
         private int _ChatLinkExpansion = 2;
+        private int _ChatHistoryTurns = 6;
         private int _EmbeddingParallelism = 4;
 
         #endregion

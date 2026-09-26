@@ -9,6 +9,7 @@ namespace Test.Benchmark
     using System.Text.Json.Nodes;
     using System.Threading;
     using System.Threading.Tasks;
+    using Test.Benchmark.Datasets;
 
     /// <summary>
     /// Minimal black-box REST client for the Isis API. It deliberately does not reference Isis assemblies, so the
@@ -319,10 +320,16 @@ namespace Test.Benchmark
         /// <param name="inferenceEndpointId">Inference endpoint id.</param>
         /// <param name="token">Cancellation token.</param>
         /// <returns>The parsed, timed response.</returns>
-        public async Task<ChatResponse> ChatAsync(string scopeId, string question, int topK, string inferenceEndpointId, CancellationToken token)
+        public async Task<ChatResponse> ChatAsync(string scopeId, string question, int topK, string inferenceEndpointId, CancellationToken token, List<BenchmarkTurn>? history = null)
         {
             JsonObject body = new JsonObject { ["question"] = question, ["inferenceEndpointId"] = inferenceEndpointId };
             if (topK > 0) body["topK"] = topK;
+            if (history != null && history.Count > 0)
+            {
+                JsonArray turns = new JsonArray();
+                foreach (BenchmarkTurn turn in history) turns.Add(new JsonObject { ["role"] = turn.Role, ["content"] = turn.Content });
+                body["history"] = turns;
+            }
             TimedCall call = await TimedSendAsync(HttpMethod.Post, TenantPath("/scopes/" + scopeId + "/chat"), body, token).ConfigureAwait(false);
             ChatResponse response = new ChatResponse { StatusCode = call.StatusCode, ElapsedMs = call.ElapsedMs };
             if (!call.IsSuccess)
@@ -334,6 +341,7 @@ namespace Test.Benchmark
             JsonNode? parsed = JsonNode.Parse(call.Body);
             response.Answer = parsed?["answer"]?.GetValue<string>() ?? string.Empty;
             response.RetrievalMode = parsed?["retrievalMode"]?.ToString() ?? string.Empty;
+            response.StandaloneQuestion = parsed?["standaloneQuestion"]?.GetValue<string>();
             response.TimeToFirstTokenMs = parsed?["timeToFirstTokenMs"]?.GetValue<double>() ?? 0.0;
             response.GenerationMs = parsed?["generationMs"]?.GetValue<double>() ?? 0.0;
             response.PromptTokens = parsed?["promptTokens"]?.GetValue<int>() ?? 0;

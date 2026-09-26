@@ -17,6 +17,12 @@ All notable changes to Isis are documented here. This project adheres to
   `decompose: true` has an inference endpoint split the question first, and the response lists the `queries` run
   (REST and MCP `memory_search`). Chat can decompose questions too (`retrieval.chatQueryDecomposition`), off by
   default because equal-weight decomposition lowered retrieval and answer accuracy on the benchmarks.
+- **Follow-up questions in chat.** Chat accepts `history`, the earlier messages of a conversation (REST, the MCP
+  `chat` tool, and the dashboard, which sends the last 6). The inference endpoint rewrites a follow-up into a
+  standalone query, retrieval searches both the question and the rewrite, the answer prompt shows the recent
+  conversation, and the response carries `standaloneQuestion` (`retrieval.chatConversationRewrite`, default true;
+  `retrieval.chatHistoryTurns`, default 6). A benchmark dataset of follow-up questions, `isis-live-followups`, and
+  `history` support in the harness's `chat` command measure it.
 - **Memory supersession.** An upsert can name the memories it replaces (`supersedes`, a list of slugs or ids). The
   server keeps `supersededBy` on each replaced memory (migration `2026-09-24-memory-supersession`). Search demotes a
   replaced memory to directly after its replacement by default (`superseded`: `Demote`, `Hide`, or `Include`),

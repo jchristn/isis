@@ -210,6 +210,29 @@ namespace Isis.McpServer
             return Uri.EscapeDataString(value);
         }
 
+        private static List<Dictionary<string, string>>? ChatHistory(RpcParameters? parameters)
+        {
+            // Accept a JSON array of { role, content } objects; entries without content are skipped.
+            string? raw = parameters?.RawJson;
+            if (string.IsNullOrEmpty(raw)) return null;
+
+            using JsonDocument document = JsonDocument.Parse(raw);
+            if (document.RootElement.ValueKind != JsonValueKind.Object || !document.RootElement.TryGetProperty("history", out JsonElement value)) return null;
+            if (value.ValueKind != JsonValueKind.Array) return null;
+
+            List<Dictionary<string, string>> result = new List<Dictionary<string, string>>();
+            foreach (JsonElement item in value.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object) continue;
+                string content = item.TryGetProperty("content", out JsonElement c) && c.ValueKind == JsonValueKind.String ? (c.GetString() ?? string.Empty) : string.Empty;
+                if (string.IsNullOrWhiteSpace(content)) continue;
+                string role = item.TryGetProperty("role", out JsonElement r) && r.ValueKind == JsonValueKind.String ? (r.GetString() ?? "user") : "user";
+                result.Add(new Dictionary<string, string> { { "role", role }, { "content", content } });
+            }
+
+            return result;
+        }
+
         private static List<string>? StringList(RpcParameters? parameters, string name)
         {
             // Accept a JSON array of strings, or a single comma-separated string from clients that flatten arrays.
@@ -695,8 +718,26 @@ namespace Isis.McpServer
 
             _Server.RegisterTool(
                 "chat",
-                "Ask a question answered from a scope's memory (retrieval-augmented). Required: tenantId, scopeId, question. Optional: topK (default 8), inferenceEndpointId. Returns the answer plus cited memory ids.",
-                new { type = "object", properties = new { tenantId = new { type = "string" }, scopeId = new { type = "string" }, question = new { type = "string" }, topK = new { type = "integer" }, inferenceEndpointId = new { type = "string" } }, required = new[] { "tenantId", "scopeId", "question" } },
+                "Ask a question answered from a scope's memory (retrieval-augmented). Required: tenantId, scopeId, question. Optional: topK (default 8), inferenceEndpointId, history. For a follow-up question, pass the earlier messages in history so the question is understood in context. Returns the answer plus cited memory ids.",
+                new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        tenantId = new { type = "string" },
+                        scopeId = new { type = "string" },
+                        question = new { type = "string" },
+                        topK = new { type = "integer" },
+                        inferenceEndpointId = new { type = "string" },
+                        history = new
+                        {
+                            type = "array",
+                            description = "Earlier messages in the conversation, oldest first. A follow-up question is rewritten into a standalone query for retrieval.",
+                            items = new { type = "object", properties = new { role = new { type = "string", @enum = new[] { "user", "assistant" } }, content = new { type = "string" } }, required = new[] { "role", "content" } }
+                        }
+                    },
+                    required = new[] { "tenantId", "scopeId", "question" }
+                },
                 async (RpcParameters? p, CancellationToken ct) =>
                 {
                     Dictionary<string, object?> body = new Dictionary<string, object?>();
@@ -704,6 +745,8 @@ namespace Isis.McpServer
                     long? topK = p?.GetInt64("topK");
                     if (topK.HasValue) body["topK"] = topK.Value;
                     if (p?.GetString("inferenceEndpointId") != null) body["inferenceEndpointId"] = p.GetString("inferenceEndpointId");
+                    List<Dictionary<string, string>>? history = ChatHistory(p);
+                    if (history != null && history.Count > 0) body["history"] = history;
                     string path = "/v1.0/api/tenants/" + Encode(Require(p, "tenantId")) + "/scopes/" + Encode(Require(p, "scopeId")) + "/chat";
                     return await ProxyAsync(HttpMethod.Post, path, JsonSerializer.Serialize(body), "chat", CurrentCredentials(), ct).ConfigureAwait(false);
                 });

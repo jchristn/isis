@@ -104,6 +104,8 @@ namespace Isis.Server
             _ChatService = new MemoryChatService(_MemoryService, _InferenceService);
             _ChatService.LinkExpansion = settings.Retrieval.ChatLinkExpansion;
             _ChatService.QueryDecomposition = settings.Retrieval.ChatQueryDecomposition;
+            _ChatService.ConversationRewrite = settings.Retrieval.ChatConversationRewrite;
+            _ChatService.Rewriter.MaxTurns = settings.Retrieval.ChatHistoryTurns;
             _RetentionService = new RetentionService(_Database, Settings.Retention, _Log);
 
             WebserverSettings webserverSettings = new WebserverSettings();

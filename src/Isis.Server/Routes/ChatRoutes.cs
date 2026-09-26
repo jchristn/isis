@@ -108,7 +108,7 @@ namespace Isis.Server.Routes
 
             try
             {
-                ChatAnswer answer = await _ChatService.AskAsync(scope, endpoint, request.Question, request.TopK, context.Token).ConfigureAwait(false);
+                ChatAnswer answer = await _ChatService.AskAsync(scope, endpoint, request.Question, request.TopK, context.Token, request.History).ConfigureAwait(false);
                 await RouteHelpers.JsonAsync(context, 200, answer).ConfigureAwait(false);
             }
             catch (NotSupportedException ex)
@@ -174,7 +174,7 @@ namespace Isis.Server.Routes
 
             try
             {
-                await _ChatService.AskStreamingAsync(scope, endpoint, request.Question, request.TopK, emit, context.Token).ConfigureAwait(false);
+                await _ChatService.AskStreamingAsync(scope, endpoint, request.Question, request.TopK, emit, context.Token, request.History).ConfigureAwait(false);
             }
             catch (Exception ex)
             {

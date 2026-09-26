@@ -312,6 +312,13 @@ function ChatView() {
     }
 
     if (!scopeId) return;
+
+    // Send the recent conversation so the server can understand a follow-up ("and for staging?").
+    const history = messages
+      .filter((m) => (m.role === 'user' && m.text) || (m.role === 'assistant' && m.done && m.answer))
+      .map((m) => ({ role: m.role, content: m.role === 'user' ? m.text : m.answer }))
+      .slice(-6);
+
     setError(null);
     setBusy(true);
     setQuestion('');
@@ -336,6 +343,7 @@ function ChatView() {
     try {
       const body = { question: q, topK: 8 };
       if (inferenceEndpointId) body.inferenceEndpointId = inferenceEndpointId;
+      if (history.length > 0) body.history = history;
       await apiClient.chatStream(activeTenant, scopeId, body, {
         signal: controller.signal,
         onEvent: (evt) => {
@@ -386,7 +394,7 @@ function ChatView() {
       setBusy(false);
       abortRef.current = null;
     }
-  }, [question, busy, scopeId, apiClient, activeTenant, inferenceEndpointId, patchLast, runSlashCommand, t]);
+  }, [question, busy, scopeId, messages, apiClient, activeTenant, inferenceEndpointId, patchLast, runSlashCommand, t]);
 
   return (
     <>

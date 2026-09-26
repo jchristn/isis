@@ -49,6 +49,7 @@ cannot answer, which is how abstention is tested.
 | `datasets/atlas.json` | yes | 170 memories, 260 questions | A synthetic agent-memory corpus for a fictional logistics company, adding superseded facts (an old and a newer memory), confusable near-duplicates, and long documents |
 | SciFact (BEIR) | downloaded | 5,183 abstracts, 300 queries | Scientific claim retrieval, useful as a sanity check against published numbers for the embedding model |
 | LongMemEval-S | downloaded | 60 of 500 questions (stratified) | Multi-session chat memory with seven question types; every question has its own haystack of about 50 sessions |
+| `datasets/isis-live-followups.json` | yes | 24 memories, 32 questions | Follow-up questions over the isis-live memories that only make sense after the previous exchange, which each question carries as `history`: pronoun references ("does it compute the embeddings itself?") and topic shifts ("what about the dashboard?"). For the `chat` command; it measures conversation-aware query rewriting |
 
 The two committed datasets were built for this suite. Both question sets were written with LLM assistance and then
 checked against the corpus. For Atlas, the questions were written by a separate pass that had not written the corpus,

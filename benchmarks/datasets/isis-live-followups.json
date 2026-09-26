@@ -1,0 +1,840 @@
+{
+  "name": "isis-live-followups",
+  "description": "Follow-up questions over the isis-live memories that only make sense after the previous exchange (pronoun references and topic shifts). Each question carries the earlier turn as history. Used to measure conversation-aware query rewriting in chat.",
+  "corpora": [
+    {
+      "id": "isis-live-followups",
+      "categories": [
+        {
+          "name": "architecture",
+          "description": "System components, storage and retrieval design, data model, auth, model endpoints, instructions, observability, and the MCP/REST surface."
+        },
+        {
+          "name": "conventions",
+          "description": "Code-style rules and implementation patterns to follow when changing the codebase."
+        },
+        {
+          "name": "workflows",
+          "description": "How to build, test, lint, and verify the server and dashboard."
+        },
+        {
+          "name": "roadmap",
+          "description": "Fix history verified on the live instance, invariants to preserve, and planned future work."
+        }
+      ],
+      "documents": [
+        {
+          "id": "platform-overview",
+          "category": "architecture",
+          "title": "Isis platform: components and layering",
+          "summary": "Multi-tenant .NET 10 platform: REST server (Watson), MCP server (Voltaic), Core library, React dashboard.",
+          "body": "Isis is a multi-tenant .NET 10 agent-memory platform (C#) at C:\\Code\\AgentMemory; solution src/Isis.sln.\n\nComponents:\n- Isis.Server — REST API on Watson (webserver). Owns routes (Isis.Server/Routes), services (Isis.Server/Services: MemoryService, TenantLifecycleService, MemoryChatService, RetentionService, DefaultSeeder, authentication/authorization), and observability.\n- Isis.McpServer — MCP server on Voltaic that proxies the REST API so agents (Claude, Codex, Cursor, Gemini, Mux) get the same surface. See [[mcp-rest-parity]].\n- Isis.Core — shared library: models, enums, the provider-neutral DAL ([[provider-neutral-dal]]), memory stores ([[pluggable-memory-stores]]), and recall/embedding services (Isis.Core.Recall: EmbeddingService, InferenceService, MemoryChunker).\n- dashboard — React 19 + Vite admin UI.\n- Test.Shared / Test.Automated — Touchstone test suites ([[test-harness-structure]]).\n\nRecallDB ([[recalldb-system-of-record]]) is the default store for content and embeddings; the Isis relational DB holds the atomic index rows and metadata ([[data-model]])."
+        },
+        {
+          "id": "recalldb-system-of-record",
+          "category": "architecture",
+          "title": "RecallDB is the system of record for memory content",
+          "summary": "RecallDB (Postgres+pgvector) holds content, embeddings, and retrieval; Isis is bring-your-own-vector.",
+          "body": "RecallDB is the system of record for memory content, embeddings, and retrieval (Postgres + pgvector, via RecallDb.Sdk). It is bring-your-own-vector: it never computes embeddings. Isis computes embeddings itself through a configured, health-checked embedding endpoint ([[model-endpoints]]) and passes the float vector to RecallDB on write, and the query vector on search. Entity mapping: Isis Tenant → RecallDB tenant; Scope → collection (fixed embedding dimension); Category → a label on documents; Memory → one or more DocumentRecords ([[chunking-and-rrf]]). The Isis relational DB ([[provider-neutral-dal]]) owns the index rows (slug, title, salience, links, storeKey) and the full atomic body; RecallDB owns the retrievable/embedded copy."
+        },
+        {
+          "id": "pluggable-memory-stores",
+          "category": "architecture",
+          "title": "IMemoryStore: pluggable retrieval backends",
+          "summary": "RecallDb (semantic/hybrid), Filesystem (keyword, git-trackable), Verbex (keyword, not wired).",
+          "body": "Retrieval is pluggable via Isis.Core.Stores.IMemoryStore; a scope's StoreProvider picks the backend, built by MemoryStoreFactory. Providers: RecallDbMemoryStore (default; vector+full-text+hybrid; RequiresEmbedding — see [[recalldb-system-of-record]], [[chunking-and-rrf]]); FilesystemMemoryStore (flat files: SingleFile/Hierarchy/OkfBundle; keyword only; git-trackable); VerbexMemoryStore (keyword/TF-IDF; not wired — throws NotSupported). Interface: EnsureScopeAsync, UpsertAsync(scope, memory, chunks), DeleteAsync, DeleteScopeAsync, DeleteTenantAsync ([[cascade-invariant]]), SearchAsync; capabilities via StoreCapabilities."
+        },
+        {
+          "id": "provider-neutral-dal",
+          "category": "architecture",
+          "title": "Provider-neutral DAL: one portable implementation, four drivers",
+          "summary": "DatabaseDriverBase + factory over Sqlite/Postgres/MySQL/SqlServer; shared impl in Sqlite/Implementations.",
+          "body": "Isis's own metadata DB is provider-neutral: DatabaseDriverBase + DatabaseDriverFactory over four drivers — Sqlite (default), Postgresql, Mysql, SqlServer. Key convention: there is ONE shared, portable set of DAL method implementations in src/Isis.Core/Database/Sqlite/Implementations (ScopeMethods, MemoryIndexMethods, ModelEndpointMethods, etc.) that ALL four drivers reuse. Provider differences live only in each provider's Queries/ folder (DDL + pagination dialect) and connection handling. So a schema/column change usually means: edit the shared Implementation once, then edit each provider's Setup DDL. See [[versioned-migrations]] for changes the create-only DDL can't express."
+        },
+        {
+          "id": "data-model",
+          "category": "architecture",
+          "title": "Core data model and id prefixes",
+          "summary": "Tenant → Scope → Category → Memory; plus ModelEndpoint, Instruction, Credential/User/Session.",
+          "body": "Tenant owns everything. Within a tenant: Scope (a memory space; ten_/scp_ ids) maps to one store + fixed embedding dimension. Category (cat_) groups memories within a scope and carries authoring instructions. Memory (mem_) is one atomic fact: slug (unique within scope+category), title, summary, body, tags, links (slug graph), salience, provenance, StoreKey (join key into the store). Also tenant-scoped: ModelEndpoint (eep_/iep_) ([[model-endpoints]]), Instruction ([[scoped-instructions]]), Credential/User/AuthSession ([[auth-model]]), Permission, RequestHistory, OperationEvent ([[observability]]). Memory upsert is idempotent on (scope, category, slug): re-writing a slug updates in place and bumps Version."
+        },
+        {
+          "id": "chunking-and-rrf",
+          "category": "architecture",
+          "title": "Oversized memories: chunk on overflow, RRF rollup to one hit",
+          "summary": "Body over the embed budget splits into child docs (parentKey tag + ordinal); search fuses by RRF, one hit per memory.",
+          "body": "A memory body over the embedding model's token budget is split into ordinal chunks (TextChunker, local token counting — no model call). MemoryChunker in Isis.Core.Recall resolves the budget from the scope's embedding endpoint, reserves the BERT WordPiece framing tokens, then MemoryService embeds each chunk.\n\nStorage in RecallDB: a single chunk keeps the document key equal to the memory id (backward-compatible); multiple chunks are keyed by memory id plus ordinal, all sharing the slug as document id, plus a parent-key tag and the ordinal as position. Upsert first deletes existing docs for the memory so a re-chunk never orphans stale chunks; delete removes the id-keyed doc and probes ordinals until absent.\n\nRetrieval: hybrid search runs a vector-only and a full-text-only query, fuses them by reciprocal rank at the chunk level, then rolls chunks up by parent keeping the best-scoring chunk per memory — one hit per memory. It fetches well beyond topK before rollup since chunks collapse.\n\nConfig per scope: chunking mode (on-overflow default), strategy (fixed-token-count default; boundary strategies over-emit), max tokens, and overlap; plus the endpoint max-input-tokens override. See [[model-endpoints]], [[deploy-chunking-and-minilm-budget]]."
+        },
+        {
+          "id": "auth-model",
+          "category": "architecture",
+          "title": "Auth: access key alone is a bearer capability token",
+          "summary": "Access key authenticates by itself; secret optional; MCP sends Bearer access key; no x-api-key.",
+          "body": "Isis authenticates either by email/password session or by credential. The ACCESS KEY alone authenticates — it is the public, transferable material, treated as a least-privilege capability token. The secret key is optional on the wire (validated if sent, so a wrong secret is rejected) and never has to leave the client. MCP callers connect with the access key as a bearer token (Authorization: Bearer <accessKey>; x-access-key also accepted). There is no x-api-key. A credential resolves to its owner's tenant and inherits IsAdmin/IsTenantAdmin. See [[data-model]]."
+        },
+        {
+          "id": "versioned-migrations",
+          "category": "architecture",
+          "title": "Versioned schema migrations framework",
+          "summary": "ISchemaMigration + MigrationRunner; create tables → migrations → indices; recorded in schemamigrations.",
+          "body": "Schema changes the create-only DDL can't express run through an ordered, provider-neutral framework: ISchemaMigration + MigrationRunner (src/Isis.Core/Database). Applied names are recorded in a schemamigrations table and skipped if present. Startup order matters: create tables → run migrations → create indices, so an index never references a column a pending migration hasn't added yet. Each migration is data-preserving and idempotent on an already-current schema (it probes for the new column, no-ops if present, else rebuilds the table and reinserts). Append new migrations to the end of the registry; never reorder/rename shipped ones. See [[provider-neutral-dal]]."
+        },
+        {
+          "id": "model-endpoints",
+          "category": "architecture",
+          "title": "Model endpoints: base URL + generic auth",
+          "summary": "Endpoints use BaseUrl + EndpointAuthTypeEnum; PolyPrompt; MaxInputTokens sizes the chunk budget.",
+          "body": "Embedding and inference endpoints (ModelEndpoint) are addressed by a full BaseUrl onto which the API-format path is appended (no separate host/port/ssl). Outbound auth is generic via EndpointAuthTypeEnum: None, BearerToken, ApiKeyHeader, QueryParam, BasicAuth, AccessKeySecret — Isis applies it (uses PolyPrompt for inference). Embedding endpoints also have Dimensionality and MaxInputTokens (0 = resolve the chunk budget automatically from API format + model name; set it to the model's real context when the library doesn't know it). ApiFormatEnum: Ollama, OpenAI, VLlm, Gemini. Endpoints are health-checked. See [[chunking-and-rrf]], [[recalldb-system-of-record]]."
+        },
+        {
+          "id": "scoped-instructions",
+          "category": "architecture",
+          "title": "Instructions: tenant-global + scope-specific with merge",
+          "summary": "Instructions can be tenant-global or scope-specific; per-item merge Append/Replace/Hide; InstructionResolver.",
+          "body": "Instructions are the standing guidance an agent should follow in a tenant/scope. They are either tenant-global (managed at .../instructions) or scope-specific (.../scopes/{id}/instructions). A scope instruction carries a mergeMode matched to a global by name: Append (add), Replace (override a same-named global's content), or Hide (suppress a same-named global). A pure InstructionResolver merges them; GET .../scopes/{id}/effective-instructions returns the merged, source-annotated result. Over MCP the instructions tool takes an optional scopeId. See [[data-model]]."
+        },
+        {
+          "id": "observability",
+          "category": "architecture",
+          "title": "Observability: operation events + unified retention pruner",
+          "summary": "operation_events feed via central path classification; OpenTelemetry; unified retention pruner covers request_history too.",
+          "body": "Isis captures an operation_events feed built from central path classification (OperationClassifier maps method+path → resourceType/operation/ids), plus request_history of traffic (health excluded) and OpenTelemetry metrics/traces (IsisTelemetry). A unified retention pruner (RetentionService) trims aged rows across the observability tables — including request_history, which is why it too is pruned. The dashboard has an Operations view over this. See [[data-model]]."
+        },
+        {
+          "id": "mcp-rest-parity",
+          "category": "architecture",
+          "title": "MCP tool surface mirrors the REST API",
+          "summary": "MCP proxies REST at parity (~32 tools); admin surfaces stay REST/dashboard-only; keep MCP_API.md in sync.",
+          "body": "Isis.McpServer proxies the REST API and is kept at parity with it: scope/category/memory/endpoint/collection/instruction CRUD, endpoint health, and chat-with-memory (~32 tools), each forwarding to its REST route with the same body fields. Admin-only surfaces (tenant/user/credential management, settings, session login, raw observability feeds) stay REST/dashboard-only by design. NOTE: parity is code-complete on main but the deployed MCP may lag — this rebuild found the live MCP exposes only create/enumerate/read + memory delete (no scope_delete/category_delete yet). Invariant: when the REST surface changes, update the MCP tools, add tools/list parity tests, update docs/MCP_API.md. See [[platform-overview]], [[test-harness-structure]]."
+        },
+        {
+          "id": "no-fully-qualified-types",
+          "category": "conventions",
+          "title": "Use usings, not inline fully-qualified type names",
+          "summary": "Add a using and write the short type name; don't write System.Collections.Generic.List<...> inline.",
+          "body": "Convention (owner-stated, repeated): do NOT use fully-qualified type names inline. Add a using directive and write the short name.\nWhy: matches the surrounding code style and keeps signatures readable.\nHow to apply: e.g. write List<ModelEndpoint> with usings for System.Collections.Generic and Isis.Core.Models, never System.Collections.Generic.List<Isis.Core.Models.ModelEndpoint>. See [[code-layout-regions-and-docs]]."
+        },
+        {
+          "id": "code-layout-regions-and-docs",
+          "category": "conventions",
+          "title": "File layout: regions + XML doc comments on all public members",
+          "summary": "Types use #region blocks (Public-Members, Private-Members, Constructors, Public/Private-Methods) and full XML docs.",
+          "body": "Types are organized with #region blocks in a consistent order: Public-Members, Private-Members, Constructors-and-Factories, Public-Methods, Private-Methods. Every public type and member gets an XML doc comment (GenerateDocumentationFile is on, so undocumented publics warn). Match the neighboring file's comment density and idiom. When adding a member, place it in the matching region and document it. See [[no-fully-qualified-types]]."
+        },
+        {
+          "id": "guarded-model-setters",
+          "category": "conventions",
+          "title": "Model properties guard invalid values in setters",
+          "summary": "Required strings reject null/empty; numeric fields reject negatives; via backing fields.",
+          "body": "Domain model properties validate in their setters rather than trusting callers. Required identity/string fields (Id, TenantId, Name, Slug, Body) throw ArgumentNullException on null/empty; numeric budgets (Dimensionality, MaxInputTokens, ChunkMaxTokens, ChunkOverlapTokens) throw ArgumentOutOfRangeException on negatives; bounded values clamp (Salience 0..1). Implemented with private backing fields (e.g. _MaxInputTokens). Follow this when adding model fields. See [[data-model]]."
+        },
+        {
+          "id": "adding-a-persisted-field",
+          "category": "conventions",
+          "title": "How to add a persisted field across the DAL",
+          "summary": "Model + shared Implementation INSERT/UPDATE/FromRow + all 4 provider DDLs + a migration for existing DBs.",
+          "body": "Adding a persisted column touches a predictable set: (1) the model property (guarded setter, [[guarded-model-setters]]); (2) the shared DAL Implementation in Sqlite/Implementations — INSERT, UPDATE, and FromRow mapping; (3) each provider's Setup DDL (Sqlite/Mysql/SqlServer/Postgres Queries) with a sane DEFAULT; (4) a versioned migration ([[versioned-migrations]]) so already-deployed DBs pick it up. Then wire the REST/MCP body and dashboard form if user-facing. See [[provider-neutral-dal]]."
+        },
+        {
+          "id": "best-effort-teardown",
+          "category": "conventions",
+          "title": "Store teardown is best-effort during cascades",
+          "summary": "DeleteScope/DeleteTenant swallow provider \"not found\", rethrow genuine errors, so cascades aren't blocked.",
+          "body": "External-store teardown methods (IMemoryStore.DeleteScopeAsync, DeleteTenantAsync) are best-effort: they catch the provider's own \"missing/failed drop\" exception (e.g. RecallDbException) so a missing collection/tenant never blocks a cascade, but rethrow genuine/transport errors so real failures surface. Unconfigured stores return early (no throw) rather than failing the cascade. Keep this pattern for any new teardown. See [[cascade-invariant]], [[pluggable-memory-stores]]."
+        },
+        {
+          "id": "build-and-test",
+          "category": "workflows",
+          "title": "Build and run the test suite",
+          "summary": "dotnet build src/Isis.sln -c Release; run Test.Automated; expect all Touchstone cases PASS.",
+          "body": "Build: `dotnet build src/Isis.sln -c Release` (the solution is at src/Isis.sln, not repo root). Test: `dotnet run --project src/Test.Automated -c Release` — runs the Touchstone suites and prints per-case PASS/FAIL and an OVERALL line with Total/Passed/Failed. Green = 0 failed (346 cases as of 2026-09-23). Live-DB cases (Postgres/MySQL/SqlServer) are skipped unless Docker is available. See [[test-harness-structure]]."
+        },
+        {
+          "id": "dashboard-lint-build",
+          "category": "workflows",
+          "title": "Lint and build the dashboard",
+          "summary": "cd dashboard; npm run lint; npm run build. Single English i18n catalog in resources.js.",
+          "body": "Dashboard (React 19 + Vite) lives in dashboard/. Verify UI changes with `npm run lint` then `npm run build` from that folder. Both must be clean (the ~500 kB chunk-size warning is pre-existing). i18n has a single English source catalog in dashboard/src/i18n/resources.js (the pseudo-locale is generated); add new UI strings there as t() keys. Enum option lists live in dashboard/src/utils/constants.js. Reusable DataTable supports multi-select via selectable/getRowId/bulkActions. See [[platform-overview]]."
+        },
+        {
+          "id": "test-harness-structure",
+          "category": "workflows",
+          "title": "Touchstone test harness structure",
+          "summary": "Suites in Test.Shared registered by IsisSuites.GetSuites(); TempSqlite + ServerHarness helpers; stub HTTP handlers.",
+          "body": "Tests use the Touchstone framework. Suites live in src/Test.Shared (StoreSuite, ServiceSuite, ChunkerSuite, RestSuite, McpSuite, DatabaseSuite, AuthSuite, ModelSuite, InstallSuite) and are registered in IsisSuites.GetSuites(); Test.Automated is the runner. Patterns: TempSqlite for a throwaway DB, ServerHarness.StartAsync for an in-process REST server, StubResponseHandler to fake embedding/inference HTTP, and TestCase.Require/ThrowsAsync for assertions. Add a suite to the GetSuites() list to include it. See [[build-and-test]], [[mcp-rest-parity]]."
+        },
+        {
+          "id": "deploy-chunking-and-minilm-budget",
+          "category": "roadmap",
+          "title": "all-minilm budget: fixed via TextChunker 0.2.2 (live confirmed)",
+          "summary": "0.2.2 resolves all-minilm to 254 usable + reserves BERT specials; verified live via a 300-token auto-budget upsert. Endpoint left at auto.",
+          "body": "History: all-minilm's real context is 256, but TextChunker 0.2.0 resolved it to the 512 BERT ceiling, so oversized memories were rejected (\"input length exceeds the context length\"). Fixed by upgrading to TextChunker 0.2.2, which pre-configures real per-model budgets (all-minilm 256, effective 254 after reserving the 2 BERT [CLS]/[SEP] tokens; ProfileSource=KnownModel). MemoryChunker also keeps a shortfall-aware special-token reserve as a backstop. Verified on the LIVE instance 2026-09-23: with the endpoint MaxInputTokens set to 0 (auto), a ~300-token memory upserted successfully — proof the deployed build resolves ≤256 and chunks (a 512-budget build would have rejected it). The endpoint override is therefore no longer needed and was left at 0/auto. See [[chunking-and-rrf]], [[model-endpoints]]."
+        },
+        {
+          "id": "cascade-invariant",
+          "category": "roadmap",
+          "title": "Delete cascades: scope and tenant tear down external state",
+          "summary": "Scope delete drops its collection/files + index rows; tenant delete also drops the RecallDB tenant.",
+          "body": "Invariant to preserve: deleting a scope tears down its external store content (RecallDB collection — all chunk docs — or filesystem tree) then its memories, categories, scope-instructions, and the scope row. Deleting a tenant runs that scope cascade for every scope, then drops the tenant-level RecallDB tenant container (via IMemoryStore.DeleteTenantAsync + MemoryService.DeleteTenantStoreAsync), then all tenant-scoped DB records. Scope delete must NOT drop the RecallDB tenant (shared across scopes). Dropping a scope is also the way to purge orphaned chunk docs, since it drops the whole collection. See [[best-effort-teardown]], [[pluggable-memory-stores]]."
+        },
+        {
+          "id": "deployed-delete-orphans-chunks",
+          "category": "roadmap",
+          "title": "Chunk delete orphan bug ('#' in key) - fixed via URL-safe '-c' separator",
+          "summary": "Was {id}#{ordinal} + SDK no URL-encode -> orphans on delete. Fixed with '-c' separator; verified clean on live 2026-09-23.",
+          "body": "Chunk DocumentKey was {memoryId}#{ordinal}; RecallDbClient builds delete/exists URLs without URL-encoding, so '#' (a URL fragment) truncated the path and multi-chunk memory deletes, category cascades, and re-upserts orphaned chunk docs. Fixed in RecallDbMemoryStore.ChunkDocumentKey with a URL-safe '-c' separator, plus a StoreSuite regression test. Verified on the updated live build 2026-09-23: multi-chunk memory delete, category-cascade delete, and long-memory (~5k token) delete all leave zero residue; scope delete drops the collection. Recommended upstream: RecallDbClient should URL-encode document keys. See [[chunking-and-rrf]], [[cascade-invariant]]."
+        },
+        {
+          "id": "next-work",
+          "category": "roadmap",
+          "title": "Planned next work",
+          "summary": "Scope summaries, OKF export, MemoryLink graph, living-memory salience/dedup/compaction (needs 2 policy decisions).",
+          "body": "Agreed future work beyond what's shipped: (1) scope summaries — a configurable model/frequency to summarize a scope; (2) OKF export of a scope; (3) MemoryLink graph over the slug links memories already carry; (4) living-memory hygiene: salience decay, dedup, and compaction — this one still needs two policy decisions from the owner before implementing. Native chunking ([[chunking-and-rrf]]) and the tenant cascade fix ([[cascade-invariant]]) are already done. Dashboard multi-select bulk delete for scopes/categories/memories was added 2026-09-23."
+        }
+      ],
+      "queries": [
+        {
+          "id": "f001",
+          "text": "Does it compute the embeddings itself?",
+          "type": "pronoun",
+          "relevant": [
+            "recalldb-system-of-record"
+          ],
+          "category": null,
+          "answer": "No. RecallDB is bring-your-own-vector and never computes embeddings; Isis computes them through its embedding endpoint and passes the vectors in.",
+          "history": [
+            {
+              "role": "user",
+              "content": "Where does Isis store memory content?"
+            },
+            {
+              "role": "assistant",
+              "content": "In RecallDB (Postgres + pgvector), the system of record [recalldb-system-of-record]."
+            }
+          ]
+        },
+        {
+          "id": "f002",
+          "text": "Which of those can I keep in git?",
+          "type": "pronoun",
+          "relevant": [
+            "pluggable-memory-stores"
+          ],
+          "category": null,
+          "answer": "The FilesystemMemoryStore (flat files, git-trackable).",
+          "history": [
+            {
+              "role": "user",
+              "content": "What memory store backends does Isis support?"
+            },
+            {
+              "role": "assistant",
+              "content": "RecallDB (the default), a filesystem store, and Verbex [pluggable-memory-stores]."
+            }
+          ]
+        },
+        {
+          "id": "f003",
+          "text": "Can I use it today?",
+          "type": "pronoun",
+          "relevant": [
+            "pluggable-memory-stores"
+          ],
+          "category": null,
+          "answer": "No. It is not wired and throws NotSupported.",
+          "history": [
+            {
+              "role": "user",
+              "content": "Tell me about the Verbex store."
+            },
+            {
+              "role": "assistant",
+              "content": "VerbexMemoryStore is a keyword/TF-IDF backend [pluggable-memory-stores]."
+            }
+          ]
+        },
+        {
+          "id": "f004",
+          "text": "Which four?",
+          "type": "pronoun",
+          "relevant": [
+            "provider-neutral-dal"
+          ],
+          "category": null,
+          "answer": "Sqlite (default), Postgresql, Mysql, and SqlServer.",
+          "history": [
+            {
+              "role": "user",
+              "content": "How does Isis support different databases for its own metadata?"
+            },
+            {
+              "role": "assistant",
+              "content": "Through a provider-neutral DAL with four drivers [provider-neutral-dal]."
+            }
+          ]
+        },
+        {
+          "id": "f005",
+          "text": "And when the create-only DDL can't express the change?",
+          "type": "shift",
+          "relevant": [
+            "versioned-migrations"
+          ],
+          "category": null,
+          "answer": "Use a versioned migration (ISchemaMigration run by MigrationRunner), recorded in the schemamigrations table.",
+          "history": [
+            {
+              "role": "user",
+              "content": "How does Isis support different databases for its own metadata?"
+            },
+            {
+              "role": "assistant",
+              "content": "Through a provider-neutral DAL; a schema change usually means editing the shared implementation and each provider's DDL [provider-neutral-dal]."
+            }
+          ]
+        },
+        {
+          "id": "f006",
+          "text": "Can I reorder the existing ones?",
+          "type": "pronoun",
+          "relevant": [
+            "versioned-migrations"
+          ],
+          "category": null,
+          "answer": "No. Append new migrations to the end of the registry; never reorder or rename shipped ones.",
+          "history": [
+            {
+              "role": "user",
+              "content": "How do schema migrations work in Isis?"
+            },
+            {
+              "role": "assistant",
+              "content": "Through ISchemaMigration and MigrationRunner; applied names are recorded in schemamigrations [versioned-migrations]."
+            }
+          ]
+        },
+        {
+          "id": "f007",
+          "text": "Do they have to send the secret too?",
+          "type": "pronoun",
+          "relevant": [
+            "auth-model"
+          ],
+          "category": null,
+          "answer": "No. The secret is optional on the wire; it is validated only if sent.",
+          "history": [
+            {
+              "role": "user",
+              "content": "How do MCP clients authenticate to Isis?"
+            },
+            {
+              "role": "assistant",
+              "content": "With the access key as a bearer token [auth-model]."
+            }
+          ]
+        },
+        {
+          "id": "f008",
+          "text": "Is there an API key header for that as well?",
+          "type": "pronoun",
+          "relevant": [
+            "auth-model"
+          ],
+          "category": null,
+          "answer": "There is no x-api-key; x-access-key is accepted as an alternative to the bearer header.",
+          "history": [
+            {
+              "role": "user",
+              "content": "How do MCP clients authenticate to Isis?"
+            },
+            {
+              "role": "assistant",
+              "content": "With the access key as a bearer token [auth-model]."
+            }
+          ]
+        },
+        {
+          "id": "f009",
+          "text": "What kinds of outbound auth do they support?",
+          "type": "pronoun",
+          "relevant": [
+            "model-endpoints"
+          ],
+          "category": null,
+          "answer": "None, BearerToken, ApiKeyHeader, QueryParam, BasicAuth, and AccessKeySecret.",
+          "history": [
+            {
+              "role": "user",
+              "content": "How are model endpoints addressed?"
+            },
+            {
+              "role": "assistant",
+              "content": "By a full BaseUrl that the API-format path is appended to [model-endpoints]."
+            }
+          ]
+        },
+        {
+          "id": "f010",
+          "text": "What does setting that last one to 0 do?",
+          "type": "pronoun",
+          "relevant": [
+            "model-endpoints"
+          ],
+          "category": null,
+          "answer": "MaxInputTokens 0 resolves the chunk budget automatically from the API format and model name.",
+          "history": [
+            {
+              "role": "user",
+              "content": "How are embedding endpoints configured?"
+            },
+            {
+              "role": "assistant",
+              "content": "With a BaseUrl, Dimensionality, and MaxInputTokens [model-endpoints]."
+            }
+          ]
+        },
+        {
+          "id": "f011",
+          "text": "How are those keyed in RecallDB?",
+          "type": "pronoun",
+          "relevant": [
+            "chunking-and-rrf",
+            "deployed-delete-orphans-chunks"
+          ],
+          "category": null,
+          "answer": "A single chunk keeps the memory id as its key; multiple chunks are keyed by memory id plus ordinal (with a URL-safe '-c' separator), share the slug as document id, and carry a parent-key tag.",
+          "history": [
+            {
+              "role": "user",
+              "content": "What happens when a memory is too long for the embedding model?"
+            },
+            {
+              "role": "assistant",
+              "content": "It is split into ordinal chunks [chunking-and-rrf]."
+            }
+          ]
+        },
+        {
+          "id": "f012",
+          "text": "Was there ever a bug with deleting them?",
+          "type": "shift",
+          "relevant": [
+            "deployed-delete-orphans-chunks"
+          ],
+          "category": null,
+          "answer": "Yes. Keys used '#' as the separator, which truncated delete URLs and orphaned chunks; it was fixed with a URL-safe '-c' separator.",
+          "history": [
+            {
+              "role": "user",
+              "content": "What happens when a memory is too long for the embedding model?"
+            },
+            {
+              "role": "assistant",
+              "content": "It is split into ordinal chunks keyed by memory id plus ordinal [chunking-and-rrf]."
+            }
+          ]
+        },
+        {
+          "id": "f013",
+          "text": "What went wrong with it originally?",
+          "type": "pronoun",
+          "relevant": [
+            "deploy-chunking-and-minilm-budget"
+          ],
+          "category": null,
+          "answer": "TextChunker 0.2.0 resolved it to 512 tokens, so oversized memories were rejected; TextChunker 0.2.2 fixed the budget.",
+          "history": [
+            {
+              "role": "user",
+              "content": "What is the context length of all-minilm?"
+            },
+            {
+              "role": "assistant",
+              "content": "256 tokens, 254 usable after the BERT framing tokens [deploy-chunking-and-minilm-budget]."
+            }
+          ]
+        },
+        {
+          "id": "f014",
+          "text": "What merge modes do the scope ones have?",
+          "type": "pronoun",
+          "relevant": [
+            "scoped-instructions"
+          ],
+          "category": null,
+          "answer": "Append, Replace, and Hide.",
+          "history": [
+            {
+              "role": "user",
+              "content": "How do instructions work in Isis?"
+            },
+            {
+              "role": "assistant",
+              "content": "They are tenant-global or scope-specific [scoped-instructions]."
+            }
+          ]
+        },
+        {
+          "id": "f015",
+          "text": "How do I see the merged result for one scope?",
+          "type": "pronoun",
+          "relevant": [
+            "scoped-instructions"
+          ],
+          "category": null,
+          "answer": "GET .../scopes/{id}/effective-instructions returns the merged, source-annotated result.",
+          "history": [
+            {
+              "role": "user",
+              "content": "How do instructions work in Isis?"
+            },
+            {
+              "role": "assistant",
+              "content": "They are tenant-global or scope-specific, merged by name [scoped-instructions]."
+            }
+          ]
+        },
+        {
+          "id": "f016",
+          "text": "Why does the second one get pruned?",
+          "type": "pronoun",
+          "relevant": [
+            "observability"
+          ],
+          "category": null,
+          "answer": "A unified retention pruner (RetentionService) trims aged rows across all observability tables, including request_history.",
+          "history": [
+            {
+              "role": "user",
+              "content": "What observability does Isis have?"
+            },
+            {
+              "role": "assistant",
+              "content": "An operation_events feed, request_history, and OpenTelemetry metrics and traces [observability]."
+            }
+          ]
+        },
+        {
+          "id": "f017",
+          "text": "Which surfaces does it leave out on purpose?",
+          "type": "pronoun",
+          "relevant": [
+            "mcp-rest-parity"
+          ],
+          "category": null,
+          "answer": "Admin-only surfaces: tenant, user, and credential management, settings, session login, and raw observability feeds.",
+          "history": [
+            {
+              "role": "user",
+              "content": "Is the MCP server at parity with the REST API?"
+            },
+            {
+              "role": "assistant",
+              "content": "Yes, it proxies the REST API with the same body fields [mcp-rest-parity]."
+            }
+          ]
+        },
+        {
+          "id": "f018",
+          "text": "So what do I need to update when I change a REST route?",
+          "type": "pronoun",
+          "relevant": [
+            "mcp-rest-parity"
+          ],
+          "category": null,
+          "answer": "Update the MCP tools, add tools/list parity tests, and update docs/MCP_API.md.",
+          "history": [
+            {
+              "role": "user",
+              "content": "Is the MCP server at parity with the REST API?"
+            },
+            {
+              "role": "assistant",
+              "content": "Yes, it proxies the REST API [mcp-rest-parity]."
+            }
+          ]
+        },
+        {
+          "id": "f019",
+          "text": "And run its tests?",
+          "type": "pronoun",
+          "relevant": [
+            "build-and-test"
+          ],
+          "category": null,
+          "answer": "dotnet run --project src/Test.Automated -c Release.",
+          "history": [
+            {
+              "role": "user",
+              "content": "How do I build the Isis solution?"
+            },
+            {
+              "role": "assistant",
+              "content": "dotnet build src/Isis.sln -c Release [build-and-test]."
+            }
+          ]
+        },
+        {
+          "id": "f020",
+          "text": "What about the dashboard?",
+          "type": "shift",
+          "relevant": [
+            "dashboard-lint-build"
+          ],
+          "category": null,
+          "answer": "From dashboard/, run npm run lint and then npm run build.",
+          "history": [
+            {
+              "role": "user",
+              "content": "How do I build the Isis solution?"
+            },
+            {
+              "role": "assistant",
+              "content": "dotnet build src/Isis.sln -c Release [build-and-test]."
+            }
+          ]
+        },
+        {
+          "id": "f021",
+          "text": "Where do new UI strings go there?",
+          "type": "pronoun",
+          "relevant": [
+            "dashboard-lint-build"
+          ],
+          "category": null,
+          "answer": "In dashboard/src/i18n/resources.js, as t() keys.",
+          "history": [
+            {
+              "role": "user",
+              "content": "How do I verify dashboard changes?"
+            },
+            {
+              "role": "assistant",
+              "content": "Run npm run lint then npm run build in dashboard/ [dashboard-lint-build]."
+            }
+          ]
+        },
+        {
+          "id": "f022",
+          "text": "How do I fake an inference endpoint in it?",
+          "type": "pronoun",
+          "relevant": [
+            "test-harness-structure"
+          ],
+          "category": null,
+          "answer": "Use StubResponseHandler to fake embedding and inference HTTP.",
+          "history": [
+            {
+              "role": "user",
+              "content": "What test framework does Isis use?"
+            },
+            {
+              "role": "assistant",
+              "content": "Touchstone [test-harness-structure]."
+            }
+          ]
+        },
+        {
+          "id": "f023",
+          "text": "How do I get a throwaway database in those tests?",
+          "type": "pronoun",
+          "relevant": [
+            "test-harness-structure"
+          ],
+          "category": null,
+          "answer": "TempSqlite.",
+          "history": [
+            {
+              "role": "user",
+              "content": "What test framework does Isis use?"
+            },
+            {
+              "role": "assistant",
+              "content": "Touchstone, with suites in src/Test.Shared [test-harness-structure]."
+            }
+          ]
+        },
+        {
+          "id": "f024",
+          "text": "Does it drop the RecallDB tenant as well?",
+          "type": "pronoun",
+          "relevant": [
+            "cascade-invariant"
+          ],
+          "category": null,
+          "answer": "No. Only a tenant delete drops the RecallDB tenant, which is shared across scopes.",
+          "history": [
+            {
+              "role": "user",
+              "content": "What does deleting a scope do?"
+            },
+            {
+              "role": "assistant",
+              "content": "It tears down the store content, then memories, categories, scope instructions, and the scope row [cascade-invariant]."
+            }
+          ]
+        },
+        {
+          "id": "f025",
+          "text": "What if the store's collection is already gone by then?",
+          "type": "shift",
+          "relevant": [
+            "best-effort-teardown"
+          ],
+          "category": null,
+          "answer": "Teardown is best-effort: a missing or failed drop is caught so the cascade continues, while transport errors are rethrown.",
+          "history": [
+            {
+              "role": "user",
+              "content": "What does deleting a scope do?"
+            },
+            {
+              "role": "assistant",
+              "content": "It tears down the store content, then memories, categories, scope instructions, and the scope row [cascade-invariant]."
+            }
+          ]
+        },
+        {
+          "id": "f026",
+          "text": "And how should a file be laid out?",
+          "type": "shift",
+          "relevant": [
+            "code-layout-regions-and-docs"
+          ],
+          "category": null,
+          "answer": "In #region blocks in a fixed order, with an XML doc comment on every public type and member.",
+          "history": [
+            {
+              "role": "user",
+              "content": "What is the convention for type names in code?"
+            },
+            {
+              "role": "assistant",
+              "content": "Add a using directive and use the short name, never a fully-qualified name inline [no-fully-qualified-types]."
+            }
+          ]
+        },
+        {
+          "id": "f027",
+          "text": "What order do those go in?",
+          "type": "pronoun",
+          "relevant": [
+            "code-layout-regions-and-docs"
+          ],
+          "category": null,
+          "answer": "Public-Members, Private-Members, Constructors-and-Factories, Public-Methods, Private-Methods.",
+          "history": [
+            {
+              "role": "user",
+              "content": "How should a C# file be laid out in Isis?"
+            },
+            {
+              "role": "assistant",
+              "content": "In #region blocks with XML docs on public members [code-layout-regions-and-docs]."
+            }
+          ]
+        },
+        {
+          "id": "f028",
+          "text": "What happens if I give it a negative Dimensionality?",
+          "type": "pronoun",
+          "relevant": [
+            "guarded-model-setters"
+          ],
+          "category": null,
+          "answer": "The setter throws ArgumentOutOfRangeException.",
+          "history": [
+            {
+              "role": "user",
+              "content": "How should model properties handle bad values?"
+            },
+            {
+              "role": "assistant",
+              "content": "They validate in their setters [guarded-model-setters]."
+            }
+          ]
+        },
+        {
+          "id": "f029",
+          "text": "What else do I touch when that property is a new persisted field?",
+          "type": "shift",
+          "relevant": [
+            "adding-a-persisted-field"
+          ],
+          "category": null,
+          "answer": "The shared DAL implementation (INSERT, UPDATE, FromRow), each provider's Setup DDL with a default, a versioned migration, and the REST/MCP body and dashboard form if user-facing.",
+          "history": [
+            {
+              "role": "user",
+              "content": "How should model properties handle bad values?"
+            },
+            {
+              "role": "assistant",
+              "content": "They validate in their setters with private backing fields [guarded-model-setters]."
+            }
+          ]
+        },
+        {
+          "id": "f030",
+          "text": "Which of those still needs decisions from the owner?",
+          "type": "pronoun",
+          "relevant": [
+            "next-work"
+          ],
+          "category": null,
+          "answer": "Living-memory hygiene (salience decay, dedup, compaction) needs two policy decisions.",
+          "history": [
+            {
+              "role": "user",
+              "content": "What work is planned next for Isis?"
+            },
+            {
+              "role": "assistant",
+              "content": "Scope summaries, OKF export, a MemoryLink graph, and living-memory hygiene [next-work]."
+            }
+          ]
+        },
+        {
+          "id": "f031",
+          "text": "Is writing the last one idempotent?",
+          "type": "pronoun",
+          "relevant": [
+            "data-model"
+          ],
+          "category": null,
+          "answer": "Yes. Memory upsert is idempotent on (scope, category, slug); re-writing a slug updates in place.",
+          "history": [
+            {
+              "role": "user",
+              "content": "What are the core entities in the Isis data model?"
+            },
+            {
+              "role": "assistant",
+              "content": "Tenant, Scope, Category, and Memory [data-model]."
+            }
+          ]
+        },
+        {
+          "id": "f032",
+          "text": "and categories?",
+          "type": "pronoun",
+          "relevant": [
+            "data-model"
+          ],
+          "category": null,
+          "answer": "cat_.",
+          "history": [
+            {
+              "role": "user",
+              "content": "What id prefix do scopes use?"
+            },
+            {
+              "role": "assistant",
+              "content": "scp_ [data-model]."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

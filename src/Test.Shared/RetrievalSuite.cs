@@ -57,6 +57,7 @@ namespace Test.Shared
                     TestCase.Async("retrieval", "search-min-score-filters", "Search: MinScore drops hits scoring below it", SearchMinScoreFiltersAsync),
                     TestCase.Async("retrieval", "chat-default-topk", "Chat: requests default to the server's retrieval depth (8) and DefaultTopK is validated", ChatDefaultTopKAsync),
                     TestCase.Async("retrieval", "chat-prompt-strict", "Chat: the system prompt forbids unstated facts and requires a not-in-memory answer", ChatPromptStrictAsync),
+                    TestCase.Async("retrieval", "chat-history-prompt", "Chat: earlier messages appear in the answer prompt; keyword stores skip the rewrite call", ChatHistoryPromptAsync),
                     TestCase.Sync("retrieval", "instructions-update-not-duplicate", "Default instructions tell agents to update a changed fact instead of adding a duplicate", InstructionsUpdateNotDuplicate),
                     TestCase.Sync("retrieval", "sanitizer-replaces-lone-surrogates", "TextSanitizer replaces unpaired surrogates and keeps valid pairs", SanitizerReplacesLoneSurrogates),
                     TestCase.Async("retrieval", "upsert-with-lone-surrogate", "A memory containing an unpaired surrogate is stored (replaced with U+FFFD) instead of failing", UpsertWithLoneSurrogateAsync),
@@ -331,6 +332,37 @@ namespace Test.Shared
             TestCase.Require(chat.DefaultTopK == 8, "MemoryChatService.DefaultTopK should default to 8.");
             TestCase.Throws<ArgumentOutOfRangeException>(() => chat.DefaultTopK = 0, "DefaultTopK 0 should be rejected.");
             TestCase.Throws<ArgumentOutOfRangeException>(() => chat.DefaultTopK = 101, "DefaultTopK above 100 should be rejected.");
+        }
+
+        private static async Task ChatHistoryPromptAsync()
+        {
+            using TempSqlite t = await TempSqlite.CreateAsync().ConfigureAwait(false);
+            FilesystemFixture fixture = await FilesystemFixtureAsync(t).ConfigureAwait(false);
+            try
+            {
+                await fixture.Service.UpsertAsync(fixture.Scope, fixture.Category, new Memory { Slug = "db", Title = "Database", Body = "Production Postgres listens on 5432; staging on 6432." }).ConfigureAwait(false);
+
+                string chatJson = JsonSerializer.Serialize(new { choices = new[] { new { message = new { role = "assistant", content = "6432 [db]" } } } });
+                using StubResponseHandler handler = new StubResponseHandler(chatJson);
+                InferenceService inference = new InferenceService(handler);
+                ModelEndpoint endpoint = new ModelEndpoint { TenantId = fixture.Scope.TenantId, Name = "chat", Kind = EndpointKindEnum.Inference, ApiFormat = ApiFormatEnum.OpenAI, BaseUrl = "http://127.0.0.1:9999" };
+                MemoryChatService chat = new MemoryChatService(fixture.Service, inference);
+                List<ChatTurn> history = new List<ChatTurn>
+                {
+                    new ChatTurn { Role = "user", Content = "What port does production Postgres use?" },
+                    new ChatTurn { Role = "assistant", Content = "5432 [db]" }
+                };
+                ChatAnswer answer = await chat.AskAsync(fixture.Scope, endpoint, "and staging?", 0, default, history).ConfigureAwait(false);
+
+                string sent = handler.LastRequestBody ?? string.Empty;
+                TestCase.Require(sent.Contains("Conversation so far:", StringComparison.Ordinal) && sent.Contains("User: What port does production Postgres use?", StringComparison.Ordinal), "The answer prompt should show the earlier messages.");
+                TestCase.Require(sent.Contains("Question: and staging?", StringComparison.Ordinal), "The answer prompt should keep the question as asked.");
+                TestCase.Require(handler.RequestCount == 1 && answer.StandaloneQuestion == null, "A keyword store is given every memory, so no rewrite call should be made.");
+            }
+            finally
+            {
+                DeleteWork(fixture.Work);
+            }
         }
 
         private static async Task ChatPromptStrictAsync()

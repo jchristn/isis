@@ -94,7 +94,11 @@ namespace Test.Shared
                     TestCase.Sync("refinement", "query-fusion-defaults", "MemorySearchQuery: TextWeight and RrfK default to null (model profile) and clamp", QueryFusionDefaults),
                     TestCase.Async("refinement", "rerank-circuit-breaker", "Search: after a rerank failure the endpoint is skipped for the cooldown", RerankCircuitBreakerAsync),
                     TestCase.Async("refinement", "seed-rerank-endpoint", "DefaultSeeder seeds a Rerank endpoint only when configured and reachable", SeedRerankEndpointAsync),
-                    TestCase.Sync("refinement", "chunk-defaults-validate", "Chunker: DefaultChunkFraction and DefaultChunkMaxTokens validate", ChunkDefaultsValidate)
+                    TestCase.Sync("refinement", "chunk-defaults-validate", "Chunker: DefaultChunkFraction and DefaultChunkMaxTokens validate", ChunkDefaultsValidate),
+                    TestCase.Sync("refinement", "conversation-rewrite-parse", "ConversationRewriter.Parse reads one query line and rejects echoes and answers", ConversationRewriteParse),
+                    TestCase.Sync("refinement", "conversation-format", "ConversationRewriter.FormatConversation keeps the newest turns, truncates, and labels roles", ConversationFormat),
+                    TestCase.Async("refinement", "conversation-rewrite-call", "ConversationRewriter sends the conversation and returns the standalone query; no history, no call", ConversationRewriteCallAsync),
+                    TestCase.Sync("refinement", "conversation-rewrite-settings", "RetrievalSettings: chat conversation rewrite on by default, history turns validate", ConversationRewriteSettings)
                 });
         }
 
@@ -890,6 +894,58 @@ namespace Test.Shared
             {
                 DeleteWork(f.Work);
             }
+        }
+
+        private static void ConversationRewriteParse()
+        {
+            TestCase.Require(ConversationRewriter.Parse("Who owns the billing service?", "and who owns that?") == "Who owns the billing service?", "A plain reply should be the query.");
+            TestCase.Require(ConversationRewriter.Parse("<think>they mean billing</think>\n\nStandalone query: \"Who owns the billing service?\"\nextra", "who owns it?") == "Who owns the billing service?", "Thinking, a label, quotes, and later lines should be removed.");
+            TestCase.Require(ConversationRewriter.Parse("What port does Postgres use?", "what port does postgres use?") == null, "A reply that repeats the message should yield no rewrite.");
+            TestCase.Require(ConversationRewriter.Parse(new string('x', 400), "and staging?") == null, "A reply far longer than a query should be treated as an answer and ignored.");
+            TestCase.Require(ConversationRewriter.Parse(null, "q") == null && ConversationRewriter.Parse("  \n ", "q") == null, "Empty replies should yield no rewrite.");
+        }
+
+        private static void ConversationFormat()
+        {
+            List<ChatTurn> history = new List<ChatTurn>();
+            for (int i = 1; i <= 8; i++) history.Add(new ChatTurn { Role = i % 2 == 1 ? "user" : "assistant", Content = "message " + i });
+            history.Add(new ChatTurn { Role = "ASSISTANT", Content = "   " });
+            history.Add(new ChatTurn { Role = "tool", Content = new string('y', 150) });
+            string text = ConversationRewriter.FormatConversation(history, 3, 100);
+            string[] lines = text.TrimEnd('\n').Split('\n');
+            TestCase.Require(lines.Length == 3, "The newest 3 non-empty turns should be kept, got " + lines.Length + ".");
+            TestCase.Require(lines[0] == "User: message 7" && lines[1] == "Assistant: message 8", "Turns should stay oldest first with roles labelled, got: " + text);
+            TestCase.Require(lines[2] == "User: " + new string('y', 100) + "...", "An unknown role should read as User and long content should be truncated.");
+            TestCase.Require(ConversationRewriter.FormatConversation(null, 6, 1000) == string.Empty && ConversationRewriter.FormatConversation(new List<ChatTurn>(), 6, 1000) == string.Empty, "No history should format as empty.");
+        }
+
+        private static async Task ConversationRewriteCallAsync()
+        {
+            string reply = JsonSerializer.Serialize(new { choices = new[] { new { message = new { role = "assistant", content = "Who owns the billing service?" } } } });
+            using StubResponseHandler handler = new StubResponseHandler(reply);
+            ConversationRewriter rewriter = new ConversationRewriter(new InferenceService(handler));
+            ModelEndpoint endpoint = new ModelEndpoint { Name = "i", Kind = EndpointKindEnum.Inference, ApiFormat = ApiFormatEnum.OpenAI, BaseUrl = "http://127.0.0.1:9", Model = "m" };
+
+            string? none = await rewriter.RewriteAsync(endpoint, null, "and who owns that?").ConfigureAwait(false);
+            TestCase.Require(none == null && handler.RequestCount == 0, "Without history the model should not be called.");
+
+            List<ChatTurn> history = new List<ChatTurn>
+            {
+                new ChatTurn { Role = "user", Content = "Tell me about the billing service." },
+                new ChatTurn { Role = "assistant", Content = "Billing handles invoices [billing-service]." }
+            };
+            string? rewritten = await rewriter.RewriteAsync(endpoint, history, "and who owns that?").ConfigureAwait(false);
+            TestCase.Require(rewritten == "Who owns the billing service?", "The model's standalone query should be returned, got " + (rewritten ?? "null") + ".");
+            string sent = handler.LastRequestBody ?? string.Empty;
+            TestCase.Require(sent.Contains("User: Tell me about the billing service.", StringComparison.Ordinal) && sent.Contains("Latest message: and who owns that?", StringComparison.Ordinal), "The prompt should carry the conversation and the latest message.");
+            TestCase.Throws<ArgumentOutOfRangeException>(() => rewriter.MaxTurns = 0, "MaxTurns below 1 should be rejected.");
+        }
+
+        private static void ConversationRewriteSettings()
+        {
+            Isis.Server.Settings.RetrievalSettings settings = new Isis.Server.Settings.RetrievalSettings();
+            TestCase.Require(settings.ChatConversationRewrite && settings.ChatHistoryTurns == 6, "Chat conversation rewrite should default on with 6 turns.");
+            TestCase.Throws<ArgumentOutOfRangeException>(() => settings.ChatHistoryTurns = 21, "ChatHistoryTurns above 20 should be rejected.");
         }
 
         private static void ModelProfiles()

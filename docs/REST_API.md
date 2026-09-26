@@ -328,11 +328,21 @@ hold the reranker's score (0..1 for TEI and Cohere-compatible rerankers). Hits a
 (the slug of the memory that replaces this one, null when current), and `linkedFrom` (the slug of the result that
 brought this memory in by link expansion or as a replacement, null for directly retrieved memories).
 
-Chat (`POST …/scopes/{scopeId}/chat`) takes `{ "question": "…", "topK": 0, "inferenceEndpointId": "…" }`. A `topK` of 0
-(the default) retrieves the server's default number of memories, 8. Chat follows up to 2 links from the retrieved
-memories (server setting `retrieval.chatLinkExpansion`), tells the model which memories are outdated, and, when the
-scope's reranker rejects every candidate, grounds the answer on no memories so the model says the answer is not in
-memory.
+Chat (`POST …/scopes/{scopeId}/chat`) takes `{ "question": "…", "topK": 0, "inferenceEndpointId": "…", "history": null }`.
+A `topK` of 0 (the default) retrieves the server's default number of memories, 8. Chat follows up to 2 links from the
+retrieved memories (server setting `retrieval.chatLinkExpansion`), tells the model which memories are outdated, and,
+when the scope's reranker rejects every candidate, grounds the answer on no memories so the model says the answer is
+not in memory.
+
+Chat keeps no conversation state. To ask a follow-up, send the earlier messages in `history`, oldest first, as
+`[{ "role": "user", "content": "…" }, { "role": "assistant", "content": "…" }]`. The server uses the most recent 6
+(`retrieval.chatHistoryTurns`, 1 to 20; each message is cut to 1,000 characters). The inference endpoint first
+rewrites a follow-up such as "and for staging?" into a standalone query, and retrieval searches both the question as
+sent and the rewrite, so the memories the follow-up is about are found while exact terms in the question still count.
+The answer prompt shows the recent conversation. The response's `standaloneQuestion` (also on the stream's
+`retrieval` and `complete` events) is the rewrite that was searched, or null when there was no history, the question
+already stood alone, or the rewrite failed. Set `retrieval.chatConversationRewrite` to false to skip the rewrite call;
+the history is still shown to the model. Keyword-only scopes, which ground chat on every memory, skip it too.
 
 ### Instructions (tenant-scoped)
 

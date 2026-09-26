@@ -119,7 +119,7 @@ method is answered with an empty result (`{}`) and needs no credentials.
 | `endpoint_update` | `PUT .../endpoints/{eid}` | Update a model endpoint |
 | `endpoint_delete` | `DELETE .../endpoints/{eid}` | Delete a model endpoint |
 | `endpoint_health` | `GET .../endpoint-health` | Probe and return endpoint health |
-| `chat` | `POST .../scopes/{sid}/chat` | Ask a question answered from a scope's memory (RAG); returns answer + citations |
+| `chat` | `POST .../scopes/{sid}/chat` | Ask a question answered from a scope's memory (RAG); returns answer + citations. Optional `history` (earlier `{ role, content }` messages, oldest first) lets a follow-up question be understood in context |
 | `collection_enumerate` | `GET .../collections` | List the RecallDB collections backing scopes |
 | `collection_read` | `GET .../collections/{cid}` | Read a RecallDB collection by id |
 | `collection_create` | `POST .../collections` | Create a RecallDB collection directly |

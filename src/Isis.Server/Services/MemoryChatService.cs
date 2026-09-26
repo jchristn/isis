@@ -65,6 +65,25 @@ namespace Isis.Server.Services
         /// </summary>
         public bool QueryDecomposition { get; set; } = false;
 
+        /// <summary>
+        /// Whether a question sent with earlier messages is rewritten into a standalone query before retrieval, so a
+        /// follow-up such as "and for staging?" finds the memories it is about. Retrieval searches both the question as
+        /// sent and the rewrite, and the answer prompt shows the recent conversation. Costs one short inference call
+        /// per question that has history; questions without history are unaffected. Default true.
+        /// </summary>
+        public bool ConversationRewrite { get; set; } = true;
+
+        /// <summary>
+        /// The rewriter used for follow-up questions; its settings bound how much conversation is used.
+        /// </summary>
+        public ConversationRewriter Rewriter
+        {
+            get
+            {
+                return _Rewriter;
+            }
+        }
+
         #endregion
 
         #region Private-Members
@@ -72,6 +91,7 @@ namespace Isis.Server.Services
         private int _DefaultTopK = 8;
         private int _LinkExpansion = 2;
         private readonly QueryDecomposer _Decomposer;
+        private readonly ConversationRewriter _Rewriter;
 
         private readonly MemoryService _MemoryService;
         private readonly InferenceService _InferenceService;
@@ -91,6 +111,7 @@ namespace Isis.Server.Services
             _MemoryService = memoryService ?? throw new ArgumentNullException(nameof(memoryService));
             _InferenceService = inferenceService ?? throw new ArgumentNullException(nameof(inferenceService));
             _Decomposer = new QueryDecomposer(_InferenceService);
+            _Rewriter = new ConversationRewriter(_InferenceService);
         }
 
         #endregion
@@ -105,9 +126,10 @@ namespace Isis.Server.Services
         /// <param name="question">The user's question.</param>
         /// <param name="topK">The maximum number of memories to retrieve.</param>
         /// <param name="token">Cancellation token.</param>
+        /// <param name="history">Earlier messages in the conversation, oldest first, or null.</param>
         /// <returns>The grounded answer with citations.</returns>
         /// <exception cref="ArgumentNullException">Thrown when a required argument is null.</exception>
-        public async Task<ChatAnswer> AskAsync(Scope scope, ModelEndpoint inferenceEndpoint, string question, int topK, CancellationToken token = default)
+        public async Task<ChatAnswer> AskAsync(Scope scope, ModelEndpoint inferenceEndpoint, string question, int topK, CancellationToken token = default, List<ChatTurn>? history = null)
         {
             if (scope == null) throw new ArgumentNullException(nameof(scope));
             if (inferenceEndpoint == null) throw new ArgumentNullException(nameof(inferenceEndpoint));
@@ -121,15 +143,16 @@ namespace Isis.Server.Services
 
             try
             {
-                ContextResult ctx = await BuildContextAsync(scope, inferenceEndpoint, question, topK, token).ConfigureAwait(false);
+                ContextResult ctx = await BuildContextAsync(scope, inferenceEndpoint, question, history, topK, token).ConfigureAwait(false);
                 IsisTelemetry.ChatContextMemories.Record(ctx.Count, new TagList { { IsisTelemetry.TagStreaming, false } });
 
                 ChatAnswer answer = new ChatAnswer();
                 answer.RetrievalMode = ctx.Mode;
                 answer.Notice = ctx.Notice;
+                answer.StandaloneQuestion = ctx.StandaloneQuestion;
                 answer.Citations.AddRange(ctx.Citations);
 
-                string userPrompt = BuildUserPrompt(question, ctx.ContextText);
+                string userPrompt = BuildUserPrompt(question, ctx.ContextText, FormatHistory(history), ctx.StandaloneQuestion);
                 answer.Answer = await _InferenceService.CompleteAsync(inferenceEndpoint, _SystemPrompt, userPrompt, token).ConfigureAwait(false);
                 return answer;
             }
@@ -159,8 +182,9 @@ namespace Isis.Server.Services
         /// <param name="topK">The maximum number of memories to retrieve.</param>
         /// <param name="emit">Callback invoked with each event object.</param>
         /// <param name="token">Cancellation token.</param>
+        /// <param name="history">Earlier messages in the conversation, oldest first, or null.</param>
         /// <exception cref="ArgumentNullException">Thrown when a required argument is null.</exception>
-        public async Task AskStreamingAsync(Scope scope, ModelEndpoint inferenceEndpoint, string question, int topK, Func<object, CancellationToken, Task> emit, CancellationToken token = default)
+        public async Task AskStreamingAsync(Scope scope, ModelEndpoint inferenceEndpoint, string question, int topK, Func<object, CancellationToken, Task> emit, CancellationToken token = default, List<ChatTurn>? history = null)
         {
             if (scope == null) throw new ArgumentNullException(nameof(scope));
             if (inferenceEndpoint == null) throw new ArgumentNullException(nameof(inferenceEndpoint));
@@ -175,16 +199,16 @@ namespace Isis.Server.Services
 
             try
             {
-            ContextResult ctx = await BuildContextAsync(scope, inferenceEndpoint, question, topK, token).ConfigureAwait(false);
+            ContextResult ctx = await BuildContextAsync(scope, inferenceEndpoint, question, history, topK, token).ConfigureAwait(false);
             IsisTelemetry.ChatContextMemories.Record(ctx.Count, new TagList { { IsisTelemetry.TagStreaming, true } });
 
             List<ChatCitation> citations = ctx.Citations;
             string? notice = ctx.Notice;
 
-            await emit(new { type = "retrieval", mode = ctx.ModeLabel, hits = ctx.HitPayloads, notice = notice }, token).ConfigureAwait(false);
+            await emit(new { type = "retrieval", mode = ctx.ModeLabel, hits = ctx.HitPayloads, notice = notice, standaloneQuestion = ctx.StandaloneQuestion }, token).ConfigureAwait(false);
 
             string systemPrompt = _SystemPrompt;
-            string userPrompt = BuildUserPrompt(question, ctx.ContextText);
+            string userPrompt = BuildUserPrompt(question, ctx.ContextText, FormatHistory(history), ctx.StandaloneQuestion);
 
             StringBuilder answerBuilder = new StringBuilder();
             Stopwatch stopwatch = Stopwatch.StartNew();
@@ -273,6 +297,7 @@ namespace Isis.Server.Services
                 citations = citations,
                 retrievalMode = ctx.ModeLabel,
                 notice = notice,
+                standaloneQuestion = ctx.StandaloneQuestion,
                 model = inferenceEndpoint.Model,
                 promptTokens = promptTokens,
                 completionTokens = completionTokens,
@@ -310,9 +335,19 @@ namespace Isis.Server.Services
             "If the memories do not state the answer, say plainly that it is not in memory, and mention what related information they do contain, if any. " +
             "If the user asks what memories exist, or asks for an overview or summary, summarize the provided memories; do not claim you have none when memories are listed below.";
 
-        private static string BuildUserPrompt(string question, string contextText)
+        private static string BuildUserPrompt(string question, string contextText, string conversation, string? standaloneQuestion)
         {
-            return "Question: " + question + "\n\nMemories:\n" + (string.IsNullOrEmpty(contextText) ? "(none)" : contextText);
+            StringBuilder sb = new StringBuilder();
+            if (!string.IsNullOrEmpty(conversation)) sb.Append("Conversation so far:\n").Append(conversation).Append('\n');
+            sb.Append("Question: ").Append(question);
+            if (!string.IsNullOrEmpty(standaloneQuestion)) sb.Append("\n(In context, this asks: ").Append(standaloneQuestion).Append(')');
+            sb.Append("\n\nMemories:\n").Append(string.IsNullOrEmpty(contextText) ? "(none)" : contextText);
+            return sb.ToString();
+        }
+
+        private string FormatHistory(List<ChatTurn>? history)
+        {
+            return ConversationRewriter.FormatConversation(history, _Rewriter.MaxTurns, _Rewriter.MaxTurnChars);
         }
 
         /// <summary>
@@ -326,7 +361,7 @@ namespace Isis.Server.Services
         /// matches nothing, fall back to the same top-down overview.</item>
         /// </list>
         /// </summary>
-        private async Task<ContextResult> BuildContextAsync(Scope scope, ModelEndpoint inferenceEndpoint, string question, int topK, CancellationToken token)
+        private async Task<ContextResult> BuildContextAsync(Scope scope, ModelEndpoint inferenceEndpoint, string question, List<ChatTurn>? history, int topK, CancellationToken token)
         {
             StoreCapabilities capabilities = _MemoryService.GetCapabilities(scope);
             if (!capabilities.SupportsSemantic)
@@ -342,11 +377,27 @@ namespace Isis.Server.Services
             // typical memory and the relevant region of a long one. A 240-character snippet hid any answer that was
             // not in a memory's opening sentence.
             MemorySearchQuery query = new MemorySearchQuery { QueryText = question, Mode = SearchModeEnum.Hybrid, TopK = k, TokenBudget = _ContextCharsPerMemory, LinkExpansion = _LinkExpansion };
+
+            // A follow-up is searched both as sent and as a standalone rewrite: the rewrite finds what the follow-up is
+            // about, and the original keeps any exact terms the rewrite might have dropped.
+            string? standalone = null;
+            if (ConversationRewrite && history != null && history.Count > 0)
+            {
+                standalone = await _Rewriter.RewriteAsync(inferenceEndpoint, history, question, token).ConfigureAwait(false);
+                if (standalone != null) query.AdditionalQueries = new List<string> { standalone };
+            }
+
             if (QueryDecomposition)
             {
-                List<string> parts = await _Decomposer.DecomposeAsync(inferenceEndpoint, question, token).ConfigureAwait(false);
-                if (parts.Count > 0) query.AdditionalQueries = parts;
+                List<string> parts = await _Decomposer.DecomposeAsync(inferenceEndpoint, standalone ?? question, token).ConfigureAwait(false);
+                if (parts.Count > 0)
+                {
+                    List<string> additional = query.AdditionalQueries ?? new List<string>();
+                    additional.AddRange(parts);
+                    query.AdditionalQueries = additional;
+                }
             }
+
             MemorySearchResult retrieval = await _MemoryService.SearchAsync(scope, query, token).ConfigureAwait(false);
 
             if (retrieval.Hits.Count == 0)
@@ -360,14 +411,17 @@ namespace Isis.Server.Services
                         Mode = retrieval.EffectiveMode,
                         ModeLabel = retrieval.EffectiveMode.ToString(),
                         ContextText = "(none)",
-                        Notice = "No memory passed the relevance threshold."
+                        Notice = "No memory passed the relevance threshold.",
+                        StandaloneQuestion = standalone
                     };
                 }
 
-                return await BuildOverviewContextAsync(scope, "No memory directly matched the question; listing the scope's memories.", token).ConfigureAwait(false);
+                ContextResult overview = await BuildOverviewContextAsync(scope, "No memory directly matched the question; listing the scope's memories.", token).ConfigureAwait(false);
+                overview.StandaloneQuestion = standalone;
+                return overview;
             }
 
-            ContextResult ctx = new ContextResult { Mode = retrieval.EffectiveMode, ModeLabel = retrieval.EffectiveMode.ToString(), Notice = retrieval.Notice };
+            ContextResult ctx = new ContextResult { Mode = retrieval.EffectiveMode, ModeLabel = retrieval.EffectiveMode.ToString(), Notice = retrieval.Notice, StandaloneQuestion = standalone };
             StringBuilder sb = new StringBuilder();
             foreach (MemorySearchHit hit in retrieval.Hits)
             {
@@ -486,6 +540,7 @@ namespace Isis.Server.Services
             public SearchModeEnum Mode { get; set; } = SearchModeEnum.Keyword;
             public string ModeLabel { get; set; } = string.Empty;
             public string? Notice { get; set; } = null;
+            public string? StandaloneQuestion { get; set; } = null;
             public int Count { get; set; } = 0;
         }
 

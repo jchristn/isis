@@ -136,7 +136,7 @@ namespace Test.Benchmark.Runners
         private async Task<ChatItem> AskAsync(ProvisionedScope scope, BenchmarkQuery query, int topK, string inferenceId, JudgeClient? judge, CancellationToken token)
         {
             string question = string.IsNullOrEmpty(query.Date) ? query.Text : "(Current date: " + query.Date + ") " + query.Text;
-            ChatResponse response = await _Context.Client.ChatAsync(scope.ScopeId, question, topK, inferenceId, token).ConfigureAwait(false);
+            ChatResponse response = await _Context.Client.ChatAsync(scope.ScopeId, question, topK, inferenceId, token, query.History).ConfigureAwait(false);
 
             ChatItem item = new ChatItem
             {
@@ -149,7 +149,8 @@ namespace Test.Benchmark.Runners
                 LatencyMs = Math.Round(response.ElapsedMs, 1),
                 Relevant = new List<string>(query.Relevant),
                 Retrieved = response.RetrievedSlugs,
-                Error = response.Error
+                Error = response.Error,
+                StandaloneQuestion = response.StandaloneQuestion
             };
 
             if (!response.IsSuccess) return item;
