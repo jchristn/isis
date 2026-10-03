@@ -47,6 +47,7 @@ namespace Test.Shared
                     TestCase.Async("refinement", "scope-rerank-round-trip", "Scope rerank settings persist through the database", ScopeRerankRoundTripAsync),
                     TestCase.Async("refinement", "rerank-endpoint-prefix", "A legacy Rerank endpoint is stored as Inference and its rep_ id stays valid", RerankEndpointPrefixAsync),
                     TestCase.Async("refinement", "migration-008-rerank-kind", "Migration 008 turns Rerank endpoints into Inference, and VLlm rerankers into Cohere", Migration008Async),
+                    TestCase.Sync("refinement", "model-client-factory", "ModelClientFactory: each API format gets its PolyPrompt completion or rerank client", ModelClientFactoryClients),
                     TestCase.Sync("refinement", "format-capabilities", "ApiFormatCapabilities: chat formats chat and rerank by prompt, cross-encoders only rerank", FormatCapabilities),
                     TestCase.Async("refinement", "migration-005-adds-columns", "Migration 005 adds the supersession columns to an older memories table", Migration005AddsColumnsAsync),
                     TestCase.Async("refinement", "migration-006-adds-columns", "Migration 006 adds the rerank columns to an older scopes table", Migration006AddsColumnsAsync),
@@ -66,7 +67,7 @@ namespace Test.Shared
                     TestCase.Sync("refinement", "diversify-demotes-near-duplicate", "Diversity moves a near-duplicate below a distinct result", DiversifyDemotesNearDuplicate),
                     TestCase.Sync("refinement", "diversify-validates", "Diversify rejects out-of-range arguments", DiversifyValidates),
                     TestCase.Async("refinement", "rerank-tei-request-and-order", "RerankService (Tei): posts query and texts to /rerank and maps scores back to input order", RerankTeiAsync),
-                    TestCase.Async("refinement", "rerank-cohere-request-and-order", "RerankService (Cohere): posts to /v1/rerank and reads relevance_score", RerankCohereAsync),
+                    TestCase.Async("refinement", "rerank-cohere-request-and-order", "RerankService (Cohere): posts to /v2/rerank and reads relevance_score", RerankCohereAsync),
                     TestCase.Async("refinement", "rerank-chat-ollama", "RerankService (chat model, Ollama): prompts once and maps 0-10 scores to 0-1", RerankChatOllamaAsync),
                     TestCase.Async("refinement", "session-start-instructions-migration", "Migration: unedited seeded Start here and Tools instructions move to the session_start text; edited ones are kept", SessionStartInstructionsMigrationAsync),
                     TestCase.Async("refinement", "endpoint-reasoning", "Endpoint reasoning setting: sent on rerank, chat, and query-step calls; Default sends none", EndpointReasoningAsync),
@@ -325,6 +326,40 @@ namespace Test.Shared
             TestCase.Require(vllmRead != null && vllmRead.Kind == EndpointKindEnum.Inference && vllmRead.ApiFormat == ApiFormatEnum.Cohere, "A VLlm reranker called the Cohere-compatible API, so it should become Cohere.");
             EnumerationResult<ModelEndpoint> legacy = await t.Db.ModelEndpoints.EnumerateAsync(tenant.Id, EndpointKindEnum.Rerank, new EnumerationQuery { MaxResults = 10 }).ConfigureAwait(false);
             TestCase.Require(legacy.Objects.Count == 0, "No Rerank-kind rows should remain.");
+        }
+
+        private static void ModelClientFactoryClients()
+        {
+            using StubResponseHandler handler = new StubResponseHandler("{}");
+            Dictionary<ApiFormatEnum, Type> completion = new Dictionary<ApiFormatEnum, Type>
+            {
+                { ApiFormatEnum.Ollama, typeof(PolyPrompt.Clients.OllamaCompletionClient) },
+                { ApiFormatEnum.OpenAI, typeof(PolyPrompt.Clients.OpenAiCompletionClient) },
+                { ApiFormatEnum.VLlm, typeof(PolyPrompt.Clients.OpenAiCompletionClient) },
+                { ApiFormatEnum.Gemini, typeof(PolyPrompt.Clients.GeminiCompletionClient) },
+                { ApiFormatEnum.Cohere, typeof(PolyPrompt.Clients.CohereCompletionClient) }
+            };
+            foreach (KeyValuePair<ApiFormatEnum, Type> pair in completion)
+            {
+                using PolyPrompt.Clients.CompletionClientBase client = ModelClientFactory.Create(RerankEndpoint(pair.Key), handler, 5000);
+                TestCase.Require(client.GetType() == pair.Value, pair.Key + " should get " + pair.Value.Name + ", got " + client.GetType().Name + ".");
+                TestCase.Require(client.Model == "ms-marco" && client.TimeoutMs == 5000, pair.Key + " should carry the endpoint's model and the timeout.");
+            }
+
+            bool teiRejected = false;
+            try { ModelClientFactory.Create(RerankEndpoint(ApiFormatEnum.Tei), handler, 5000).Dispose(); }
+            catch (NotSupportedException) { teiRejected = true; }
+            TestCase.Require(teiRejected, "TEI has no completion API and should be rejected.");
+
+            using (PolyPrompt.Clients.RerankClientBase tei = ModelClientFactory.CreateRerank(RerankEndpoint(ApiFormatEnum.Tei), handler, 5000))
+                TestCase.Require(tei is PolyPrompt.Clients.TeiRerankClient && tei.Model == "ms-marco", "TEI should get the TEI rerank client.");
+            using (PolyPrompt.Clients.RerankClientBase cohere = ModelClientFactory.CreateRerank(RerankEndpoint(ApiFormatEnum.Cohere), handler, 5000))
+                TestCase.Require(cohere is PolyPrompt.Clients.CohereRerankClient, "Cohere should get the Cohere rerank client.");
+
+            bool chatRejected = false;
+            try { ModelClientFactory.CreateRerank(RerankEndpoint(ApiFormatEnum.Ollama), handler, 5000).Dispose(); }
+            catch (NotSupportedException) { chatRejected = true; }
+            TestCase.Require(chatRejected, "A chat format has no rerank API and should be rejected by CreateRerank.");
         }
 
         private static void FormatCapabilities()

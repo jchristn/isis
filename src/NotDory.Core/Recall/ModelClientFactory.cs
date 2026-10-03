@@ -18,7 +18,7 @@ namespace NotDory.Core.Recall
         #region Public-Methods
 
         /// <summary>
-        /// Create a client for an endpoint.
+        /// Create a completion (chat) client for an endpoint.
         /// </summary>
         /// <param name="endpoint">The endpoint.</param>
         /// <param name="transport">The shared HTTP transport; it is not disposed with the client.</param>
@@ -26,42 +26,66 @@ namespace NotDory.Core.Recall
         /// <returns>The client; the caller disposes it.</returns>
         /// <exception cref="ArgumentNullException">Thrown when endpoint or transport is null.</exception>
         /// <exception cref="ArgumentOutOfRangeException">Thrown when timeoutMs is below 1.</exception>
+        /// <exception cref="NotSupportedException">Thrown when the endpoint's API format has no completion API (TEI).</exception>
         public static CompletionClientBase Create(ModelEndpoint endpoint, HttpMessageHandler transport, int timeoutMs)
         {
-            if (endpoint == null) throw new ArgumentNullException(nameof(endpoint));
-            if (transport == null) throw new ArgumentNullException(nameof(transport));
-            if (timeoutMs < 1) throw new ArgumentOutOfRangeException(nameof(timeoutMs), "The timeout must be at least 1 ms.");
+            Validate(endpoint, transport, timeoutMs);
 
             string baseUrl = endpoint.GetBaseUrl();
             CompletionClientBase client;
             if (endpoint.ApiFormat == ApiFormatEnum.Gemini)
             {
-                // Gemini presents its credential via PolyPrompt's native "?key=" query handling, so hand the secret to the
+                // Gemini presents its credential through PolyPrompt's native Gemini key handling, so hand the secret to the
                 // client directly rather than through the generic auth handler.
                 HttpClient geminiTransport = new HttpClient(transport, false) { Timeout = Timeout.InfiniteTimeSpan };
-                client = new GeminiClient(baseUrl, endpoint.AuthSecret ?? string.Empty, null, geminiTransport);
+                client = new GeminiCompletionClient(baseUrl, endpoint.AuthSecret ?? string.Empty, null, geminiTransport);
             }
             else
             {
-                // All other formats: NotDory's generic auth (bearer, header, query, basic, access-secret) through a
-                // per-endpoint delegating handler, and a null key so PolyPrompt does not add its own Authorization header.
-                HttpClient authed = new HttpClient(new EndpointAuthHandler(endpoint, transport), false) { Timeout = Timeout.InfiniteTimeSpan };
+                HttpClient authed = AuthedTransport(endpoint, transport);
                 switch (endpoint.ApiFormat)
                 {
                     case ApiFormatEnum.Ollama:
-                        client = new OllamaClient(baseUrl, null, null, authed);
-                        break;
-                    case ApiFormatEnum.Tei:
-                        client = new TeiClient(baseUrl, null, null, authed);
+                        client = new OllamaCompletionClient(baseUrl, null, null, authed);
                         break;
                     case ApiFormatEnum.Cohere:
-                        client = new CohereClient(baseUrl, null, null, authed);
+                        client = new CohereCompletionClient(baseUrl, null, null, authed);
                         break;
+                    case ApiFormatEnum.Tei:
+                        authed.Dispose();
+                        throw new NotSupportedException("API format " + endpoint.ApiFormat + " has no completion API.");
                     default:
-                        client = new OpenAiClient(baseUrl, null, null, authed);
+                        client = new OpenAiCompletionClient(baseUrl, null, null, authed);
                         break;
                 }
             }
+
+            if (!string.IsNullOrEmpty(endpoint.Model)) client.Model = endpoint.Model;
+            client.TimeoutMs = timeoutMs;
+            return client;
+        }
+
+        /// <summary>
+        /// Create a cross-encoder rerank client for an endpoint whose API format is rerank-only (TEI or Cohere).
+        /// </summary>
+        /// <param name="endpoint">The endpoint.</param>
+        /// <param name="transport">The shared HTTP transport; it is not disposed with the client.</param>
+        /// <param name="timeoutMs">The client's request timeout in milliseconds, at least 1.</param>
+        /// <returns>The client; the caller disposes it.</returns>
+        /// <exception cref="ArgumentNullException">Thrown when endpoint or transport is null.</exception>
+        /// <exception cref="ArgumentOutOfRangeException">Thrown when timeoutMs is below 1.</exception>
+        /// <exception cref="NotSupportedException">Thrown when the endpoint's API format has no rerank API.</exception>
+        public static RerankClientBase CreateRerank(ModelEndpoint endpoint, HttpMessageHandler transport, int timeoutMs)
+        {
+            Validate(endpoint, transport, timeoutMs);
+            if (!ApiFormatCapabilities.IsRerankOnly(endpoint.ApiFormat))
+                throw new NotSupportedException("API format " + endpoint.ApiFormat + " has no rerank API.");
+
+            string baseUrl = endpoint.GetBaseUrl();
+            HttpClient authed = AuthedTransport(endpoint, transport);
+            RerankClientBase client = endpoint.ApiFormat == ApiFormatEnum.Tei
+                ? new TeiRerankClient(baseUrl, null, null, authed)
+                : new CohereRerankClient(baseUrl, null, null, authed);
 
             if (!string.IsNullOrEmpty(endpoint.Model)) client.Model = endpoint.Model;
             client.TimeoutMs = timeoutMs;
@@ -87,6 +111,24 @@ namespace NotDory.Core.Recall
                 case ReasoningModeEnum.High: return ReasoningEffort.High;
                 default: return null;
             }
+        }
+
+        #endregion
+
+        #region Private-Methods
+
+        private static void Validate(ModelEndpoint endpoint, HttpMessageHandler transport, int timeoutMs)
+        {
+            if (endpoint == null) throw new ArgumentNullException(nameof(endpoint));
+            if (transport == null) throw new ArgumentNullException(nameof(transport));
+            if (timeoutMs < 1) throw new ArgumentOutOfRangeException(nameof(timeoutMs), "The timeout must be at least 1 ms.");
+        }
+
+        private static HttpClient AuthedTransport(ModelEndpoint endpoint, HttpMessageHandler transport)
+        {
+            // NotDory's generic auth (bearer, header, query, basic, access-secret) through a per-endpoint delegating
+            // handler; clients get a null key so PolyPrompt does not add its own Authorization header.
+            return new HttpClient(new EndpointAuthHandler(endpoint, transport), false) { Timeout = Timeout.InfiniteTimeSpan };
         }
 
         #endregion

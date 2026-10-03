@@ -85,9 +85,13 @@ namespace NotDory.Core.Recall
                 int timeoutMs = endpoint.TimeoutMs > 0 ? endpoint.TimeoutMs : 60000;
                 using CancellationTokenSource cts = CancellationTokenSource.CreateLinkedTokenSource(token);
                 cts.CancelAfter(timeoutMs);
-                using CompletionClientBase client = ModelClientFactory.Create(endpoint, _Transport, timeoutMs);
+                if (ApiFormatCapabilities.IsRerankOnly(endpoint.ApiFormat))
+                {
+                    using RerankClientBase reranker = ModelClientFactory.CreateRerank(endpoint, _Transport, timeoutMs);
+                    return await CrossEncoderAsync(reranker, endpoint, query, passages, cts.Token).ConfigureAwait(false);
+                }
 
-                if (ApiFormatCapabilities.IsRerankOnly(endpoint.ApiFormat)) return await CrossEncoderAsync(client, endpoint, query, passages, cts.Token).ConfigureAwait(false);
+                using CompletionClientBase client = ModelClientFactory.Create(endpoint, _Transport, timeoutMs);
                 return await PromptedAsync(client, endpoint, query, passages, cts.Token).ConfigureAwait(false);
             }
             catch (Exception e)
@@ -148,7 +152,7 @@ namespace NotDory.Core.Recall
 
         #region Private-Methods
 
-        private static async Task<double[]> CrossEncoderAsync(CompletionClientBase client, ModelEndpoint endpoint, string query, IReadOnlyList<string> passages, CancellationToken token)
+        private static async Task<double[]> CrossEncoderAsync(RerankClientBase client, ModelEndpoint endpoint, string query, IReadOnlyList<string> passages, CancellationToken token)
         {
             // TEI returns sigmoid scores in 0..1 when raw scores are off, and truncates passages longer than the model's
             // window; Cohere-compatible APIs answer relevance scores in 0..1.
@@ -158,7 +162,7 @@ namespace NotDory.Core.Recall
             if (!string.IsNullOrEmpty(endpoint.Model)) options.Model = endpoint.Model;
 
             RerankResponse response = await client.RerankAsync(query, new List<string>(passages), options, token).ConfigureAwait(false);
-            if (!response.Success) ThrowFor(response.StatusCode, response.Error);
+            if (!response.Success) ThrowFor(response.StatusCode ?? 0, response.Error);
 
             double[] scores = new double[passages.Count];
             foreach (RerankResult result in response.Results)
@@ -171,7 +175,7 @@ namespace NotDory.Core.Recall
 
         private static async Task<double[]> PromptedAsync(CompletionClientBase client, ModelEndpoint endpoint, string query, IReadOnlyList<string> passages, CancellationToken token)
         {
-            ChatCompletionOptions options = new ChatCompletionOptions { Temperature = 0, ReasoningEffort = ModelClientFactory.ReasoningFor(endpoint) };
+            CompletionOptions options = new CompletionOptions { Temperature = 0, ReasoningEffort = ModelClientFactory.ReasoningFor(endpoint) };
             ChatResponse response = await client.ChatAsync(ChatPrompt(query, passages), options, token).ConfigureAwait(false);
             if (!response.Success) ThrowFor(response.StatusCode ?? 0, response.Error);
             return ParseRatings(response.Text, passages.Count);

@@ -187,6 +187,15 @@ All notable changes to NotDory are documented here. This project adheres to
 
 ### Changed
 
+- **Dependency updates (2026-10-03).** PolyPrompt 2.7.1 -> 3.1.0, Microsoft.Data.SqlClient 7.1.0 -> 7.1.1, Watson
+  7.2.0 -> 7.2.2, Voltaic 2.1.13 -> 2.2.1, Touchstone.Core and Touchstone.Cli 0.1.12 -> 0.2.0. PolyPrompt 3 splits each
+  provider client into one client per capability, so `ModelClientFactory.Create` now returns the provider's completion
+  client (`OllamaCompletionClient`, `OpenAiCompletionClient`, `GeminiCompletionClient`, `CohereCompletionClient`) and
+  throws `NotSupportedException` for TEI, and the new `ModelClientFactory.CreateRerank` returns the cross-encoder client
+  (`TeiRerankClient`, `CohereRerankClient`) that `RerankService` uses for rerank-only formats. `ChatCompletionOptions`
+  is now `CompletionOptions`. Endpoint auth, reasoning, timeouts, and wire formats are unchanged. New test
+  `model-client-factory` covers the client chosen for each API format; the request-history failure test now waits for
+  the post-routing write, as the 401 case already did.
 - **Verbex removed.** The never-wired Verbex store provider is gone: the `Verbex` value of `storeProvider`, the
   `VerbexMemoryStore`, the `verbex` settings section, and its documentation. Creating a scope with `storeProvider: "Verbex"`
   is a 400 (an unknown provider). Store providers are now RecallDb and Filesystem.

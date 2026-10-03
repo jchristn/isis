@@ -205,9 +205,9 @@ namespace NotDory.Core.Recall
             return ModelClientFactory.Create(endpoint, _Transport, Math.Max(endpoint.TimeoutMs, 600000));
         }
 
-        private static ChatCompletionOptions CreateOptions(ModelEndpoint endpoint, string systemPrompt)
+        private static CompletionOptions CreateOptions(ModelEndpoint endpoint, string systemPrompt)
         {
-            ChatCompletionOptions options = new ChatCompletionOptions { ReasoningEffort = ModelClientFactory.ReasoningFor(endpoint) };
+            CompletionOptions options = new CompletionOptions { ReasoningEffort = ModelClientFactory.ReasoningFor(endpoint) };
             if (!string.IsNullOrEmpty(systemPrompt)) options.SystemPrompt = systemPrompt;
             return options;
         }

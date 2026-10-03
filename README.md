@@ -171,7 +171,7 @@ in [`docs/CONNECTING_AGENTS.md`](docs/CONNECTING_AGENTS.md) and [`docs/MCP_API.m
 ## Architecture
 
 ```
-Agent harness ──MCP──▶ nginx ─▶ NotDory.McpServer (Voltaic 2.1.13) ─proxy─┐
+Agent harness ──MCP──▶ nginx ─▶ NotDory.McpServer (Voltaic 2.2.1) ─proxy─┐
 Operator/UI  ──REST──▶ nginx ─▶ NotDory.Server (Watson 7.2) ◀────────────┘
                                      │                 │
                      NotDory metadata│                 │memory content + vectors
@@ -268,7 +268,7 @@ with the cross-encoder, and beats the published BM25 and dense-model baselines o
 |---|---|
 | `src/NotDory.Core` | Models, enums, PrettyId, database providers (Sqlite/Mysql/Postgresql/SqlServer), memory stores, services |
 | `src/NotDory.Server` | REST API (Watson 7.2) + dashboard host + OpenAPI |
-| `src/NotDory.McpServer` | MCP server (Voltaic 2.1.13), agent-facing tools |
+| `src/NotDory.McpServer` | MCP server (Voltaic 2.2.1), agent-facing tools |
 | `dashboard` | React 19 / Vite 6 management dashboard |
 | `docker` | Compose stack, per-service Dockerfiles, factory/demo seed |
 | `docs` | REST API reference, MCP API, agent-connection guides, product plan |

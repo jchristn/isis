@@ -1063,8 +1063,15 @@ namespace Test.Shared
             ExpectStatus(failed, HttpStatusCode.BadRequest, "an oversized query");
             TestCase.Require(!(await failed.Content.ReadAsStringAsync().ConfigureAwait(false)).Contains("x-notdory-exception", StringComparison.Ordinal), "The exception summary must not be returned to the caller.");
 
-            JsonNode history = JsonNode.Parse(await (await admin.GetAsync("/v1.0/api/requests?maxResults=100").ConfigureAwait(false)).Content.ReadAsStringAsync().ConfigureAwait(false))!;
-            List<JsonNode?> rows = history["objects"]!.AsArray().Where(r => (r?["path"]?.GetValue<string>() ?? string.Empty).EndsWith(sid + "/memories/search", StringComparison.Ordinal)).ToList();
+            // Post-routing records the request after the response is sent, so allow the history write a moment to land.
+            List<JsonNode?> rows = new List<JsonNode?>();
+            for (int attempt = 0; attempt < 20 && rows.Count == 0; attempt++)
+            {
+                await Task.Delay(100).ConfigureAwait(false);
+                JsonNode history = JsonNode.Parse(await (await admin.GetAsync("/v1.0/api/requests?maxResults=100").ConfigureAwait(false)).Content.ReadAsStringAsync().ConfigureAwait(false))!;
+                rows = history["objects"]!.AsArray().Where(r => (r?["path"]?.GetValue<string>() ?? string.Empty).EndsWith(sid + "/memories/search", StringComparison.Ordinal)).ToList();
+            }
+
             TestCase.Require(rows.Count == 1, "The failed request should be recorded exactly once, got " + rows.Count + ".");
             string headers = rows[0]?["responseHeaders"]?.GetValue<string>() ?? string.Empty;
             TestCase.Require(rows[0]?["statusCode"]?.GetValue<int>() == 400 && headers.Contains("x-notdory-exception", StringComparison.Ordinal) && headers.Contains("ArgumentOutOfRangeException", StringComparison.Ordinal), "The history row should carry the status and exception summary: " + headers);
